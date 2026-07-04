@@ -70,10 +70,10 @@ export default defineConfig(({ mode }) => {
                 // allowedHosts: ['<your_tailscale_hostname>'], // e.g. pi5.tailf5f622.ts.net
             },
         },
-        // preview: {
-        //     host: true,
-        //     allowedHosts: ['<your_tailscale_hostname>'], // e.g. pi5.tailf5f622.ts.net
-        // },
+        preview: {
+             host: true,
+             allowedHosts: ['pterodactyl.ddnsfree.com'], // e.g. pi5.tailf5f622.ts.net
+         },
         build: {
             outDir: 'dist',
             emptyOutDir: true,
