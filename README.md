@@ -46,6 +46,7 @@
 ### Audio Quality
 
 - High-quality High-Res/lossless audio streaming
+- First-class Qobuz catalog & lossless streaming support with intelligent TIDAL fallback (see [Qobuz API Setup](qobuz-api/README.md))
 - Support for local music files
 - API caching for improved performance
 

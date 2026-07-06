@@ -6,6 +6,7 @@ import {
     getTrackArtistsHTML,
     getTrackYearDisplay,
     createQualityBadgeHTML,
+    createSourceBadgeHTML,
     escapeHtml,
     deriveTrackQuality,
 } from './utils.js';
@@ -79,6 +80,17 @@ export class Player {
             isFetching: false,
             hasMore: true,
         };
+        this.radioEnabled = false;
+        this.radioSeeds = [];
+        this.isFetchingRadio = false;
+        this.radioFetchPromise = null;
+        this.autoplayEnabled = false;
+        this.autoplaySeeds = [];
+        this.isFetchingAutoplay = false;
+        this.autoplayFetchPromise = null;
+        this._recentlyPlayedIds = [];
+        this._maxRecentlyPlayed = 100;
+        this.playbackSequence = 0;
     }
 
     static async initialize(audioElement, api, quality) {
@@ -1097,7 +1109,7 @@ export class Player {
         const trackArtistsHTML = getTrackArtistsHTML(track);
         const yearDisplay = getTrackYearDisplay(track);
 
-        if (!track.videoUrl && !track.videoCoverUrl && !track.album?.videoCoverUrl) {
+        if (typeof this.api?.getVideoArtwork === 'function' && !track.videoUrl && !track.videoCoverUrl && !track.album?.videoCoverUrl) {
             this.api.getVideoArtwork(trackTitle, artistName).then((result) => {
                 if (this.currentTrack?.id === track.id && result && (result.videoUrl || result.hlsUrl)) {
                     track.videoCoverUrl = result.videoUrl || result.hlsUrl;
@@ -2307,7 +2319,7 @@ export class Player {
         const warning = track.deezerHiResFallback
             ? `<span class="deezer-hires-warning" role="img" tabindex="0" aria-label="Hi-Res unavailable for this track. Playing in CD-quality lossless instead. That's 16-bit / 44.1 kHz FLAC.">${SVG_TRIANGLE_ALERT(16)}</span>`
             : '';
-        titleEl.innerHTML = `${escapeHtml(getTrackTitle(track))} ${createQualityBadgeHTML(track)}${warning}`;
+        titleEl.innerHTML = `${escapeHtml(getTrackTitle(track))} ${createQualityBadgeHTML(track)} ${createSourceBadgeHTML(track)}${warning}`;
     }
 
     updateAdaptiveQualityBadge() {

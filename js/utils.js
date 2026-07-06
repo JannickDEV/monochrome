@@ -308,6 +308,15 @@ export const createQualityBadgeHTML = (track) => {
     return '';
 };
 
+export const createSourceBadgeHTML = (item) => {
+    if (!item) return '';
+    const isQobuz = item.provider === 'qobuz' || String(item.id).startsWith('q:');
+    if (isQobuz) {
+        return '<span class="quality-badge source-badge source-qobuz" style="background-color: #0070bc; color: #fff; margin-left: 4px; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; display: inline-block; vertical-align: middle;" title="Source: Qobuz">QOBUZ</span>';
+    }
+    return '<span class="quality-badge source-badge source-tidal" style="background-color: #111; color: #fff; border: 1px solid #333; margin-left: 4px; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; display: inline-block; vertical-align: middle;" title="Source: TIDAL">TIDAL</span>';
+};
+
 export const deriveQualityFromTags = (rawTags) => {
     if (!Array.isArray(rawTags)) return null;
 

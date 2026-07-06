@@ -1,6 +1,7 @@
 import { expect, test, describe, beforeEach, afterEach, vi } from 'vitest';
 import { LosslessAPI } from '../api.js';
 import { MusicAPI } from '../music-api.js';
+import { devModeSettings } from '../storage.js';
 
 describe('Amazon Music playback metadata', () => {
     const api = new LosslessAPI({});
@@ -42,6 +43,7 @@ describe('Amazon Music source selection', () => {
     let api;
 
     beforeEach(() => {
+        vi.spyOn(devModeSettings, 'isEnabled').mockReturnValue(false);
         api = new LosslessAPI({});
         api.getTrackMetadata = vi.fn(() =>
             Promise.resolve({

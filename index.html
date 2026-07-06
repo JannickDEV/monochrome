@@ -5683,15 +5683,15 @@
                                         <span class="slider"></span>
                                     </label>
                                 </div>
-                                <div class="setting-item" id="dev-mode-url-setting" style="display: none">
+                                <div class="setting-item" id="dev-mode-url-setting">
                                     <div class="info">
-                                        <span class="label">Dev Mode API URL</span>
+                                        <span class="label">Dev Mode API URL (HiFi / Tidal)</span>
                                         <span class="description">The URL of your local Tidal HiFi API instance</span>
                                     </div>
                                     <input
                                         type="text"
                                         id="dev-mode-url-input"
-                                        placeholder="http://127.0.0.1:8000"
+                                        placeholder="https://hifiapi.bitperfect.remotewire.net"
                                         style="
                                             width: 220px;
                                             padding: 0.35rem 0.5rem;
@@ -5702,6 +5702,84 @@
                                             font-size: 0.8rem;
                                         "
                                     />
+                                </div>
+                                <div class="setting-item" id="dev-mode-qobuz-url-setting">
+                                    <div class="info">
+                                        <span class="label">Qobuz API URL</span>
+                                        <span class="description">The URL of your local Qobuz proxy instance</span>
+                                    </div>
+                                    <input
+                                        type="text"
+                                        id="dev-mode-qobuz-url-input"
+                                        placeholder="https://qobuzapi.bitperfect.remotewire.net"
+                                        style="
+                                            width: 220px;
+                                            padding: 0.35rem 0.5rem;
+                                            border: 1px solid var(--border);
+                                            border-radius: var(--radius-md);
+                                            background: var(--card);
+                                            color: var(--foreground);
+                                            font-size: 0.8rem;
+                                        "
+                                    />
+                                </div>
+                                <div class="setting-item" id="dev-mode-qobuz-appid-setting">
+                                    <div class="info">
+                                        <span class="label">Qobuz App ID</span>
+                                        <span class="description">Your Qobuz application ID</span>
+                                    </div>
+                                    <input
+                                        type="text"
+                                        id="dev-mode-qobuz-appid-input"
+                                        placeholder="712080172"
+                                        style="
+                                            width: 220px;
+                                            padding: 0.35rem 0.5rem;
+                                            border: 1px solid var(--border);
+                                            border-radius: var(--radius-md);
+                                            background: var(--card);
+                                            color: var(--foreground);
+                                            font-size: 0.8rem;
+                                        "
+                                    />
+                                </div>
+                                <div class="setting-item" id="dev-mode-qobuz-token-setting">
+                                    <div class="info">
+                                        <span class="label">Qobuz User Auth Token</span>
+                                        <span class="description">Your Qobuz user authentication token</span>
+                                    </div>
+                                    <input
+                                        type="password"
+                                        id="dev-mode-qobuz-token-input"
+                                        placeholder="Enter token..."
+                                        style="
+                                            width: 220px;
+                                            padding: 0.35rem 0.5rem;
+                                            border: 1px solid var(--border);
+                                            border-radius: var(--radius-md);
+                                            background: var(--card);
+                                            color: var(--foreground);
+                                            font-size: 0.8rem;
+                                        "
+                                    />
+                                </div>
+                                <div class="setting-item" id="dev-mode-qobuz-test-setting">
+                                    <div class="info">
+                                        <span class="label">Test Qobuz Connection</span>
+                                        <span class="description">Validate credentials against the proxy server</span>
+                                    </div>
+                                    <button
+                                        id="test-qobuz-connection-btn"
+                                        style="
+                                            padding: 0.4rem 0.8rem;
+                                            border: 1px solid var(--border);
+                                            border-radius: var(--radius-md);
+                                            background: var(--primary);
+                                            color: var(--primary-foreground, #fff);
+                                            font-size: 0.8rem;
+                                            cursor: pointer;
+                                        "
+                                    >Test Connection</button>
                                 </div>
                             </div>
 

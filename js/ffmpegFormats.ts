@@ -122,7 +122,7 @@ export const customFormats: Record<string, CustomFormat> = {
     },
     FFMPEG_OPUS_320: {
         displayName: 'Opus 320kbps',
-        ffmpegArgs: ['-map_metadata', '-1', '-c:a', 'libopus', '-b:a', '320k'],
+        ffmpegArgs: ['-map_metadata', '-1', '-c:a', 'libopus', '-b:a', '320k', '-vbr', 'off'],
         outputFilename: 'output.opus',
         outputMime: 'audio/opus',
         extension: 'opus',
@@ -130,7 +130,7 @@ export const customFormats: Record<string, CustomFormat> = {
     },
     FFMPEG_OPUS_256: {
         displayName: 'Opus 256kbps',
-        ffmpegArgs: ['-map_metadata', '-1', '-c:a', 'libopus', '-b:a', '256k'],
+        ffmpegArgs: ['-map_metadata', '-1', '-c:a', 'libopus', '-b:a', '256k', '-vbr', 'off'],
         outputFilename: 'output.opus',
         outputMime: 'audio/opus',
         extension: 'opus',
@@ -138,7 +138,7 @@ export const customFormats: Record<string, CustomFormat> = {
     },
     FFMPEG_OPUS_128: {
         displayName: 'Opus 128kbps',
-        ffmpegArgs: ['-map_metadata', '-1', '-c:a', 'libopus', '-b:a', '128k'],
+        ffmpegArgs: ['-map_metadata', '-1', '-c:a', 'libopus', '-b:a', '128k', '-vbr', 'off'],
         outputFilename: 'output.opus',
         outputMime: 'audio/opus',
         extension: 'opus',
@@ -146,7 +146,7 @@ export const customFormats: Record<string, CustomFormat> = {
     },
     FFMPEG_OPUS_160: {
         displayName: 'Opus 160kbps',
-        ffmpegArgs: ['-map_metadata', '-1', '-c:a', 'libopus', '-b:a', '160k'],
+        ffmpegArgs: ['-map_metadata', '-1', '-c:a', 'libopus', '-b:a', '160k', '-vbr', 'off'],
         outputFilename: 'output.opus',
         outputMime: 'audio/opus',
         extension: 'opus',
@@ -154,7 +154,7 @@ export const customFormats: Record<string, CustomFormat> = {
     },
     FFMPEG_OPUS_96: {
         displayName: 'Opus 96kbps',
-        ffmpegArgs: ['-map_metadata', '-1', '-c:a', 'libopus', '-b:a', '96k'],
+        ffmpegArgs: ['-map_metadata', '-1', '-c:a', 'libopus', '-b:a', '96k', '-vbr', 'off'],
         outputFilename: 'output.opus',
         outputMime: 'audio/opus',
         extension: 'opus',
