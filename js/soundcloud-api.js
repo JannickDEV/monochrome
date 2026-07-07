@@ -48,6 +48,54 @@ export class SoundCloudAPI {
         return this.clientId;
     }
 
+    async extractFreshClientId() {
+        console.info('Attempting to automatically extract a fresh SoundCloud client_id...');
+        const proxies = [
+            'https://api.allorigins.win/raw?url=',
+            'https://corsproxy.io/?url=',
+        ];
+
+        for (const proxy of proxies) {
+            try {
+                const res = await fetch(`${proxy}${encodeURIComponent('https://soundcloud.com')}`);
+                if (!res.ok) continue;
+                const html = await res.text();
+
+                // Find all js asset scripts on soundcloud.com
+                const scriptMatches = [...html.matchAll(/src="(https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js)"/g)];
+                if (!scriptMatches.length) continue;
+
+                // Check the last few scripts where client_id is usually bundled
+                const scriptsToCheck = scriptMatches.slice(-3).map((m) => m[1]);
+                for (const scriptUrl of scriptsToCheck) {
+                    try {
+                        const scriptRes = await fetch(`${proxy}${encodeURIComponent(scriptUrl)}`);
+                        if (!scriptRes.ok) continue;
+                        const scriptText = await scriptRes.text();
+
+                        // Match 32-character client_id
+                        const clientIdMatch = scriptText.match(/client_id:["']([a-zA-Z0-9]{32})["']/);
+                        if (clientIdMatch && clientIdMatch[1]) {
+                            const candidateId = clientIdMatch[1];
+                            // Verify candidate ID against SoundCloud API
+                            const testRes = await fetch(`${SC_API_BASE}/search/tracks?q=test&limit=1&client_id=${candidateId}`);
+                            if (testRes.ok) {
+                                console.info('Successfully extracted and verified fresh SoundCloud client_id:', candidateId);
+                                this.clientId = candidateId;
+                                try {
+                                    localStorage.setItem('sc_client_id', candidateId);
+                                } catch {}
+                                return candidateId;
+                            }
+                        }
+                    } catch {}
+                }
+            } catch {}
+        }
+        console.warn('Failed to extract fresh SoundCloud client_id via proxies.');
+        return null;
+    }
+
     async fetchWithRetry(endpoint, options = {}, retries = 6) {
         const clientId = await this.getClientId();
         const separator = endpoint.includes('?') ? '&' : '?';
@@ -61,7 +109,11 @@ export class SoundCloudAPI {
 
             if ((response.status === 401 || response.status === 403 || response.status === 429) && retries > 0) {
                 console.warn(`SoundCloud client ID ${response.status}, rotating client ID...`);
-                this.rotateClientId();
+                if (retries === 1) {
+                    await this.extractFreshClientId();
+                } else {
+                    this.rotateClientId();
+                }
                 return this.fetchWithRetry(endpoint, options, retries - 1);
             }
 
@@ -77,7 +129,11 @@ export class SoundCloudAPI {
             // This causes the browser to throw a TypeError (NetworkError / Failed to fetch) instead of returning the HTTP status.
             if (retries > 0) {
                 console.warn('SoundCloud network/CORS error (likely expired client ID), rotating and retrying...');
-                this.rotateClientId();
+                if (retries === 1) {
+                    await this.extractFreshClientId();
+                } else {
+                    this.rotateClientId();
+                }
                 return this.fetchWithRetry(endpoint, options, retries - 1);
             }
 
