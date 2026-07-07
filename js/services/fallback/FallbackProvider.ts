@@ -14,20 +14,92 @@ export class FallbackProvider implements Provider {
         return this.providers;
     }
 
+    private isrcCache = new Map<string, string>();
+    private trackIdMapCache = new Map<string, string | number>();
+
     private getProviderForId(id: string | number): Provider {
         if (!this.providers.length) {
             throw new Error('No providers configured in FallbackProvider');
         }
         const strId = String(id);
-        if (strId.startsWith('t:') || strId.includes('-')) {
-            const tidal = this.providers.find(p => p.id === 'tidal');
-            if (tidal) return tidal;
-        }
         if (strId.startsWith('q:')) {
             const qobuz = this.providers.find(p => p.id === 'qobuz');
             if (qobuz) return qobuz;
         }
+        if (strId.startsWith('t:') || strId.includes('-') || /^\d+$/.test(strId)) {
+            const tidal = this.providers.find(p => p.id === 'tidal');
+            if (tidal) return tidal;
+        }
         return this.providers[0];
+    }
+
+    private async resolveProviderTrackId(targetProvider: Provider, id: string | number): Promise<string | number> {
+        const strId = String(id);
+        const isTargetQobuz = targetProvider.id === 'qobuz';
+        const isIdQobuz = strId.startsWith('q:');
+
+        // If the ID already matches the target provider's catalog format, return it directly
+        if ((isTargetQobuz && isIdQobuz) || (!isTargetQobuz && !isIdQobuz)) {
+            return id;
+        }
+
+        const cacheKey = `${targetProvider.id}_${strId}`;
+        if (this.trackIdMapCache.has(cacheKey)) {
+            return this.trackIdMapCache.get(cacheKey)!;
+        }
+
+        // We need to translate the ID via ISRC from the source provider
+        let isrc = this.isrcCache.get(strId);
+        if (!isrc) {
+            const sourceProvider = this.getProviderForId(id);
+            if (sourceProvider && typeof sourceProvider.getTrackMetadata === 'function') {
+                try {
+                    const meta = await sourceProvider.getTrackMetadata(id);
+                    if (meta?.isrc) {
+                        isrc = meta.isrc;
+                        this.isrcCache.set(strId, isrc);
+                    }
+                } catch (e) {
+                    console.warn(`[FallbackProvider] Could not fetch metadata from source provider for ${id}:`, e);
+                }
+            }
+            if (!isrc && sourceProvider && typeof sourceProvider.getTrack === 'function') {
+                try {
+                    const track = await sourceProvider.getTrack(id);
+                    if (track?.isrc) {
+                        isrc = track.isrc;
+                        this.isrcCache.set(strId, isrc);
+                    }
+                } catch (e) {
+                    console.warn(`[FallbackProvider] Could not fetch track from source provider for ${id}:`, e);
+                }
+            }
+        }
+
+        if (!isrc || typeof targetProvider.searchTracks !== 'function') {
+            return id;
+        }
+
+        try {
+            const searchRes = await targetProvider.searchTracks(isrc, { limit: 10 });
+            const items = searchRes?.items || [];
+            if (!items.length) {
+                return id;
+            }
+
+            // Match exact ISRC case-insensitively, or fall back to first search result
+            const match = items.find((t: any) => t.isrc?.toLowerCase() === isrc!.toLowerCase()) || items[0];
+            if (!match || !match.id) {
+                return id;
+            }
+
+            console.log(`[FallbackProvider] Resolved track ID ${id} -> ${match.id} on ${targetProvider.name} (ISRC: ${isrc})`);
+            this.trackIdMapCache.set(cacheKey, match.id);
+            return match.id;
+        } catch (err) {
+            console.warn(`[FallbackProvider] ISRC search failed on ${targetProvider.name} for ISRC ${isrc}, falling back to original ID ${id}:`, err);
+            return id;
+        }
     }
 
     private async executeWithFallback<T>(
@@ -129,7 +201,10 @@ export class FallbackProvider implements Provider {
         return this.executeWithFallback(
             'getTrack',
             [id, quality],
-            p => p.getTrack(id, quality),
+            async p => {
+                const targetId = await this.resolveProviderTrackId(p, id);
+                return p.getTrack(targetId, quality);
+            },
             res => !res
         );
     }
@@ -138,7 +213,10 @@ export class FallbackProvider implements Provider {
         return this.executeWithFallback(
             'getTrackMetadata',
             [id],
-            p => p.getTrackMetadata(id),
+            async p => {
+                const targetId = await this.resolveProviderTrackId(p, id);
+                return p.getTrackMetadata(targetId);
+            },
             res => !res
         );
     }
@@ -235,7 +313,10 @@ export class FallbackProvider implements Provider {
         return this.executeWithFallback(
             'getStreamUrl',
             [id, quality],
-            p => p.getStreamUrl(id, quality),
+            async p => {
+                const targetId = await this.resolveProviderTrackId(p, id);
+                return p.getStreamUrl(targetId, quality);
+            },
             res => !res || !res.url
         );
     }
@@ -245,8 +326,9 @@ export class FallbackProvider implements Provider {
             'getTrackForDownload',
             [id, quality],
             async p => {
+                const targetId = await this.resolveProviderTrackId(p, id);
                 if (typeof p.getTrackForDownload === 'function') {
-                    return p.getTrackForDownload(id, quality);
+                    return p.getTrackForDownload(targetId, quality);
                 }
                 return null;
             },
