@@ -75,6 +75,22 @@ export default defineConfig(({ mode }) => {
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
                     },
                 },
+                '/sc-web': {
+                    target: 'https://soundcloud.com',
+                    changeOrigin: true,
+                    rewrite: (path) => path.replace(/^\/sc-web/, ''),
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    },
+                },
+                '/sc-sndcdn': {
+                    target: 'https://a-v2.sndcdn.com',
+                    changeOrigin: true,
+                    rewrite: (path) => path.replace(/^\/sc-sndcdn/, ''),
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+                    },
+                },
             },
             fs: {
                 allow: ['.', 'node_modules'],

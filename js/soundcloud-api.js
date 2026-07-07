@@ -7,12 +7,13 @@ const FALLBACK_SC_API_BASE = 'https://api-v2.soundcloud.com';
 
 // Known working public client IDs as immediate fallback
 const FALLBACK_CLIENT_IDS = [
-    '6bs1qIDBmrmh7FpcKRIDvzadJ2ZzpRwe',
-    'iZIs9mchVcX5lhVRyQGGAYlNPVAnPzEn',
+    '6bs1QjDBWrmh7FpcKrIDvzodJ2ZZpRwe',
 ];
 
 // Known expired/revoked client IDs to automatically purge from user localStorage
 const REVOKED_CLIENT_IDS = new Set([
+    '6bs1qIDBmrmh7FpcKRIDvzadJ2ZzpRwe',
+    'iZIs9mchVcX5lhVRyQGGAYlNPVAnPzEn',
     'YNSWSuvBmbIa5j7gpUTImuB9itX3isOC',
     'LBCcHmOAgOVzD9BmwT4k8vO9nD8vO9nD',
     '2t9loNQH90kzJcsFANAw61Xz4d3P1h4q',
@@ -38,17 +39,17 @@ export class SoundCloudAPI {
         // Try checking custom ID from settings or localStorage first
         try {
             const cached = soundcloudSettings.getClientId();
-            if (cached && REVOKED_CLIENT_IDS.has(cached)) {
-                console.info('Purging revoked SoundCloud client ID from settings/localStorage:', cached);
-                soundcloudSettings.setClientId('');
-            } else if (cached && cached.length === 32) {
+            if (cached && !REVOKED_CLIENT_IDS.has(cached)) {
                 this.clientId = cached;
-                return this.clientId;
+                return cached;
             }
         } catch {}
 
-        // Fallback to our curated list of known working client IDs
-        this.clientId = FALLBACK_CLIENT_IDS[this.clientIdsIdx % FALLBACK_CLIENT_IDS.length];
+        // Fallback to our known working IDs
+        this.clientId = FALLBACK_CLIENT_IDS[0];
+        try {
+            soundcloudSettings.setClientId(this.clientId);
+        } catch {}
         return this.clientId;
     }
 
@@ -63,14 +64,16 @@ export class SoundCloudAPI {
 
     async extractFreshClientId() {
         console.info('Attempting to automatically extract a fresh SoundCloud client_id...');
-        const proxies = [
-            'https://api.allorigins.win/raw?url=',
-            'https://corsproxy.io/?url=',
-        ];
+        const getProxyUrls = (targetUrl) => [
+            targetUrl === 'https://soundcloud.com' ? '/sc-web' : (targetUrl.startsWith('https://a-v2.sndcdn.com') ? targetUrl.replace('https://a-v2.sndcdn.com', '/sc-sndcdn') : null),
+            `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`,
+            `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
+            `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+        ].filter(Boolean);
 
-        for (const proxy of proxies) {
+        for (const proxyUrl of getProxyUrls('https://soundcloud.com')) {
             try {
-                const res = await fetch(`${proxy}${encodeURIComponent('https://soundcloud.com')}`);
+                const res = await fetch(proxyUrl);
                 if (!res.ok) continue;
                 const html = await res.text();
 
@@ -79,38 +82,42 @@ export class SoundCloudAPI {
                 if (!scriptMatches.length) continue;
 
                 // Check the last few scripts where client_id is usually bundled
-                const scriptsToCheck = scriptMatches.slice(-3).map((m) => m[1]);
+                const scriptsToCheck = scriptMatches.slice(-5).map((m) => m[1]);
                 for (const scriptUrl of scriptsToCheck) {
-                    try {
-                        const scriptRes = await fetch(`${proxy}${encodeURIComponent(scriptUrl)}`);
-                        if (!scriptRes.ok) continue;
-                        const scriptText = await scriptRes.text();
+                    for (const scriptProxyUrl of getProxyUrls(scriptUrl)) {
+                        try {
+                            const scriptRes = await fetch(scriptProxyUrl);
+                            if (!scriptRes.ok) continue;
+                            const scriptText = await scriptRes.text();
 
-                        // Match 32-character client_id
-                        const clientIdMatch = scriptText.match(/client_id:["']([a-zA-Z0-9]{32})["']/);
-                        if (clientIdMatch && clientIdMatch[1]) {
-                            const candidateId = clientIdMatch[1];
-                            // Verify candidate ID against SoundCloud API
-                            const apiBase = this.getApiBase();
-                            let testRes;
-                            try {
-                                testRes = await fetch(`${apiBase}/search/tracks?q=test&limit=1&client_id=${candidateId}`);
-                            } catch {}
-                            if (!testRes || !testRes.ok) {
+                            // Match 32-character client_id
+                            const idMatches = [...scriptText.matchAll(/client_id:["']([a-zA-Z0-9]{32})["']/g)];
+                            for (const idMatch of idMatches) {
+                                const candidateId = idMatch[1];
+                                if (REVOKED_CLIENT_IDS.has(candidateId)) continue;
+
+                                // Verify candidate ID against SoundCloud API
+                                const apiBase = this.getApiBase();
+                                let testRes;
                                 try {
-                                    testRes = await fetch(`${FALLBACK_SC_API_BASE}/search/tracks?q=test&limit=1&client_id=${candidateId}`);
+                                    testRes = await fetch(`${apiBase}/search/tracks?q=test&limit=1&client_id=${candidateId}`);
                                 } catch {}
+                                if (!testRes || !testRes.ok) {
+                                    try {
+                                        testRes = await fetch(`${FALLBACK_SC_API_BASE}/search/tracks?q=test&limit=1&client_id=${candidateId}`);
+                                    } catch {}
+                                }
+                                if (testRes && testRes.ok) {
+                                    console.info('Successfully extracted and verified fresh SoundCloud client_id:', candidateId);
+                                    this.clientId = candidateId;
+                                    try {
+                                        soundcloudSettings.setClientId(candidateId);
+                                    } catch {}
+                                    return candidateId;
+                                }
                             }
-                            if (testRes && testRes.ok) {
-                                console.info('Successfully extracted and verified fresh SoundCloud client_id:', candidateId);
-                                this.clientId = candidateId;
-                                try {
-                                    soundcloudSettings.setClientId(candidateId);
-                                } catch {}
-                                return candidateId;
-                            }
-                        }
-                    } catch {}
+                        } catch {}
+                    }
                 }
             } catch {}
         }
