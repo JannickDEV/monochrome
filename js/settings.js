@@ -34,6 +34,7 @@ import {
     musicProviderSettings,
     amazonMusicSettings,
     deezerFallbackSettings,
+    soundcloudSettings,
     gaplessPlaybackSettings,
     analyticsSettings,
     modalSettings,
@@ -944,6 +945,22 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         deezerApiBaseUrlInput.value = deezerFallbackSettings.getApiBaseUrl();
         deezerApiBaseUrlInput.addEventListener('change', (e) => {
             deezerFallbackSettings.setApiBaseUrl(e.target.value.trim());
+        });
+    }
+
+    const scApiBaseUrlInput = document.getElementById('soundcloud-api-base-url');
+    if (scApiBaseUrlInput) {
+        scApiBaseUrlInput.value = soundcloudSettings.getApiBaseUrl();
+        scApiBaseUrlInput.addEventListener('change', (e) => {
+            soundcloudSettings.setApiBaseUrl(e.target.value.trim());
+        });
+    }
+
+    const scClientIdInput = document.getElementById('soundcloud-custom-client-id');
+    if (scClientIdInput) {
+        scClientIdInput.value = soundcloudSettings.getClientId();
+        scClientIdInput.addEventListener('change', (e) => {
+            soundcloudSettings.setClientId(e.target.value.trim());
         });
     }
 

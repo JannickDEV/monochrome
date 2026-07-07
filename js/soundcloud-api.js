@@ -1,7 +1,9 @@
 // js/soundcloud-api.js
 // SoundCloud API v2 integration for Monochrome Music
 
-const SC_API_BASE = 'https://api-v2.soundcloud.com';
+import { soundcloudSettings } from './storage.js';
+
+const FALLBACK_SC_API_BASE = 'https://api-v2.soundcloud.com';
 
 // Known working public client IDs as immediate fallback
 const FALLBACK_CLIENT_IDS = [
@@ -26,15 +28,19 @@ export class SoundCloudAPI {
         this.cacheTimeout = 1000 * 60 * 5; // 5 minutes
     }
 
+    getApiBase() {
+        return soundcloudSettings.getApiBaseUrl().replace(/\/$/, '');
+    }
+
     async getClientId() {
         if (this.clientId && !REVOKED_CLIENT_IDS.has(this.clientId)) return this.clientId;
 
-        // Try checking localStorage first
+        // Try checking custom ID from settings or localStorage first
         try {
-            const cached = localStorage.getItem('sc_client_id');
+            const cached = soundcloudSettings.getClientId();
             if (cached && REVOKED_CLIENT_IDS.has(cached)) {
-                console.info('Purging revoked SoundCloud client ID from localStorage:', cached);
-                localStorage.removeItem('sc_client_id');
+                console.info('Purging revoked SoundCloud client ID from settings/localStorage:', cached);
+                soundcloudSettings.setClientId('');
             } else if (cached && cached.length === 32) {
                 this.clientId = cached;
                 return this.clientId;
@@ -50,7 +56,7 @@ export class SoundCloudAPI {
         this.clientIdsIdx++;
         this.clientId = FALLBACK_CLIENT_IDS[this.clientIdsIdx % FALLBACK_CLIENT_IDS.length];
         try {
-            localStorage.setItem('sc_client_id', this.clientId);
+            soundcloudSettings.setClientId(this.clientId);
         } catch {}
         return this.clientId;
     }
@@ -85,12 +91,21 @@ export class SoundCloudAPI {
                         if (clientIdMatch && clientIdMatch[1]) {
                             const candidateId = clientIdMatch[1];
                             // Verify candidate ID against SoundCloud API
-                            const testRes = await fetch(`${SC_API_BASE}/search/tracks?q=test&limit=1&client_id=${candidateId}`);
-                            if (testRes.ok) {
+                            const apiBase = this.getApiBase();
+                            let testRes;
+                            try {
+                                testRes = await fetch(`${apiBase}/search/tracks?q=test&limit=1&client_id=${candidateId}`);
+                            } catch {}
+                            if (!testRes || !testRes.ok) {
+                                try {
+                                    testRes = await fetch(`${FALLBACK_SC_API_BASE}/search/tracks?q=test&limit=1&client_id=${candidateId}`);
+                                } catch {}
+                            }
+                            if (testRes && testRes.ok) {
                                 console.info('Successfully extracted and verified fresh SoundCloud client_id:', candidateId);
                                 this.clientId = candidateId;
                                 try {
-                                    localStorage.setItem('sc_client_id', candidateId);
+                                    soundcloudSettings.setClientId(candidateId);
                                 } catch {}
                                 return candidateId;
                             }
@@ -125,7 +140,9 @@ export class SoundCloudAPI {
     async fetchWithRetry(endpoint, options = {}, retries = 10) {
         const clientId = await this.getClientId();
         const separator = endpoint.includes('?') ? '&' : '?';
-        const url = `${SC_API_BASE}${endpoint}${separator}client_id=${clientId}`;
+        const apiBase = this.getApiBase();
+        const url = `${apiBase}${endpoint}${separator}client_id=${clientId}`;
+        const fallbackUrl = `${FALLBACK_SC_API_BASE}${endpoint}${separator}client_id=${clientId}`;
 
         try {
             let response;
@@ -134,12 +151,24 @@ export class SoundCloudAPI {
                     method: 'GET',
                     signal: options.signal,
                 });
+                if (response.status === 404 && apiBase.startsWith('/')) {
+                    console.info(`Local proxy ${apiBase} returned 404 (not configured). Falling back to direct/proxy...`);
+                    response = null;
+                }
             } catch (networkErr) {
                 if (networkErr.name === 'AbortError') throw networkErr;
-                console.info('Direct SoundCloud API fetch failed (likely browser CORS restriction). Attempting via CORS proxy...');
-                response = await this.fetchViaProxy(url, options.signal);
-                if (!response) {
-                    throw networkErr;
+                console.info(`Fetch to ${apiBase} failed. Attempting direct/CORS proxy...`);
+                response = null;
+            }
+
+            if (!response) {
+                try {
+                    response = await fetch(fallbackUrl, { method: 'GET', signal: options.signal });
+                } catch (err) {
+                    if (err.name === 'AbortError') throw err;
+                    console.info('Direct SoundCloud API fetch failed. Attempting via CORS proxy...');
+                    response = await this.fetchViaProxy(fallbackUrl, options.signal);
+                    if (!response) throw err;
                 }
             }
 
@@ -154,7 +183,7 @@ export class SoundCloudAPI {
             }
 
             if (!response.ok) {
-                const proxyRes = await this.fetchViaProxy(url, options.signal);
+                const proxyRes = await this.fetchViaProxy(fallbackUrl, options.signal);
                 if (proxyRes && proxyRes.ok) {
                     return await proxyRes.json();
                 }

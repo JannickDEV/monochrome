@@ -3175,6 +3175,44 @@ export const deezerFallbackSettings = {
     },
 };
 
+export const soundcloudSettings = {
+    API_BASE_URL_KEY: 'sc_api_url',
+    CLIENT_ID_KEY: 'sc_client_id',
+    DEFAULT_API_BASE_URL: '/sc-api',
+
+    getApiBaseUrl() {
+        try {
+            return localStorage.getItem(this.API_BASE_URL_KEY) || this.DEFAULT_API_BASE_URL;
+        } catch {
+            return this.DEFAULT_API_BASE_URL;
+        }
+    },
+
+    setApiBaseUrl(url) {
+        if (url && url.trim()) {
+            localStorage.setItem(this.API_BASE_URL_KEY, url.trim());
+        } else {
+            localStorage.removeItem(this.API_BASE_URL_KEY);
+        }
+    },
+
+    getClientId() {
+        try {
+            return localStorage.getItem(this.CLIENT_ID_KEY) || '';
+        } catch {
+            return '';
+        }
+    },
+
+    setClientId(id) {
+        if (id && id.trim()) {
+            localStorage.setItem(this.CLIENT_ID_KEY, id.trim());
+        } else {
+            localStorage.removeItem(this.CLIENT_ID_KEY);
+        }
+    },
+};
+
 export const modalSettings = {
     STORAGE_KEY: 'close-modals-on-navigation',
     INTERCEPT_BACK_KEY: 'intercept-back-to-close-modals',
