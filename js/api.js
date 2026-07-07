@@ -865,6 +865,7 @@ export class LosslessAPI {
     }
 
     async getVideo(id) {
+        if (String(id).startsWith('sc_')) return null;
         const cached = await this.cache.get('video', id);
         if (cached) return cached;
 
@@ -888,6 +889,7 @@ export class LosslessAPI {
     }
 
     async getAlbum(id, options = {}) {
+        if (String(id).startsWith('sc_')) return null;
         if (devModeSettings.isEnabled() && !options._fromProvider) {
             return await this.getFallbackProvider().getAlbum(id);
         }
@@ -1037,6 +1039,7 @@ export class LosslessAPI {
     }
 
     async getPlaylist(id, options = {}) {
+        if (String(id).startsWith('sc_')) return null;
         if (devModeSettings.isEnabled() && !options._fromProvider) {
             return await this.getFallbackProvider().getPlaylist(id);
         }
@@ -1160,6 +1163,7 @@ export class LosslessAPI {
     }
 
     async getMix(id) {
+        if (String(id).startsWith('sc_')) return null;
         const cached = await this.cache.get('mix', id);
         if (cached) return cached;
 
@@ -1253,6 +1257,10 @@ export class LosslessAPI {
     }
 
     async getArtist(artistId, options = {}) {
+        if (String(artistId).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getArtistById(artistId, options);
+        }
         if (devModeSettings.isEnabled() && !options._fromProvider) {
             return await this.getFallbackProvider().getArtist(artistId);
         }
@@ -1383,6 +1391,10 @@ export class LosslessAPI {
     }
 
     async getArtistTopTracks(artistId, options = {}) {
+        if (String(artistId).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getArtistTopTracks(artistId, options);
+        }
         const offset = options.offset || 0;
         const limit = options.limit || 15;
         console.log('[getArtistTopTracks] Called:', { artistId, offset, limit, options });
@@ -1466,6 +1478,7 @@ export class LosslessAPI {
     }
 
     async getSimilarArtists(artistId) {
+        if (String(artistId).startsWith('sc_')) return [];
         const cached = await this.cache.get('similar_artists', artistId);
         if (cached) return cached;
 
@@ -1492,6 +1505,7 @@ export class LosslessAPI {
     }
 
     async getArtistBiography(artistId, options = {}) {
+        if (String(artistId).startsWith('sc_')) return null;
         if (devModeSettings.isEnabled() && !options._fromProvider) {
             return await this.getFallbackProvider().getArtistBiography(artistId);
         }
@@ -1522,6 +1536,7 @@ export class LosslessAPI {
     }
 
     async getSimilarAlbums(albumId) {
+        if (String(albumId).startsWith('sc_')) return [];
         const cached = await this.cache.get('similar_albums', albumId);
         if (cached) return cached;
 
@@ -1784,6 +1799,10 @@ export class LosslessAPI {
     }
 
     async getTrackRecommendations(id) {
+        if (String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getTrackRecommendations(id);
+        }
         const cached = await this.cache.get('recommendations', id);
         if (cached) return cached;
 
@@ -1833,6 +1852,10 @@ export class LosslessAPI {
     }
 
     async getTrack(id, quality = 'LOSSLESS', { adaptive = false, _fromProvider = false } = {}) {
+        if (String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getTrackById(id);
+        }
         if (devModeSettings.isEnabled() && !_fromProvider) {
             return await this.getFallbackProvider().getTrack(id, quality);
         }

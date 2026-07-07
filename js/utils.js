@@ -311,6 +311,10 @@ export const createQualityBadgeHTML = (track) => {
 export const createSourceBadgeHTML = (item) => {
     if (!item) return '';
     const provider = item.streamProvider || item.provider;
+    const isSoundCloud = provider === 'soundcloud' || item.isSoundCloud || String(item?.id).startsWith('sc_');
+    if (isSoundCloud) {
+        return '<span class="quality-badge source-badge source-soundcloud" style="background-color: #ff5500; color: #fff; margin-left: 4px; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; display: inline-block; vertical-align: middle;" title="Source: SoundCloud">SOUNDCLOUD</span>';
+    }
     const isQobuz = provider === 'qobuz' || (!item.streamProvider && String(item.id).startsWith('q:'));
     if (isQobuz) {
         return '<span class="quality-badge source-badge source-qobuz" style="background-color: #0070bc; color: #fff; margin-left: 4px; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; display: inline-block; vertical-align: middle;" title="Source: Qobuz">QOBUZ</span>';

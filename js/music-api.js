@@ -329,6 +329,7 @@ export class MusicAPI {
     // Helper methods
     getProviderFromId(id) {
         if (typeof id === 'string') {
+            if (id.startsWith('sc_')) return 'soundcloud';
             if (id.startsWith('t:')) return 'tidal';
         }
         return null;

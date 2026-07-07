@@ -22,6 +22,10 @@ export class FallbackProvider implements Provider {
             throw new Error('No providers configured in FallbackProvider');
         }
         const strId = String(id);
+        if (strId.startsWith('sc_')) {
+            const sc = this.providers.find(p => p.id === 'soundcloud');
+            if (sc) return sc;
+        }
         if (strId.startsWith('q:')) {
             const qobuz = this.providers.find(p => p.id === 'qobuz');
             if (qobuz) return qobuz;

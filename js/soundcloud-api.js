@@ -282,9 +282,16 @@ export class SoundCloudAPI {
             throw new Error('Could not find a supported stream protocol in SoundCloud transcodings');
         }
 
+        let targetStreamUrl = selected.url;
+        if (targetStreamUrl.startsWith('https://api-v2.soundcloud.com')) {
+            targetStreamUrl = targetStreamUrl.replace('https://api-v2.soundcloud.com', this.getApiBase());
+        } else if (targetStreamUrl.startsWith('https://api.soundcloud.com')) {
+            targetStreamUrl = targetStreamUrl.replace('https://api.soundcloud.com', this.getApiBase());
+        }
+
         const clientId = await this.getClientId();
-        const separator = selected.url.includes('?') ? '&' : '?';
-        const streamRes = await fetch(`${selected.url}${separator}client_id=${clientId}`, {
+        const separator = targetStreamUrl.includes('?') ? '&' : '?';
+        const streamRes = await fetch(`${targetStreamUrl}${separator}client_id=${clientId}`, {
             signal: options.signal,
         });
 
@@ -308,11 +315,75 @@ export class SoundCloudAPI {
         };
     }
 
+    async getTrackRecommendations(trackId, options = {}) {
+        try {
+            const numericId = String(trackId).replace(/^sc_/, '');
+            const data = await this.fetchWithRetry(`/tracks/${numericId}/related?limit=20`, options);
+            if (!data || !data.collection) return [];
+            return data.collection
+                .filter((item) => item.kind === 'track' && item.streamable !== false && item.policy !== 'BLOCK')
+                .map((item) => this.transformSoundCloudTrack(item));
+        } catch (error) {
+            console.warn('SoundCloud getTrackRecommendations failed:', error);
+            return [];
+        }
+    }
+
+    async getArtistById(artistId, options = {}) {
+        try {
+            const numericId = String(artistId).replace(/^sc_user_|^sc_/, '');
+            const data = await this.fetchWithRetry(`/users/${numericId}`, options);
+            if (!data) return null;
+
+            let artwork = data.avatar_url || '';
+            if (artwork && artwork.includes('-large.')) {
+                artwork = artwork.replace('-large.', '-t500x500.');
+            }
+
+            return {
+                id: `sc_user_${data.id}`,
+                name: data.username || 'Unknown Artist',
+                picture: artwork,
+                description: data.description || '',
+                url: data.permalink_url || '',
+                albums: [],
+                singles: [],
+                topTracks: [],
+                videos: [],
+            };
+        } catch (error) {
+            console.warn('SoundCloud getArtistById failed:', error);
+            return {
+                id: artistId,
+                name: 'SoundCloud Artist',
+                picture: null,
+                albums: [],
+                singles: [],
+                topTracks: [],
+                videos: [],
+            };
+        }
+    }
+
+    async getArtistTopTracks(artistId, options = {}) {
+        try {
+            const numericId = String(artistId).replace(/^sc_user_|^sc_/, '');
+            const data = await this.fetchWithRetry(`/users/${numericId}/tracks?limit=20`, options);
+            if (!data || !data.collection) return [];
+            return data.collection
+                .filter((item) => item.kind === 'track' && item.streamable !== false && item.policy !== 'BLOCK')
+                .map((item) => this.transformSoundCloudTrack(item));
+        } catch (error) {
+            console.warn('SoundCloud getArtistTopTracks failed:', error);
+            return [];
+        }
+    }
+
     transformSoundCloudTrack(scTrack) {
         const id = scTrack.id ? `sc_${scTrack.id}` : `sc_${Date.now()}`;
         const title = scTrack.title || 'Unknown Title';
         const artistName = scTrack.user?.username || 'Unknown Artist';
-        const artistId = scTrack.user?.id || null;
+        const artistId = scTrack.user?.id ? `sc_user_${scTrack.user.id}` : null;
         
         // Artwork URL upgrade: SoundCloud defaults to 'large' (100x100), upgrade to 't500x500' for high quality
         let artwork = scTrack.artwork_url || scTrack.user?.avatar_url || '';
