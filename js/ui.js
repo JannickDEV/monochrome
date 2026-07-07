@@ -4394,12 +4394,14 @@ export class UIRenderer {
         const albumsContainer = document.getElementById('search-albums-container');
         const playlistsContainer = document.getElementById('search-playlists-container');
         const podcastsContainer = document.getElementById('search-podcasts-container');
+        const soundcloudContainer = document.getElementById('search-soundcloud-container');
 
         tracksContainer.innerHTML = this.createSkeletonTracks(8, true);
         artistsContainer.innerHTML = this.createSkeletonCards(6, true);
         albumsContainer.innerHTML = this.createSkeletonCards(6, false);
         playlistsContainer.innerHTML = this.createSkeletonCards(6, false);
         podcastsContainer.innerHTML = this.createSkeletonCards(6, true);
+        if (soundcloudContainer) soundcloudContainer.innerHTML = this.createSkeletonTracks(8, true);
 
         if (this.searchAbortController) {
             this.searchAbortController.abort();
@@ -4472,6 +4474,7 @@ export class UIRenderer {
             albumsContainer.innerHTML = errorMsg;
             playlistsContainer.innerHTML = errorMsg;
             podcastsContainer.innerHTML = errorMsg;
+            if (soundcloudContainer) soundcloudContainer.innerHTML = errorMsg;
         }
     }
 
@@ -4506,6 +4509,9 @@ export class UIRenderer {
                 break;
             case 'podcasts':
                 await this.renderPodcastSearchResults(state.query);
+                break;
+            case 'soundcloud':
+                await this.renderSoundCloudSearchResults(state.query);
                 break;
         }
     }
@@ -7305,6 +7311,26 @@ export class UIRenderer {
         } catch (error) {
             console.error('Podcast search failed:', error);
             podcastsContainer.innerHTML = createPlaceholder('Failed to search podcasts.');
+        }
+    }
+
+    async renderSoundCloudSearchResults(query) {
+        const soundcloudContainer = document.getElementById('search-soundcloud-container');
+        if (!soundcloudContainer) return;
+        soundcloudContainer.innerHTML = this.createSkeletonTracks(8, true);
+
+        try {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            const result = await soundCloudAPI.searchTracks(query, { limit: 30 });
+
+            if (result.items.length > 0) {
+                await this.renderListWithTracks(soundcloudContainer, result.items, true, false, false, true);
+            } else {
+                soundcloudContainer.innerHTML = createPlaceholder('No SoundCloud tracks found.');
+            }
+        } catch (error) {
+            console.error('SoundCloud search failed:', error);
+            soundcloudContainer.innerHTML = createPlaceholder('Failed to search SoundCloud.');
         }
     }
 

@@ -298,6 +298,8 @@ const syncManager = {
                 version: item.version || null,
                 mixes: item.mixes || null,
                 isPodcast: item.isPodcast || (item.id && String(item.id).startsWith('podcast_')) || null,
+                isSoundCloud: item.isSoundCloud || (item.id && String(item.id).startsWith('sc_')) || null,
+                provider: item.provider || null,
                 enclosureUrl: item.enclosureUrl || null,
                 enclosureType: item.enclosureType || null,
                 enclosureLength: item.enclosureLength || null,

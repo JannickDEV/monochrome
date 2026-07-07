@@ -1758,6 +1758,10 @@ export class LosslessAPI {
     }
 
     async getTrackMetadata(id) {
+        if (String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getTrackById(id);
+        }
         const cacheKey = `meta_${id}`;
         const cached = await this.cache.get('track', cacheKey);
         if (cached) return cached;
@@ -2769,6 +2773,10 @@ export class LosslessAPI {
     }
 
     async getStreamUrl(id, quality = 'LOSSLESS', options = {}) {
+        if (String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getStreamUrl(id, options);
+        }
         if (devModeSettings.isEnabled() && !options._fromProvider) {
             return await this.getFallbackProvider(true).getStreamUrl(id, quality);
         }
@@ -3076,7 +3084,23 @@ export class LosslessAPI {
         let externalMediaMimeType = null;
         let externalSourceUrl = null;
 
-        if (isVideo) {
+        if (track?.provider === 'soundcloud' || track?.isSoundCloud || String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            const scStream = await soundCloudAPI.getStreamUrl(id);
+            externalStreamUrl = scStream.url;
+            externalProvider = 'soundcloud';
+            externalSourceUrl = scStream.url;
+            externalMimeType = scStream.mimeType;
+            lookup = {
+                info: {
+                    audioQuality: 'HIGH',
+                    trackReplayGain: 0,
+                    trackPeakAmplitude: 1,
+                    albumReplayGain: 0,
+                    albumPeakAmplitude: 1,
+                },
+            };
+        } else if (isVideo) {
             lookup = await this.getVideo(id);
         } else if (devModeSettings.isEnabled()) {
             let fallbackStream = null;

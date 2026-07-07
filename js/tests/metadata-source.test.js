@@ -71,6 +71,21 @@ describe('Metadata Source Markers and Cleaning', () => {
         expect(passedData.extra.TIDAL_DATA).toBeUndefined();
     });
 
+    test('adds SoundCloud marker to extra tags when provider is soundcloud', async () => {
+        const fakeBlob = new Blob(['fake audio'], { type: 'audio/mpeg' });
+        const track = {
+            id: 'sc_998877',
+            title: 'SoundCloud Remix',
+            provider: 'soundcloud',
+        };
+
+        await addMetadataToAudio(fakeBlob, track, {}, 'HIGH');
+
+        const passedData = addMetadataWithTagLibMock.mock.calls[addMetadataWithTagLibMock.mock.calls.length - 1][1];
+        expect(passedData.extra.SOURCE).toBe('SoundCloud');
+        expect(passedData.extra.PROVIDER).toBe('SoundCloud');
+    });
+
     test('readTrackMetadata extracts SOURCE and PROVIDER into metadata object', async () => {
         const fakeBlob = new Blob(['fake audio'], { type: 'audio/flac' });
         getMetadataWithTagLibMock.mockResolvedValue({

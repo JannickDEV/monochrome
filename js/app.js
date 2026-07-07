@@ -3024,7 +3024,7 @@ function escapeHtml(text) {
 
 function trackNeedsEnrichment(track) {
     if (!track || !track.id) return false;
-    if (track.isPodcast || track.isTracker) return false;
+    if (track.isPodcast || track.isTracker || track.isSoundCloud || track.provider === 'soundcloud' || (track.id && String(track.id).startsWith('sc_'))) return false;
     return !track.isrc || !track.album?.title || !track.album?.artist?.name || track.trackNumber == null;
 }
 
