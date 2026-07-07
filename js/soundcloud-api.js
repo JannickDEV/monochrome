@@ -5,10 +5,11 @@ const SC_API_BASE = 'https://api-v2.soundcloud.com';
 
 // Known working public client IDs as immediate fallback
 const FALLBACK_CLIENT_IDS = [
-    'iZIs9mchVcX5lhVRyQGGAYlNPVAnPzEn',
     'LBCcHmOAgOVzD9BmwT4k8vO9nD8vO9nD',
     '2t9loNQH90kzJcsFANAw61Xz4d3P1h4q',
     'a3e059563d7f63e3e404b9015bc29591',
+    'fDoItMDbsbZz8dY16ZzURWhAsJ6q150Y',
+    'iZIs9mchVcX5lhVRyQGGAYlNPVAnPzEn',
 ];
 
 export class SoundCloudAPI {
@@ -45,7 +46,7 @@ export class SoundCloudAPI {
         return this.clientId;
     }
 
-    async fetchWithRetry(endpoint, options = {}, retries = 2) {
+    async fetchWithRetry(endpoint, options = {}, retries = 4) {
         const clientId = await this.getClientId();
         const separator = endpoint.includes('?') ? '&' : '?';
         const url = `${SC_API_BASE}${endpoint}${separator}client_id=${clientId}`;
@@ -56,8 +57,8 @@ export class SoundCloudAPI {
                 signal: options.signal,
             });
 
-            if (response.status === 401 && retries > 0) {
-                console.warn('SoundCloud client ID 401 Unauthorized, rotating client ID...');
+            if ((response.status === 401 || response.status === 403 || response.status === 429) && retries > 0) {
+                console.warn(`SoundCloud client ID ${response.status}, rotating client ID...`);
                 this.rotateClientId();
                 return this.fetchWithRetry(endpoint, options, retries - 1);
             }
@@ -69,6 +70,15 @@ export class SoundCloudAPI {
             return await response.json();
         } catch (error) {
             if (error.name === 'AbortError') throw error;
+            
+            // When SoundCloud returns 401/403 on cross-origin requests, it omits CORS headers.
+            // This causes the browser to throw a TypeError (NetworkError / Failed to fetch) instead of returning the HTTP status.
+            if (retries > 0) {
+                console.warn('SoundCloud network/CORS error (likely expired client ID), rotating and retrying...');
+                this.rotateClientId();
+                return this.fetchWithRetry(endpoint, options, retries - 1);
+            }
+
             console.error('SoundCloud request error:', error);
             throw error;
         }
