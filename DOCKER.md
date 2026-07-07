@@ -30,8 +30,8 @@ Docker Compose [profiles](https://docs.docker.com/compose/how-tos/profiles/) con
 | --------------------------------------------------------- | ------------------------------------ |
 | `docker compose up -d`                                    | Monochrome                           |
 | `docker compose --profile pocketbase up -d`               | Monochrome + PocketBase              |
-| `docker compose --profile dev up -d`                      | Monochrome + Dev server              |
-| `docker compose --profile dev --profile pocketbase up -d` | Monochrome + Dev server + PocketBase |
+| `docker compose --profile dev up -d`                      | Monochrome + Dev server + Qobuz API  |
+| `docker compose --profile dev --profile pocketbase up -d` | Monochrome + Dev server + Qobuz API + PocketBase |
 
 In `docker-compose.yml`, it looks like this:
 
@@ -43,6 +43,9 @@ services:
         profiles: ['pocketbase'] # opt-in
 
     monochrome-dev:
+        profiles: ['dev'] # opt-in
+
+    qobuz-api:
         profiles: ['dev'] # opt-in
 ```
 

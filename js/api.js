@@ -28,6 +28,7 @@ import { DownloadProgress } from './progressEvents.js';
 import { resolveDownloadTotalBytes } from './downloadProgressUtils.js';
 import { readableStreamIterator } from './readableStreamIterator.js';
 import { HiFiClient, TidalResponse } from './HiFi.ts';
+import { QobuzClient, QobuzProvider, TidalProvider, FallbackProvider } from './services/index.js';
 import { isIos, isSafari, isChrome, canUseNativeAmazonCenc } from './platform-detection.js';
 import {
     TrackAlbum,
@@ -78,6 +79,38 @@ export class LosslessAPI {
             const toDelete = entries.slice(0, entries.length - 50);
             toDelete.forEach(([key]) => this.streamCache.delete(key));
         }
+    }
+
+    getFallbackProvider() {
+        const qobuzUrl = devModeSettings.getQobuzUrl();
+        const qobuzToken = devModeSettings.getQobuzToken();
+        const qobuzAppId = devModeSettings.getQobuzAppId();
+        const qobuzUserId = devModeSettings.getQobuzUserId();
+        const tidalUrl = devModeSettings.getUrl();
+
+        if (
+            !this._fallbackProvider ||
+            this._lastQobuzUrl !== qobuzUrl ||
+            this._lastQobuzToken !== qobuzToken ||
+            this._lastQobuzAppId !== qobuzAppId ||
+            this._lastQobuzUserId !== qobuzUserId ||
+            this._lastTidalUrl !== tidalUrl
+        ) {
+            this._lastQobuzUrl = qobuzUrl;
+            this._lastQobuzToken = qobuzToken;
+            this._lastQobuzAppId = qobuzAppId;
+            this._lastQobuzUserId = qobuzUserId;
+            this._lastTidalUrl = tidalUrl;
+
+            const providers = [];
+            if (qobuzUrl && qobuzUrl.trim()) {
+                providers.push(new QobuzProvider(new QobuzClient()));
+            }
+            providers.push(new TidalProvider(this));
+
+            this._fallbackProvider = new FallbackProvider(providers);
+        }
+        return this._fallbackProvider;
     }
 
     async fetchWithRetry(relativePath, options = {}) {
@@ -605,6 +638,9 @@ export class LosslessAPI {
     }
 
     async search(query, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().search(query, options);
+        }
         const cached = await this.cache.get('search_all', query);
         if (cached) return cached;
 
@@ -683,6 +719,9 @@ export class LosslessAPI {
     }
 
     async searchTracks(query, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().searchTracks(query, options);
+        }
         const cached = await this.cache.get('search_tracks', query);
         if (cached) return cached;
 
@@ -710,6 +749,9 @@ export class LosslessAPI {
     }
 
     async searchArtists(query, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().searchArtists(query, options);
+        }
         const cached = await this.cache.get('search_artists', query);
         if (cached) return cached;
 
@@ -736,6 +778,9 @@ export class LosslessAPI {
     }
 
     async searchAlbums(query, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().searchAlbums(query, options);
+        }
         const cached = await this.cache.get('search_albums', query);
         if (cached) return cached;
 
@@ -761,6 +806,9 @@ export class LosslessAPI {
     }
 
     async searchPlaylists(query, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().searchPlaylists(query, options);
+        }
         const cached = await this.cache.get('search_playlists', query);
         if (cached) return cached;
 
@@ -785,6 +833,9 @@ export class LosslessAPI {
     }
 
     async searchVideos(query, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().searchVideos(query, options);
+        }
         const cached = await this.cache.get('search_videos', query);
         if (cached) return cached;
 
@@ -833,7 +884,10 @@ export class LosslessAPI {
         return result;
     }
 
-    async getAlbum(id) {
+    async getAlbum(id, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().getAlbum(id);
+        }
         const cached = await this.cache.get('album', id);
         if (cached) return cached;
 
@@ -979,7 +1033,10 @@ export class LosslessAPI {
         return result;
     }
 
-    async getPlaylist(id) {
+    async getPlaylist(id, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().getPlaylist(id);
+        }
         const cached = await this.cache.get('playlist', id);
         if (cached) return cached;
 
@@ -1193,6 +1250,9 @@ export class LosslessAPI {
     }
 
     async getArtist(artistId, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().getArtist(artistId);
+        }
         const cacheKey = options.lightweight ? `artist_${artistId}_light` : `artist_${artistId}`;
         if (!options.skipCache) {
             const cached = await this.cache.get('artist', cacheKey);
@@ -1428,7 +1488,10 @@ export class LosslessAPI {
         }
     }
 
-    async getArtistBiography(artistId) {
+    async getArtistBiography(artistId, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().getArtistBiography(artistId);
+        }
         const cacheKey = `artist_bio_v1_${artistId}`;
         const cached = await this.cache.get('artist', cacheKey);
         if (cached) return cached;
@@ -1762,7 +1825,10 @@ export class LosslessAPI {
         return this.parseTrackLookup(await this.normalizeTrackManifestResponse(jsonResponse, quality));
     }
 
-    async getTrack(id, quality = 'LOSSLESS', { adaptive = false } = {}) {
+    async getTrack(id, quality = 'LOSSLESS', { adaptive = false, _fromProvider = false } = {}) {
+        if (devModeSettings.isEnabled() && !_fromProvider) {
+            return await this.getFallbackProvider().getTrack(id, quality);
+        }
         const cacheKey = `${id}_${quality}_${adaptive ? 'adaptive' : 'fixed'}`;
         const cached = await this.cache.get('track', cacheKey);
         if (cached) return cached;
@@ -1789,7 +1855,6 @@ export class LosslessAPI {
     }
 
     async getQobuzStreamUrl(isrc, quality = 'LOSSLESS') {
-        return null; // Temporarily disabled
         let qobuzInstances = [];
         try {
             qobuzInstances = await this.settings.getInstances('qobuz');
@@ -1970,6 +2035,8 @@ export class LosslessAPI {
         const normalized = String(codec || '').toLowerCase();
         if (normalized === 'flac') return 'fLaC';
         if (normalized === 'opus') return 'Opus';
+        if (normalized === 'aac' || normalized === 'mp4a.40.2') return 'mp4a.40.2';
+        if (normalized === 'eac3' || normalized === 'ec-3') return 'ec-3';
         return normalized;
     }
 
@@ -2097,54 +2164,73 @@ export class LosslessAPI {
             btn.innerHTML = `<svg class="animate-spin" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>`;
         });
 
-        return await new Promise((resolve, reject) => {
-            let timeoutId;
-            let widgetId;
-            const cleanup = () => {
-                playBtns.forEach((btn) => {
-                    if (oldHtmls.has(btn)) {
-                        btn.innerHTML = oldHtmls.get(btn);
+        const attemptTurnstile = (isRetry = false) => {
+            return new Promise((resolve, reject) => {
+                let timeoutId;
+                let widgetId;
+                const cleanup = () => {
+                    playBtns.forEach((btn) => {
+                        if (oldHtmls.has(btn)) {
+                            btn.innerHTML = oldHtmls.get(btn);
+                        }
+                    });
+                    clearTimeout(timeoutId);
+                    if (widgetId && turnstile.remove) {
+                        try {
+                            turnstile.remove(widgetId);
+                        } catch {}
                     }
-                });
-                clearTimeout(timeoutId);
-                if (widgetId && turnstile.remove) {
-                    try {
-                        turnstile.remove(widgetId);
-                    } catch {}
+                    document.getElementById('amazon-music-turnstile-panel')?.remove();
+                };
+
+                timeoutId = setTimeout(() => {
+                    cleanup();
+                    reject(new Error('Turnstile timed out'));
+                }, 30000);
+
+                const config = {
+                    sitekey: siteKey,
+                    size: 'invisible',
+                    execution: isRetry ? 'render' : 'execute',
+                    appearance: isRetry ? 'always' : 'interaction-only',
+                    theme: 'auto',
+                    'before-interactive-callback': () => {
+                        const p = document.getElementById('amazon-music-turnstile-panel');
+                        if (p) p.style.display = 'block';
+                    },
+                    callback: (token) => {
+                        cleanup();
+                        resolve(token);
+                    },
+                    'error-callback': () => {
+                        if (!isRetry) {
+                            if (widgetId && turnstile.remove) {
+                                try {
+                                    turnstile.remove(widgetId);
+                                } catch {}
+                            }
+                            clearTimeout(timeoutId);
+                            container.innerHTML = '';
+                            attemptTurnstile(true).then(resolve, reject);
+                        } else {
+                            cleanup();
+                            reject(new Error('Turnstile failed'));
+                        }
+                    },
+                    'expired-callback': () => {
+                        cleanup();
+                        reject(new Error('Turnstile expired'));
+                    },
+                };
+
+                widgetId = turnstile.render(container, config);
+                if (!isRetry) {
+                    turnstile.execute(widgetId);
                 }
-                document.getElementById('amazon-music-turnstile-panel')?.remove();
-            };
-
-            timeoutId = setTimeout(() => {
-                cleanup();
-                reject(new Error('Turnstile timed out'));
-            }, 30000);
-
-            widgetId = turnstile.render(container, {
-                sitekey: siteKey,
-                size: 'invisible',
-                execution: 'execute',
-                theme: 'auto',
-                'before-interactive-callback': () => {
-                    const p = document.getElementById('amazon-music-turnstile-panel');
-                    if (p) p.style.display = 'block';
-                },
-                callback: (token) => {
-                    cleanup();
-                    resolve(token);
-                },
-                'error-callback': () => {
-                    cleanup();
-                    reject(new Error('Turnstile failed'));
-                },
-                'expired-callback': () => {
-                    cleanup();
-                    reject(new Error('Turnstile expired'));
-                },
             });
+        };
 
-            turnstile.execute(widgetId);
-        });
+        return await attemptTurnstile(false);
     }
 
     async getTurnstileJwt({ forceRefresh = false } = {}) {
@@ -2204,6 +2290,10 @@ export class LosslessAPI {
         });
 
         return this._turnstileJwtPromise;
+    }
+
+    async canPlayAmazonMusicStream(streamInfo) {
+        return streamInfo?.provider === 'amazon';
     }
 
     bytesToHex(bytes) {
@@ -2675,7 +2765,10 @@ export class LosslessAPI {
         }
     }
 
-    async getStreamUrl(id, quality = 'LOSSLESS') {
+    async getStreamUrl(id, quality = 'LOSSLESS', options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().getStreamUrl(id, quality);
+        }
         const cacheKey = `stream_info_${id}_${quality}`;
 
         if (this.streamCache.has(cacheKey)) {
@@ -2731,18 +2824,30 @@ export class LosslessAPI {
         let qobuzResult = null;
         let deezerResult = null;
 
-        if (track?.isrc) {
-            qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality);
-        }
-        if (!qobuzResult?.url) {
+        const preferAmazon = Math.random() >= 0.5;
+        if (preferAmazon) {
             amazonResult = await this.getAmazonMusicStreamUrl(id, actualQuality, {
                 preferAdaptiveAuto: true,
                 track,
                 allowCencWithoutKeyId: needsProxyDecryption,
             });
             if (!amazonResult?.url && track?.isrc) {
-                deezerResult = await this.getDeezerStreamUrl(track.isrc, quality);
+                qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality);
             }
+        } else {
+            if (track?.isrc) {
+                qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality);
+            }
+            if (!qobuzResult?.url) {
+                amazonResult = await this.getAmazonMusicStreamUrl(id, actualQuality, {
+                    preferAdaptiveAuto: true,
+                    track,
+                    allowCencWithoutKeyId: needsProxyDecryption,
+                });
+            }
+        }
+        if (!amazonResult?.url && !qobuzResult?.url && track?.isrc) {
+            deezerResult = await this.getDeezerStreamUrl(track.isrc, quality);
         }
 
         if (amazonResult?.url) {
@@ -2791,7 +2896,7 @@ export class LosslessAPI {
             if (amazonResult) {
                 const result = {
                     url: streamUrl,
-                    sourceUrl: amazonResult.sourceUrl || streamUrl,
+                    sourceUrl: amazonResult.sourceUrl && amazonResult.sourceUrl !== streamUrl ? amazonResult.sourceUrl : undefined,
                     rgInfo: amazonResult.rgInfo,
                     provider: provider,
                     playbackType: playbackType,
@@ -2802,8 +2907,9 @@ export class LosslessAPI {
                     mimeType: amazonResult.mimeType,
                     mediaMimeType: amazonResult.mediaMimeType,
                 };
-                this.streamCache.set(cacheKey, result);
-                return result;
+                const cleanResult = Object.fromEntries(Object.entries(result).filter(([_, v]) => v !== undefined));
+                this.streamCache.set(cacheKey, cleanResult);
+                return cleanResult;
             }
         }
 
@@ -2860,10 +2966,35 @@ export class LosslessAPI {
             }
         }
 
+        const hifiInstances = await this.settings.getInstances('streaming').catch(() => []);
+        if (hifiInstances && hifiInstances.length > 0) {
+            try {
+                const hifiTrack = await this.getTrack(id, quality, { adaptive: false });
+                if (hifiTrack?.info?.manifest) {
+                    const manifest = JSON.parse(atob(hifiTrack.info.manifest));
+                    if (manifest?.urls?.[0]) {
+                        const result = {
+                            url: manifest.urls[0],
+                            rgInfo: {
+                                trackReplayGain: hifiTrack.info.trackReplayGain ?? 0,
+                                trackPeakAmplitude: hifiTrack.info.trackPeakAmplitude ?? 1,
+                                albumReplayGain: hifiTrack.info.albumReplayGain ?? 0,
+                                albumPeakAmplitude: hifiTrack.info.albumPeakAmplitude ?? 1,
+                            },
+                        };
+                        this.streamCache.set(cacheKey, result);
+                        return result;
+                    }
+                }
+            } catch {
+                // ignore fallback error
+            }
+        }
+
         notifyAudioSourceMissing();
         throw new Error(
             track?.isrc
-                ? 'Could not resolve stream URL from Amazon Music, Qobuz, or Deezer'
+                ? 'Could not resolve stream URL from Amazon Music, Qobuz, or HiFi streaming APIs'
                 : 'Could not resolve stream URL: Amazon Music failed and track has no ISRC for Qobuz/Deezer lookup'
         );
     }
@@ -3006,12 +3137,40 @@ export class LosslessAPI {
                         },
                     };
                 } else {
-                    notifyAudioSourceMissing();
-                    throw new Error(
-                        track?.isrc
-                            ? 'Could not resolve audio stream from Amazon Music, Qobuz, or Deezer'
-                            : 'Cannot resolve audio stream: Amazon Music failed and track has no ISRC for Qobuz/Deezer lookup'
-                    );
+                    try {
+                        lookup = new PlaybackInfo(await this.getTrack(id, cleanQuality));
+                    } catch (tidalError) {
+                        try {
+                            if (cleanQuality === 'HI_RES_LOSSLESS') {
+                                lookup = new PlaybackInfo(await this.getTrack(id, 'LOSSLESS'));
+                            } else {
+                                throw tidalError;
+                            }
+                        } catch {
+                            try {
+                                if (cleanQuality === 'HI_RES_LOSSLESS' || cleanQuality === 'LOSSLESS') {
+                                    lookup = new PlaybackInfo(await this.getTrack(id, 'HIGH'));
+                                } else {
+                                    throw tidalError;
+                                }
+                            } catch {
+                                try {
+                                    if (cleanQuality !== 'LOW') {
+                                        lookup = new PlaybackInfo(await this.getTrack(id, 'LOW'));
+                                    } else {
+                                        throw tidalError;
+                                    }
+                                } catch {
+                                    notifyAudioSourceMissing();
+                                    throw new Error(
+                                        track?.isrc
+                                            ? 'Could not resolve audio stream from Amazon Music, Qobuz, or Deezer'
+                                            : 'Cannot resolve audio stream: Amazon Music failed and track has no ISRC for Qobuz/Deezer lookup'
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -3364,6 +3523,14 @@ export class LosslessAPI {
     }
 
     getCoverUrl(id, size = '320') {
+        if (devModeSettings.isEnabled() && !this._inSyncCoverUrl) {
+            this._inSyncCoverUrl = true;
+            try {
+                return this.getFallbackProvider().getCoverUrl(id, size);
+            } finally {
+                this._inSyncCoverUrl = false;
+            }
+        }
         if (!id) {
             return `https://picsum.photos/seed/${Math.random()}/${size}`;
         }
@@ -3377,6 +3544,14 @@ export class LosslessAPI {
     }
 
     getCoverSrcset(id) {
+        if (devModeSettings.isEnabled() && !this._inSyncCoverSrcset) {
+            this._inSyncCoverSrcset = true;
+            try {
+                return this.getFallbackProvider().getCoverSrcset(id);
+            } finally {
+                this._inSyncCoverSrcset = false;
+            }
+        }
         if (
             !id ||
             (typeof id === 'string' && (id.startsWith('http') || id.startsWith('blob:') || id.startsWith('assets/')))
@@ -3390,6 +3565,14 @@ export class LosslessAPI {
     }
 
     getArtistPictureUrl(id, size = '320') {
+        if (devModeSettings.isEnabled() && !this._inSyncArtistPicUrl) {
+            this._inSyncArtistPicUrl = true;
+            try {
+                return this.getFallbackProvider().getArtistPictureUrl(id, size);
+            } finally {
+                this._inSyncArtistPicUrl = false;
+            }
+        }
         if (!id) {
             return `https://picsum.photos/seed/${Math.random()}/${size}`;
         }
@@ -3403,6 +3586,14 @@ export class LosslessAPI {
     }
 
     getArtistPictureSrcset(id) {
+        if (devModeSettings.isEnabled() && !this._inSyncArtistPicSrcset) {
+            this._inSyncArtistPicSrcset = true;
+            try {
+                return this.getFallbackProvider().getArtistPictureSrcset(id);
+            } finally {
+                this._inSyncArtistPicSrcset = false;
+            }
+        }
         if (!id || (typeof id === 'string' && (id.startsWith('blob:') || id.startsWith('assets/')))) {
             return '';
         }

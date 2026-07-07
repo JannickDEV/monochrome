@@ -3280,13 +3280,13 @@ export const modalSettings = {
 export const devModeSettings = {
     STORAGE_KEY: 'dev-mode-enabled',
     URL_KEY: 'dev-mode-url',
+    QOBUZ_URL_KEY: 'dev-mode-qobuz-url',
+    QOBUZ_APP_ID_KEY: 'dev-mode-qobuz-app-id',
+    QOBUZ_USER_ID_KEY: 'dev-mode-qobuz-user-id',
+    QOBUZ_TOKEN_KEY: 'dev-mode-qobuz-token',
 
     isEnabled() {
-        try {
-            return localStorage.getItem(this.STORAGE_KEY) === 'true';
-        } catch {
-            return false;
-        }
+        return true; // Hardcoded: Dev Mode is always enabled
     },
 
     setEnabled(enabled) {
@@ -3295,14 +3295,62 @@ export const devModeSettings = {
 
     getUrl() {
         try {
-            return localStorage.getItem(this.URL_KEY) || 'http://127.0.0.1:8000';
+            return localStorage.getItem(this.URL_KEY) || 'https://hifiapi.bitperfect.remotewire.net';
         } catch {
-            return 'http://127.0.0.1:8000';
+            return 'https://hifiapi.bitperfect.remotewire.net';
         }
     },
 
     setUrl(url) {
         localStorage.setItem(this.URL_KEY, url);
+    },
+
+    getQobuzUrl() {
+        try {
+            return localStorage.getItem(this.QOBUZ_URL_KEY) || 'https://qobuzapi.bitperfect.remotewire.net';
+        } catch {
+            return 'https://qobuzapi.bitperfect.remotewire.net';
+        }
+    },
+
+    setQobuzUrl(url) {
+        localStorage.setItem(this.QOBUZ_URL_KEY, url);
+    },
+
+    getQobuzAppId() {
+        try {
+            return localStorage.getItem(this.QOBUZ_APP_ID_KEY) || '712080172';
+        } catch {
+            return '712080172';
+        }
+    },
+
+    setQobuzAppId(appId) {
+        localStorage.setItem(this.QOBUZ_APP_ID_KEY, appId);
+    },
+
+    getQobuzUserId() {
+        try {
+            return localStorage.getItem(this.QOBUZ_USER_ID_KEY) || '2759740';
+        } catch {
+            return '2759740';
+        }
+    },
+
+    setQobuzUserId(userId) {
+        localStorage.setItem(this.QOBUZ_USER_ID_KEY, userId);
+    },
+
+    getQobuzToken() {
+        try {
+            return localStorage.getItem(this.QOBUZ_TOKEN_KEY) || 'nIZdVRJBsPsaKMPCl1Mmy_X-A6fE82BHBJRw2omHJjjD8MvVjdotB3uPBxfHn6J9yXY6pjb9s5yNUEe-0h92ww';
+        } catch {
+            return 'nIZdVRJBsPsaKMPCl1Mmy_X-A6fE82BHBJRw2omHJjjD8MvVjdotB3uPBxfHn6J9yXY6pjb9s5yNUEe-0h92ww';
+        }
+    },
+
+    setQobuzToken(token) {
+        localStorage.setItem(this.QOBUZ_TOKEN_KEY, token);
     },
 };
 

@@ -86,11 +86,20 @@ export async function initializeSettings(scrobbler, player, api, ui) {
     const devModeToggle = document.getElementById('dev-mode-toggle');
     const devModeUrlSetting = document.getElementById('dev-mode-url-setting');
     const devModeUrlInput = document.getElementById('dev-mode-url-input');
+    const devModeQobuzUrlInput = document.getElementById('dev-mode-qobuz-url-input');
+    const devModeQobuzAppIdInput = document.getElementById('dev-mode-qobuz-appid-input');
+    const devModeQobuzUserIdInput = document.getElementById('dev-mode-qobuz-userid-input');
+    const devModeQobuzTokenInput = document.getElementById('dev-mode-qobuz-token-input');
+    const testQobuzBtn = document.getElementById('test-qobuz-connection-btn');
 
     function updateDevModeUI() {
         if (devModeToggle) devModeToggle.checked = devModeSettings.isEnabled();
         if (devModeUrlSetting) devModeUrlSetting.style.display = devModeSettings.isEnabled() ? '' : 'none';
         if (devModeUrlInput) devModeUrlInput.value = devModeSettings.getUrl();
+        if (devModeQobuzUrlInput) devModeQobuzUrlInput.value = devModeSettings.getQobuzUrl();
+        if (devModeQobuzAppIdInput) devModeQobuzAppIdInput.value = devModeSettings.getQobuzAppId();
+        if (devModeQobuzUserIdInput) devModeQobuzUserIdInput.value = devModeSettings.getQobuzUserId();
+        if (devModeQobuzTokenInput) devModeQobuzTokenInput.value = devModeSettings.getQobuzToken();
     }
 
     updateDevModeUI();
@@ -105,6 +114,66 @@ export async function initializeSettings(scrobbler, player, api, ui) {
     if (devModeUrlInput) {
         devModeUrlInput.addEventListener('change', (e) => {
             devModeSettings.setUrl(e.target.value.trim());
+        });
+    }
+
+    if (devModeQobuzUrlInput) {
+        devModeQobuzUrlInput.addEventListener('change', (e) => {
+            devModeSettings.setQobuzUrl(e.target.value.trim());
+        });
+    }
+
+    if (devModeQobuzAppIdInput) {
+        devModeQobuzAppIdInput.addEventListener('change', (e) => {
+            devModeSettings.setQobuzAppId(e.target.value.trim());
+        });
+    }
+
+    if (devModeQobuzUserIdInput) {
+        devModeQobuzUserIdInput.addEventListener('change', (e) => {
+            devModeSettings.setQobuzUserId(e.target.value.trim());
+        });
+    }
+
+    if (devModeQobuzTokenInput) {
+        devModeQobuzTokenInput.addEventListener('change', (e) => {
+            devModeSettings.setQobuzToken(e.target.value.trim());
+        });
+    }
+
+    if (testQobuzBtn) {
+        testQobuzBtn.addEventListener('click', async () => {
+            testQobuzBtn.disabled = true;
+            const originalText = testQobuzBtn.textContent;
+            testQobuzBtn.textContent = 'Testing...';
+            try {
+                const userId = devModeSettings.getQobuzUserId();
+                const appId = devModeSettings.getQobuzAppId();
+                const token = devModeSettings.getQobuzToken();
+                const url = devModeSettings.getQobuzUrl().replace(/\/+$/, '') + `/user/login?user_id=${encodeURIComponent(userId)}&user_auth_token=${encodeURIComponent(token)}&app_id=${encodeURIComponent(appId)}`;
+                const headers = { 'Accept': 'application/json' };
+                if (appId) headers['X-App-Id'] = appId;
+                if (token) headers['X-User-Auth-Token'] = token;
+                if (userId) headers['X-User-Id'] = userId;
+                
+                const res = await fetch(url, { headers });
+                const data = await res.json().catch(() => null);
+                if (res.ok && data && !data.error) {
+                    testQobuzBtn.style.background = '#10b981';
+                    testQobuzBtn.textContent = 'Success!';
+                } else {
+                    throw new Error((data && data.error) || res.statusText || 'Connection failed');
+                }
+            } catch (err) {
+                testQobuzBtn.style.background = '#ef4444';
+                testQobuzBtn.textContent = `Failed: ${err.message || err}`;
+            } finally {
+                setTimeout(() => {
+                    testQobuzBtn.disabled = false;
+                    testQobuzBtn.style.background = '';
+                    testQobuzBtn.textContent = originalText;
+                }, 3000);
+            }
         });
     }
 

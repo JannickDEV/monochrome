@@ -5,6 +5,7 @@ import {
     getTrackArtists,
     escapeHtml,
     createQualityBadgeHTML,
+    createSourceBadgeHTML,
     positionMenu,
 } from './utils.js';
 import { sidePanelManager } from './side-panel.js';
@@ -252,6 +253,7 @@ export function initializeUIInteractions(player, api, ui) {
         const trackTitle = getTrackTitle(track);
         const trackArtists = getTrackArtists(track, { fallback: 'Unknown' });
         const qualityBadge = createQualityBadgeHTML(track);
+        const sourceBadge = createSourceBadgeHTML(track);
         const blockedTitle = isBlocked
             ? `title="Blocked: ${contentBlockingSettings.isTrackBlocked(track.id) ? 'Track blocked' : contentBlockingSettings.isArtistBlocked(track.artist?.id) ? 'Artist blocked' : 'Album blocked'}"`
             : '';
@@ -269,7 +271,7 @@ export function initializeUIInteractions(player, api, ui) {
                 <img crossorigin="anonymous" referrerpolicy="no-referrer" src="${coverUrl}"
                      class="track-item-cover" loading="lazy">
                 <div class="track-item-details">
-                    <div class="title">${escapeHtml(trackTitle)} ${qualityBadge}</div>
+                    <div class="title">${escapeHtml(trackTitle)} ${qualityBadge} ${sourceBadge}</div>
                     <div class="artist">${escapeHtml(trackArtists)}</div>
                 </div>
             </div>

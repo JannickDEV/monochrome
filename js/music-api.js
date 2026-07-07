@@ -319,6 +319,13 @@ export class MusicAPI {
         return this.tidalAPI.extractStreamUrlFromManifest(manifest);
     }
 
+    async canPlayAmazonMusicStream(streamInfo) {
+        if (typeof this.tidalAPI.canPlayAmazonMusicStream === 'function') {
+            return await this.tidalAPI.canPlayAmazonMusicStream(streamInfo);
+        }
+        return false;
+    }
+
     // Helper methods
     getProviderFromId(id) {
         if (typeof id === 'string') {

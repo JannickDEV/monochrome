@@ -17,6 +17,7 @@ vi.mock('../storage.js', () => ({
     trackDateSettings: { useAlbumYear: vi.fn(() => false) },
     devModeSettings: { isEnabled: vi.fn(() => false), getUrl: vi.fn(() => '') },
     amazonMusicSettings: { isEnabled: vi.fn(() => false) },
+    deezerFallbackSettings: { isEnabled: vi.fn(() => false), getApiBaseUrl: vi.fn(() => '') },
 }));
 
 vi.mock('../cache.js', () => ({
@@ -41,7 +42,12 @@ vi.mock('../HiFi.ts', () => ({
     HiFiClient: { instance: { query: vi.fn() } },
     TidalResponse: class {},
 }));
-vi.mock('../platform-detection.js', () => ({ isIos: false, isSafari: false, isChrome: true }));
+vi.mock('../platform-detection.js', () => ({
+    isIos: false,
+    isSafari: false,
+    isChrome: true,
+    canUseNativeAmazonCenc: false,
+}));
 vi.mock('../container-classes.js', () => ({
     TrackAlbum: class {},
     EnrichedAlbum: class {},
@@ -65,6 +71,7 @@ describe('LosslessAPI HiFi streaming fallback', () => {
     let api;
 
     beforeEach(() => {
+        vi.spyOn(Math, 'random').mockReturnValue(0.6);
         settings = {
             getInstances: vi.fn(async (type) => (type === 'streaming' ? [{ url: 'https://hifi.example' }] : [])),
         };
@@ -146,7 +153,7 @@ describe('LosslessAPI HiFi streaming fallback', () => {
         const result = await api.getStreamUrl('123', 'LOSSLESS');
 
         expect(result.url).toBe('https://audio.example/qobuz.flac');
-        expect(api.getAmazonMusicStreamUrl).toHaveBeenCalledWith('123', 'LOSSLESS');
+        expect(api.getAmazonMusicStreamUrl).toHaveBeenCalledWith('123', 'LOSSLESS', expect.any(Object));
         expect(api.getTrack).not.toHaveBeenCalled();
     });
 

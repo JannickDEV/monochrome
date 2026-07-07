@@ -68,6 +68,20 @@ services:
         networks:
             - monochrome-network
 
+    # Qobuz API local proxy -- starts with profile dev
+    qobuz-api:
+        build:
+            context: ../../qobuz-api
+            dockerfile: Dockerfile
+        container_name: qobuz-api
+        profiles:
+            - dev
+        ports:
+            - '${QOBUZ_API_PORT:-4322}:4322'
+        restart: unless-stopped
+        networks:
+            - monochrome-network
+
 networks:
     monochrome-network:
         driver: bridge

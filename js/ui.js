@@ -10,6 +10,7 @@ import {
     getTrackTitle,
     getTrackYearDisplay,
     createQualityBadgeHTML,
+    createSourceBadgeHTML,
     calculateTotalDuration,
     formatDuration,
     escapeHtml,
@@ -548,6 +549,7 @@ export class UIRenderer {
         const checkboxHTML = `<div class="track-checkbox" data-action="toggle-select">${SVG_CHECKBOX(18)}</div>`;
         const explicitBadge = hasExplicitContent(track) ? this.createExplicitBadge() : '';
         const qualityBadge = createQualityBadgeHTML(track);
+        const sourceBadge = createSourceBadgeHTML(track);
         const trackTitle = getTrackTitle(track);
         const isCurrentTrack = this.player?.currentTrack?.id === track.id;
 
@@ -607,6 +609,7 @@ export class UIRenderer {
                             ${escapeHtml(trackTitle)}
                             ${explicitBadge}
                             ${qualityBadge}
+                            ${sourceBadge}
                         </div>
                         <div class="artist">${getTrackArtistsHTML(track)}${yearDisplay}</div>
                     </div>
@@ -842,6 +845,7 @@ export class UIRenderer {
         if (contentBlockingSettings?.isHardcodedBlockedAlbum(album)) return '';
         const explicitBadge = hasExplicitContent(album) ? this.createExplicitBadge() : '';
         const qualityBadge = createQualityBadgeHTML(album);
+        const sourceBadge = createSourceBadgeHTML(album);
         const isBlocked = contentBlockingSettings?.shouldHideAlbum(album);
         let yearDisplay = '';
         if (album.releaseDate) {
@@ -865,7 +869,7 @@ export class UIRenderer {
             type: 'album',
             id: album.id,
             href: album._href || `/album/${album.id}`,
-            title: `${escapeHtml(album.title)} ${explicitBadge} ${qualityBadge}`,
+            title: `${escapeHtml(album.title)} ${explicitBadge} ${qualityBadge} ${sourceBadge}`,
             subtitle: `${escapeHtml(artistName)} • ${yearDisplay}${typeLabel}`,
             imageHTML: this.getCoverHTML(
                 album.cover,
@@ -1290,7 +1294,7 @@ export class UIRenderer {
             }
         }
 
-        return createQualityBadgeHTML(track);
+        return `${createQualityBadgeHTML(track)} ${createSourceBadgeHTML(track)}`;
     }
 
     async updateFullscreenMetadata(track, nextTrack) {
@@ -3888,6 +3892,7 @@ export class UIRenderer {
     createTrackCardHTML(track) {
         const explicitBadge = hasExplicitContent(track) ? this.createExplicitBadge() : '';
         const qualityBadge = createQualityBadgeHTML(track);
+        const sourceBadge = createSourceBadgeHTML(track);
         const isCompact = cardSettings.isCompactAlbum();
         const likeType = track.type === 'video' ? 'video' : 'track';
         const yearDisplay = getTrackYearDisplay(track);
@@ -3896,7 +3901,7 @@ export class UIRenderer {
             type: 'track',
             id: track.id,
             href: `/track/${track.id}`,
-            title: `${escapeHtml(getTrackTitle(track))} ${explicitBadge} ${qualityBadge}`,
+            title: `${escapeHtml(getTrackTitle(track))} ${explicitBadge} ${qualityBadge} ${sourceBadge}`,
             subtitle: `${escapeHtml(getTrackArtists(track))}${yearDisplay}`,
             imageHTML: this.getCoverHTML(
                 track.album?.cover,
@@ -7119,7 +7124,8 @@ export class UIRenderer {
 
             const explicitBadge = hasExplicitContent(track) ? this.createExplicitBadge() : '';
             const qualityBadge = createQualityBadgeHTML(track);
-            titleEl.innerHTML = `${escapeHtml(track.title)} ${explicitBadge} ${qualityBadge}`;
+            const sourceBadge = createSourceBadgeHTML(track);
+            titleEl.innerHTML = `${escapeHtml(track.title)} ${explicitBadge} ${qualityBadge} ${sourceBadge}`;
             this.adjustTitleFontSize(titleEl, track.title);
 
             artistEl.innerHTML = getTrackArtistsHTML(track);
