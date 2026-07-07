@@ -47,8 +47,8 @@ const syncManager = {
                         user: uid,
                         username: authManager.user?.email?.split('@')[0] || `user_${uid.slice(0, 8)}`,
                         display_name: authManager.user?.name || '',
-                        privacy_playlists: true,
-                        privacy_lastfm: true,
+                        privacy_playlists: 'public',
+                        privacy_lastfm: 'public',
                     });
                 }
             }
@@ -62,8 +62,8 @@ const syncManager = {
                 about: profileRecord.about,
                 website: profileRecord.website,
                 privacy: {
-                    playlists: profileRecord.privacy_playlists ? 'public' : 'private',
-                    lastfm: profileRecord.privacy_lastfm ? 'public' : 'private',
+                    playlists: (profileRecord.privacy_playlists === 'public' || profileRecord.privacy_playlists === true) ? 'public' : 'private',
+                    lastfm: (profileRecord.privacy_lastfm === 'public' || profileRecord.privacy_lastfm === true) ? 'public' : 'private',
                 },
                 lastfm_username: profileRecord.lastfm_username,
                 favorite_albums: [],
@@ -521,8 +521,8 @@ const syncManager = {
                 ...record,
                 banner: record.banner_url,
                 privacy: {
-                    playlists: record.privacy_playlists ? 'public' : 'private',
-                    lastfm: record.privacy_lastfm ? 'public' : 'private',
+                    playlists: (record.privacy_playlists === 'public' || record.privacy_playlists === true) ? 'public' : 'private',
+                    lastfm: (record.privacy_lastfm === 'public' || record.privacy_lastfm === true) ? 'public' : 'private',
                 },
                 user_playlists: {},
                 favorite_albums: [],
@@ -547,8 +547,8 @@ const syncManager = {
             if ('website' in data) updateData.website = data.website;
             if ('lastfm_username' in data) updateData.lastfm_username = data.lastfm_username;
             if ('privacy' in data) {
-                updateData.privacy_playlists = data.privacy.playlists === 'public' || data.privacy.playlists === true;
-                updateData.privacy_lastfm = data.privacy.lastfm === 'public' || data.privacy.lastfm === true;
+                updateData.privacy_playlists = (data.privacy.playlists === 'public' || data.privacy.playlists === true) ? 'public' : 'private';
+                updateData.privacy_lastfm = (data.privacy.lastfm === 'public' || data.privacy.lastfm === true) ? 'public' : 'private';
             }
             await pb.collection('profiles').update(record.id, updateData);
         } catch (err) {
