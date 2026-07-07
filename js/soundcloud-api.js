@@ -5,6 +5,8 @@ const SC_API_BASE = 'https://api-v2.soundcloud.com';
 
 // Known working public client IDs as immediate fallback
 const FALLBACK_CLIENT_IDS = [
+    '6bs1qIDBmrmh7FpcKRIDvzadJ2ZzpRwe',
+    'YNSWSuvBmbIa5j7gpUTImuB9itX3isOC',
     'LBCcHmOAgOVzD9BmwT4k8vO9nD8vO9nD',
     '2t9loNQH90kzJcsFANAw61Xz4d3P1h4q',
     'a3e059563d7f63e3e404b9015bc29591',
@@ -46,7 +48,7 @@ export class SoundCloudAPI {
         return this.clientId;
     }
 
-    async fetchWithRetry(endpoint, options = {}, retries = 4) {
+    async fetchWithRetry(endpoint, options = {}, retries = 6) {
         const clientId = await this.getClientId();
         const separator = endpoint.includes('?') ? '&' : '?';
         const url = `${SC_API_BASE}${endpoint}${separator}client_id=${clientId}`;
