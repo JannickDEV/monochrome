@@ -1,6 +1,5 @@
 import { syncManager } from './accounts/pocketbase.js';
 import { authManager } from './accounts/auth.js';
-import { authApi } from './accounts/authApi.js';
 import { navigate } from './router.js';
 import { SVG_BIN, SVG_SQUARE_PEN } from './icons.js';
 
@@ -158,10 +157,9 @@ export class ThemeStore {
         }
 
         try {
-            const params = new URLSearchParams({ perPage: String(THEMES_PER_PAGE) });
             const queryLower = query.trim().toLowerCase();
-            if (queryLower) params.set('q', queryLower);
-            const result = await authApi(`/api/themes?${params.toString()}`);
+            const filter = queryLower ? `name ~ "${queryLower}" || description ~ "${queryLower}"` : '';
+            const result = await this.pb.collection('themes').getList(1, THEMES_PER_PAGE, { filter, expand: 'author' });
             this.loadingIndicator.style.display = 'none';
             const items = (result.items || []).map((theme) => this.normalizeTheme(theme));
             const filteredItems = queryLower
@@ -277,7 +275,7 @@ export class ThemeStore {
             const fbUser = authManager.user;
             if (!fbUser) throw new Error('Not authenticated');
 
-            await authApi(`/api/themes/${encodeURIComponent(themeId)}`, { method: 'DELETE' });
+            await this.pb.collection('themes').delete(themeId);
             alert('Theme deleted successfully.');
             await this.loadThemes();
         } catch (err) {
@@ -566,16 +564,11 @@ export class ThemeStore {
             };
 
             if (this.editingThemeId) {
-                await authApi(`/api/themes/${encodeURIComponent(this.editingThemeId)}`, {
-                    method: 'PATCH',
-                    body: JSON.stringify(formData),
-                });
+                await this.pb.collection('themes').update(this.editingThemeId, formData);
                 alert('Theme updated successfully!');
             } else {
-                await authApi('/api/themes', {
-                    method: 'POST',
-                    body: JSON.stringify(formData),
-                });
+                formData.author = userId;
+                await this.pb.collection('themes').create(formData);
                 alert('Theme uploaded successfully!');
             }
 

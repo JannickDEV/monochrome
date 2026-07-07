@@ -1,18 +1,18 @@
 [
     {
-        "id": "pbc_app_users",
-        "listRule": null,
-        "viewRule": null,
-        "createRule": null,
-        "updateRule": null,
-        "deleteRule": null,
-        "name": "app_users",
-        "type": "base",
+        "id": "_pb_users_auth_",
+        "listRule": "id = @request.auth.id",
+        "viewRule": "id = @request.auth.id",
+        "createRule": "",
+        "updateRule": "id = @request.auth.id",
+        "deleteRule": "id = @request.auth.id",
+        "name": "users",
+        "type": "auth",
         "fields": [
             {
                 "autogeneratePattern": "[a-z0-9]{15}",
                 "hidden": false,
-                "id": "text_id_app_users",
+                "id": "text_id_users",
                 "max": 15,
                 "min": 15,
                 "name": "id",
@@ -25,44 +25,7 @@
             },
             {
                 "hidden": false,
-                "id": "text_better_auth_id",
-                "max": 0,
-                "min": 0,
-                "name": "better_auth_id",
-                "pattern": "",
-                "presentable": false,
-                "primaryKey": false,
-                "required": true,
-                "system": false,
-                "type": "text"
-            },
-            {
-                "exceptDomains": null,
-                "hidden": false,
-                "id": "email_app_users",
-                "name": "email",
-                "onlyDomains": null,
-                "presentable": false,
-                "required": true,
-                "system": false,
-                "type": "email"
-            },
-            {
-                "hidden": false,
-                "id": "text_app_user_name",
-                "max": 0,
-                "min": 0,
-                "name": "name",
-                "pattern": "",
-                "presentable": false,
-                "primaryKey": false,
-                "required": false,
-                "system": false,
-                "type": "text"
-            },
-            {
-                "hidden": false,
-                "id": "autodate_app_users_created",
+                "id": "autodate_users_created",
                 "name": "created",
                 "onCreate": true,
                 "onUpdate": false,
@@ -72,7 +35,7 @@
             },
             {
                 "hidden": false,
-                "id": "autodate_app_users_updated",
+                "id": "autodate_users_updated",
                 "name": "updated",
                 "onCreate": true,
                 "onUpdate": true,
@@ -81,10 +44,18 @@
                 "type": "autodate"
             }
         ],
-        "indexes": [
-            "CREATE UNIQUE INDEX `idx_app_users_better_auth_id` ON `app_users` (`better_auth_id`)",
-            "CREATE UNIQUE INDEX `idx_app_users_email` ON `app_users` (`email`)"
-        ],
+        "indexes": [],
+        "options": {
+            "allowEmailAuth": true,
+            "allowOAuth2Auth": true,
+            "allowUsernameAuth": true,
+            "exceptEmailDomains": null,
+            "manageRule": null,
+            "minPasswordLength": 8,
+            "onlyEmailDomains": null,
+            "onlyVerified": false,
+            "requireEmail": false
+        },
         "system": false
     },
     {
@@ -113,7 +84,7 @@
             },
             {
                 "cascadeDelete": true,
-                "collectionId": "pbc_app_users",
+                "collectionId": "_pb_users_auth_",
                 "hidden": false,
                 "id": "rel_profiles_user",
                 "maxSelect": 1,
@@ -218,7 +189,10 @@
                 "required": false,
                 "system": false,
                 "type": "select",
-                "values": ["public", "private"]
+                "values": [
+                    "public",
+                    "private"
+                ]
             },
             {
                 "hidden": false,
@@ -229,7 +203,10 @@
                 "required": false,
                 "system": false,
                 "type": "select",
-                "values": ["public", "private"]
+                "values": [
+                    "public",
+                    "private"
+                ]
             },
             {
                 "hidden": false,
@@ -266,7 +243,11 @@
                 "required": false,
                 "system": false,
                 "type": "select",
-                "values": ["manual", "lastfm", "librefm"]
+                "values": [
+                    "manual",
+                    "lastfm",
+                    "librefm"
+                ]
             },
             {
                 "hidden": false,
@@ -321,7 +302,7 @@
             },
             {
                 "cascadeDelete": true,
-                "collectionId": "pbc_app_users",
+                "collectionId": "_pb_users_auth_",
                 "hidden": false,
                 "id": "rel_library_owner",
                 "maxSelect": 1,
@@ -341,7 +322,14 @@
                 "required": true,
                 "system": false,
                 "type": "select",
-                "values": ["track", "video", "album", "artist", "playlist", "mix"]
+                "values": [
+                    "track",
+                    "video",
+                    "album",
+                    "artist",
+                    "playlist",
+                    "mix"
+                ]
             },
             {
                 "hidden": false,
@@ -429,7 +417,7 @@
             },
             {
                 "cascadeDelete": true,
-                "collectionId": "pbc_app_users",
+                "collectionId": "_pb_users_auth_",
                 "hidden": false,
                 "id": "rel_history_owner",
                 "maxSelect": 1,
@@ -449,7 +437,11 @@
                 "required": true,
                 "system": false,
                 "type": "select",
-                "values": ["track", "video", "podcast"]
+                "values": [
+                    "track",
+                    "video",
+                    "podcast"
+                ]
             },
             {
                 "hidden": false,
@@ -506,7 +498,9 @@
                 "type": "autodate"
             }
         ],
-        "indexes": ["CREATE INDEX `idx_history_owner_played_at` ON `history_items` (`owner`, `played_at` DESC)"],
+        "indexes": [
+            "CREATE INDEX `idx_history_owner_played_at` ON `history_items` (`owner`, `played_at` DESC)"
+        ],
         "system": false
     },
     {
@@ -535,7 +529,7 @@
             },
             {
                 "cascadeDelete": true,
-                "collectionId": "pbc_app_users",
+                "collectionId": "_pb_users_auth_",
                 "hidden": false,
                 "id": "rel_playlists_owner",
                 "maxSelect": 1,
@@ -679,7 +673,11 @@
                 "required": true,
                 "system": false,
                 "type": "select",
-                "values": ["track", "video", "podcast"]
+                "values": [
+                    "track",
+                    "video",
+                    "podcast"
+                ]
             },
             {
                 "hidden": false,
@@ -780,7 +778,7 @@
             },
             {
                 "cascadeDelete": true,
-                "collectionId": "pbc_app_users",
+                "collectionId": "_pb_users_auth_",
                 "hidden": false,
                 "id": "rel_folders_owner",
                 "maxSelect": 1,
@@ -970,7 +968,7 @@
             },
             {
                 "cascadeDelete": true,
-                "collectionId": "pbc_app_users",
+                "collectionId": "_pb_users_auth_",
                 "hidden": false,
                 "id": "rel_favorite_albums_owner",
                 "maxSelect": 1,
@@ -1037,7 +1035,9 @@
                 "type": "autodate"
             }
         ],
-        "indexes": ["CREATE UNIQUE INDEX `idx_favorite_albums_owner_album` ON `favorite_albums` (`owner`, `album_id`)"],
+        "indexes": [
+            "CREATE UNIQUE INDEX `idx_favorite_albums_owner_album` ON `favorite_albums` (`owner`, `album_id`)"
+        ],
         "system": false
     },
     {
@@ -1066,7 +1066,7 @@
             },
             {
                 "cascadeDelete": true,
-                "collectionId": "pbc_app_users",
+                "collectionId": "_pb_users_auth_",
                 "hidden": false,
                 "id": "rel_themes_author",
                 "maxSelect": 1,
@@ -1173,7 +1173,9 @@
                 "type": "autodate"
             }
         ],
-        "indexes": ["CREATE INDEX `idx_themes_author_updated` ON `themes` (`author`, `updated`)"],
+        "indexes": [
+            "CREATE INDEX `idx_themes_author_updated` ON `themes` (`author`, `updated`)"
+        ],
         "system": false
     }
 ]
