@@ -280,17 +280,17 @@ export async function getMetadataFromAudio(message: _GetMetadataMessage): Promis
     }
 
     // Custom tags written by addMetadataToAudio
-    // I will only add TIDAL_DATA here for now
-    // since it contains all the other information
-    // related to TIDAL, and I don't want to clutter
-    // the main metadata with too many custom fields
     const extra: Record<string, string> = {};
+    const source = props.get('SOURCE')?.[0];
+    const provider = props.get('PROVIDER')?.[0];
     const tidalTrackId = props.get('TIDAL_TRACK_ID')?.[0];
     const tidalAlbumId = props.get('TIDAL_ALBUM_ID')?.[0];
     const tidalTrackUrl = props.get('TIDAL_TRACK_URL')?.[0];
     const tidalAlbumUrl = props.get('TIDAL_ALBUM_URL')?.[0];
     const albumReleaseDate = props.get('ALBUM_RELEASE_DATE')?.[0];
     const tidalDataRaw = props.get('TIDAL_DATA')?.[0];
+    if (source) extra.SOURCE = source;
+    if (provider) extra.PROVIDER = provider;
     if (tidalTrackId) extra.TIDAL_TRACK_ID = tidalTrackId;
     if (tidalAlbumId) extra.TIDAL_ALBUM_ID = tidalAlbumId;
     if (tidalTrackUrl) extra.TIDAL_TRACK_URL = tidalTrackUrl;

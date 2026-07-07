@@ -3255,8 +3255,15 @@ export class LosslessAPI {
             enrichedTrack.album = new TrackAlbum(enrichedTrack.album);
         }
 
+        if (!externalProvider) {
+            externalProvider = 'tidal';
+        }
+        enrichedTrack.provider = externalProvider;
+
         const finalEnriched = new EnrichedTrack(enrichedTrack);
+        finalEnriched.provider = externalProvider;
         const result = { lookup, enrichedTrack: finalEnriched, isVideo };
+        result.provider = externalProvider;
         if (externalStreamUrl) {
             result.externalStreamUrl = externalStreamUrl;
             result.externalStreamType = externalStreamType;

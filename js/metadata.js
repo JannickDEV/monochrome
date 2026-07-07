@@ -37,8 +37,8 @@ export function prefetchMetadataObjects(track, api, coverBlob = null) {
  * @param {string} quality - Audio quality
  * @returns {Promise<Blob>} - Audio blob with embedded metadata
  */
-export async function addMetadataToAudio(audioBlob, track, _api, _quality, prefetchPromises) {
-    const { coverFetch, lyricsFetch } = prefetchPromises;
+export async function addMetadataToAudio(audioBlob, track, _api, _quality, prefetchPromises = {}) {
+    const { coverFetch, lyricsFetch } = prefetchPromises || {};
 
     /**
      * @type {TagLibMetadata}
@@ -61,13 +61,19 @@ export async function addMetadataToAudio(audioBlob, track, _api, _quality, prefe
         data.upc = track.album?.upc;
         data.explicit = Boolean(track.explicit);
         data.stik = track.type?.toLowerCase().includes('video') ? Mp4Stik.MusicVideo : Mp4Stik.Normal;
+        const providerName = (track.provider || track.source || 'TIDAL').toLowerCase();
+        const sourceLabel = providerName === 'qobuz' ? 'Qobuz' :
+                            providerName === 'amazon' ? 'Amazon Music' :
+                            providerName === 'deezer' ? 'Deezer' : 'TIDAL';
+
         data.extra = {
+            SOURCE: sourceLabel,
+            PROVIDER: sourceLabel,
             TIDAL_TRACK_ID: track.id ? String(track.id) : undefined,
             TIDAL_ALBUM_ID: track.album?.id ? String(track.album?.id) : undefined,
             TIDAL_TRACK_URL: track.url?.trim() || undefined,
             TIDAL_ALBUM_URL: track.album?.url?.trim() || undefined,
             ALBUM_RELEASE_DATE: track.album?.releaseDate?.trim() || undefined,
-            TIDAL_DATA: JSON.stringify(track, null, 2).replace(/\n/g, '\r\n'),
         };
 
         if (track.bpm != null) {
@@ -192,6 +198,11 @@ export async function readTrackMetadata(file, { filename = file?.name || 'Unknow
             metadata.isrc = data.isrc || metadata.isrc;
             metadata.copyright = data.copyright || metadata.copyright;
             metadata.explicit = !!data.explicit;
+
+            if (data.extra?.SOURCE || data.extra?.PROVIDER) {
+                metadata.provider = data.extra.PROVIDER || data.extra.SOURCE;
+                metadata.source = data.extra.SOURCE || data.extra.PROVIDER;
+            }
 
             // parse TIDAL_DATA if present
             if (data.extra?.TIDAL_DATA) {
