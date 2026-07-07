@@ -103,16 +103,45 @@ export class SoundCloudAPI {
         return null;
     }
 
-    async fetchWithRetry(endpoint, options = {}, retries = 6) {
+    async fetchViaProxy(url, signal) {
+        const proxyFetchers = [
+            (targetUrl) => `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+            (targetUrl) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
+            (targetUrl) => `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+        ];
+
+        for (const buildProxyUrl of proxyFetchers) {
+            try {
+                const proxyUrl = buildProxyUrl(url);
+                const res = await fetch(proxyUrl, { method: 'GET', signal });
+                if (res.ok) {
+                    return res;
+                }
+            } catch {}
+        }
+        return null;
+    }
+
+    async fetchWithRetry(endpoint, options = {}, retries = 10) {
         const clientId = await this.getClientId();
         const separator = endpoint.includes('?') ? '&' : '?';
         const url = `${SC_API_BASE}${endpoint}${separator}client_id=${clientId}`;
 
         try {
-            const response = await fetch(url, {
-                method: 'GET',
-                signal: options.signal,
-            });
+            let response;
+            try {
+                response = await fetch(url, {
+                    method: 'GET',
+                    signal: options.signal,
+                });
+            } catch (networkErr) {
+                if (networkErr.name === 'AbortError') throw networkErr;
+                console.info('Direct SoundCloud API fetch failed (likely browser CORS restriction). Attempting via CORS proxy...');
+                response = await this.fetchViaProxy(url, options.signal);
+                if (!response) {
+                    throw networkErr;
+                }
+            }
 
             if ((response.status === 401 || response.status === 403 || response.status === 429) && retries > 0) {
                 console.warn(`SoundCloud client ID ${response.status}, rotating client ID...`);
@@ -125,6 +154,10 @@ export class SoundCloudAPI {
             }
 
             if (!response.ok) {
+                const proxyRes = await this.fetchViaProxy(url, options.signal);
+                if (proxyRes && proxyRes.ok) {
+                    return await proxyRes.json();
+                }
                 throw new Error(`SoundCloud API failed with status ${response.status}`);
             }
 
@@ -132,10 +165,8 @@ export class SoundCloudAPI {
         } catch (error) {
             if (error.name === 'AbortError') throw error;
             
-            // When SoundCloud returns 401/403 on cross-origin requests, it omits CORS headers.
-            // This causes the browser to throw a TypeError (NetworkError / Failed to fetch) instead of returning the HTTP status.
             if (retries > 0) {
-                console.warn('SoundCloud network/CORS error (likely expired client ID), rotating and retrying...');
+                console.warn('SoundCloud network/CORS error after proxy attempts, rotating client ID and retrying...');
                 if (retries === 1) {
                     await this.extractFreshClientId();
                 } else {
