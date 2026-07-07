@@ -6,13 +6,17 @@ const SC_API_BASE = 'https://api-v2.soundcloud.com';
 // Known working public client IDs as immediate fallback
 const FALLBACK_CLIENT_IDS = [
     '6bs1qIDBmrmh7FpcKRIDvzadJ2ZzpRwe',
+    'iZIs9mchVcX5lhVRyQGGAYlNPVAnPzEn',
+];
+
+// Known expired/revoked client IDs to automatically purge from user localStorage
+const REVOKED_CLIENT_IDS = new Set([
     'YNSWSuvBmbIa5j7gpUTImuB9itX3isOC',
     'LBCcHmOAgOVzD9BmwT4k8vO9nD8vO9nD',
     '2t9loNQH90kzJcsFANAw61Xz4d3P1h4q',
     'a3e059563d7f63e3e404b9015bc29591',
     'fDoItMDbsbZz8dY16ZzURWhAsJ6q150Y',
-    'iZIs9mchVcX5lhVRyQGGAYlNPVAnPzEn',
-];
+]);
 
 export class SoundCloudAPI {
     constructor() {
@@ -23,12 +27,15 @@ export class SoundCloudAPI {
     }
 
     async getClientId() {
-        if (this.clientId) return this.clientId;
+        if (this.clientId && !REVOKED_CLIENT_IDS.has(this.clientId)) return this.clientId;
 
         // Try checking localStorage first
         try {
             const cached = localStorage.getItem('sc_client_id');
-            if (cached && cached.length === 32) {
+            if (cached && REVOKED_CLIENT_IDS.has(cached)) {
+                console.info('Purging revoked SoundCloud client ID from localStorage:', cached);
+                localStorage.removeItem('sc_client_id');
+            } else if (cached && cached.length === 32) {
                 this.clientId = cached;
                 return this.clientId;
             }
