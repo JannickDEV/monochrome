@@ -81,14 +81,15 @@ export class LosslessAPI {
         }
     }
 
-    getFallbackProvider() {
+    getFallbackProvider(isStreaming = false) {
         const qobuzUrl = devModeSettings.getQobuzUrl();
         const qobuzToken = devModeSettings.getQobuzToken();
         const qobuzUserId = devModeSettings.getQobuzUserId();
         const tidalUrl = devModeSettings.getUrl();
 
         if (
-            !this._fallbackProvider ||
+            !this._metadataProvider ||
+            !this._streamingProvider ||
             this._lastQobuzUrl !== qobuzUrl ||
             this._lastQobuzToken !== qobuzToken ||
             this._lastQobuzUserId !== qobuzUserId ||
@@ -99,15 +100,20 @@ export class LosslessAPI {
             this._lastQobuzUserId = qobuzUserId;
             this._lastTidalUrl = tidalUrl;
 
-            const providers = [];
-            if (qobuzUrl && qobuzUrl.trim()) {
-                providers.push(new QobuzProvider(new QobuzClient()));
-            }
-            providers.push(new TidalProvider(this));
+            const qobuzProvider = qobuzUrl && qobuzUrl.trim() ? new QobuzProvider(new QobuzClient()) : null;
+            const tidalProvider = new TidalProvider(this);
 
-            this._fallbackProvider = new FallbackProvider(providers);
+            const metadataProviders = [tidalProvider];
+            if (qobuzProvider) metadataProviders.push(qobuzProvider);
+
+            const streamingProviders = [];
+            if (qobuzProvider) streamingProviders.push(qobuzProvider);
+            streamingProviders.push(tidalProvider);
+
+            this._metadataProvider = new FallbackProvider(metadataProviders);
+            this._streamingProvider = new FallbackProvider(streamingProviders);
         }
-        return this._fallbackProvider;
+        return isStreaming ? this._streamingProvider : this._metadataProvider;
     }
 
     async fetchWithRetry(relativePath, options = {}) {
@@ -2764,7 +2770,7 @@ export class LosslessAPI {
 
     async getStreamUrl(id, quality = 'LOSSLESS', options = {}) {
         if (devModeSettings.isEnabled() && !options._fromProvider) {
-            return await this.getFallbackProvider().getStreamUrl(id, quality);
+            return await this.getFallbackProvider(true).getStreamUrl(id, quality);
         }
         const cacheKey = `stream_info_${id}_${quality}`;
 
