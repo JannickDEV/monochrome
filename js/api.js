@@ -3079,7 +3079,32 @@ export class LosslessAPI {
         if (isVideo) {
             lookup = await this.getVideo(id);
         } else if (devModeSettings.isEnabled()) {
-            lookup = new PlaybackInfo(await this.getTrackFromDevMode(id, cleanQuality));
+            let fallbackStream = null;
+            try {
+                const fallbackProvider = this.getFallbackProvider(true);
+                if (fallbackProvider) {
+                    fallbackStream = await fallbackProvider.getTrackForDownload(id, cleanQuality);
+                }
+            } catch (err) {
+                console.debug('[DevMode Download] Fallback download lookup failed, falling back to TIDAL Dev Mode:', err);
+            }
+
+            if (fallbackStream && fallbackStream.url && fallbackStream.provider === 'qobuz') {
+                externalStreamUrl = fallbackStream.url;
+                externalProvider = 'qobuz';
+                externalSourceUrl = fallbackStream.url;
+                lookup = {
+                    info: {
+                        audioQuality: fallbackStream.quality || cleanQuality,
+                        trackReplayGain: fallbackStream.rgInfo?.trackReplayGain ?? 0,
+                        trackPeakAmplitude: fallbackStream.rgInfo?.trackPeakAmplitude ?? 1,
+                        albumReplayGain: fallbackStream.rgInfo?.albumReplayGain ?? 0,
+                        albumPeakAmplitude: fallbackStream.rgInfo?.albumPeakAmplitude ?? 1,
+                    },
+                };
+            } else {
+                lookup = new PlaybackInfo(await this.getTrackFromDevMode(id, cleanQuality));
+            }
         } else {
             let amazonResult = null;
             let qobuzResult = null;

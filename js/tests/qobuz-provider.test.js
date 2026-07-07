@@ -70,15 +70,34 @@ describe('QobuzProvider', () => {
         });
     });
 
-    test('getStreamUrl maps LOSSLESS to format_id 7', async () => {
+    test('getStreamUrl maps LOSSLESS to format_id 6', async () => {
         mockClient.request.mockResolvedValueOnce({ url: 'https://stream.qobuz.com/lossless.flac' });
 
         await provider.getStreamUrl('100', 'LOSSLESS');
 
         expect(mockClient.request).toHaveBeenCalledWith('/trackManifests/', {
             id: '100',
+            format_id: '6',
+            intent: 'stream',
+        });
+    });
+
+    test('getTrackForDownload calls /track/getFileUrl with correct format_id', async () => {
+        mockClient.request.mockResolvedValueOnce({ url: 'https://stream.qobuz.com/download.flac' });
+
+        const res = await provider.getTrackForDownload('100', 'HI_RES');
+
+        expect(mockClient.request).toHaveBeenCalledWith('/track/getFileUrl', {
+            track_id: '100',
+            id: '100',
             format_id: '7',
             intent: 'stream',
+        });
+        expect(res).toEqual({
+            url: 'https://stream.qobuz.com/download.flac',
+            provider: 'qobuz',
+            quality: 'HI_RES',
+            rgInfo: null,
         });
     });
 

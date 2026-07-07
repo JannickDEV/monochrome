@@ -8,13 +8,13 @@ function getQobuzFormatId(quality?: string): string {
     switch (quality) {
         case 'LOW':
         case 'HIGH':
-            return '6'; // MP3 320 kbps
+            return '5'; // MP3 320 kbps
         case 'LOSSLESS':
-            return '7'; // FLAC 16-bit / 44.1kHz
+            return '6'; // FLAC 16-bit / 44.1kHz
         case 'HI_RES':
-            return '8'; // FLAC 24-bit / <= 96kHz
+            return '7'; // FLAC 24-bit / <= 96kHz
         case 'HI_RES_LOSSLESS':
-            return '27'; // FLAC 24-bit / > 192kHz max
+            return '27'; // FLAC 24-bit / <= 192kHz max
         default:
             return '27';
     }
@@ -190,11 +190,30 @@ export class QobuzProvider implements Provider {
             return {
                 url,
                 provider: 'qobuz',
-                quality: formatId === '27' ? 'HI_RES_LOSSLESS' : formatId === '8' ? 'HI_RES' : formatId === '7' ? 'LOSSLESS' : 'HIGH',
+                quality: formatId === '27' ? 'HI_RES_LOSSLESS' : formatId === '7' ? 'HI_RES' : formatId === '6' ? 'LOSSLESS' : 'HIGH',
                 rgInfo: null,
             };
         } catch (err: any) {
             throw new ProviderError(err.message, this.id, 'getStreamUrl', err);
+        }
+    }
+
+    async getTrackForDownload(id: string | number, quality?: string): Promise<StreamInfo> {
+        try {
+            const formatId = getQobuzFormatId(quality);
+            const res = await this.client.request('/track/getFileUrl', { track_id: cleanId(id), id: cleanId(id), format_id: formatId, intent: 'stream' });
+            const url = res?.url || res?.url_stream || res?.file_url || res?.data?.url;
+            if (!url || typeof url !== 'string') {
+                throw new Error('Qobuz did not return a valid download URL');
+            }
+            return {
+                url,
+                provider: 'qobuz',
+                quality: formatId === '27' ? 'HI_RES_LOSSLESS' : formatId === '7' ? 'HI_RES' : formatId === '6' ? 'LOSSLESS' : 'HIGH',
+                rgInfo: null,
+            };
+        } catch (err: any) {
+            throw new ProviderError(err.message || 'Qobuz getTrackForDownload failed', this.id, 'getTrackForDownload', err);
         }
     }
 
