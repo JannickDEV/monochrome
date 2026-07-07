@@ -3318,11 +3318,7 @@ export const devModeSettings = {
     },
 
     getQobuzAppId() {
-        try {
-            return localStorage.getItem(this.QOBUZ_APP_ID_KEY) || '712080172';
-        } catch {
-            return '712080172';
-        }
+        return '';
     },
 
     setQobuzAppId(appId) {
