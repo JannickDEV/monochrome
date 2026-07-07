@@ -787,6 +787,14 @@ export class Player {
             this.backfillReplayGainFromTrack(track, currentSequence);
         }
 
+        if (streamInfo.provider) {
+            track.streamProvider = streamInfo.provider;
+            if (this.currentTrack?.id === track.id) {
+                this.currentTrack.streamProvider = streamInfo.provider;
+            }
+            this.updateNowPlayingTitle(track);
+        }
+
         const deezerHiResFallback =
             streamInfo.provider === 'deezer' &&
             (streamInfo.deezerHiRes || deriveTrackQuality(track) === 'HI_RES_LOSSLESS');
@@ -1443,6 +1451,13 @@ export class Player {
                 }
 
                 streamUrl = resolvedStreamInfo.url;
+                if (resolvedStreamInfo.provider) {
+                    track.streamProvider = resolvedStreamInfo.provider;
+                    if (this.currentTrack?.id === track.id) {
+                        this.currentTrack.streamProvider = resolvedStreamInfo.provider;
+                    }
+                    this.updateNowPlayingTitle(track);
+                }
                 if (resolvedStreamInfo.provider === 'amazon' && resolvedStreamInfo.quality) {
                     track.amazonMusicQualitySelected = resolvedStreamInfo.quality;
                     track.amazonMusicQualityDisplay = resolvedStreamInfo.qualityDisplay;
