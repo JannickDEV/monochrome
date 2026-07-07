@@ -1,7 +1,7 @@
 // js/accounts/config.js
 import PocketBase from 'pocketbase';
 
-const DEFAULT_POCKETBASE_URL = 'https://pb.bitperfect.remotewire.net';
+const DEFAULT_POCKETBASE_URL = 'https://pb-data.bitperfect.dedyn.io';
 
 const getBaseURL = () => {
     return (

@@ -60,7 +60,7 @@ export class QobuzClient {
         if (typeof devModeSettings !== 'undefined' && typeof devModeSettings.getQobuzUrl === 'function') {
             return devModeSettings.getQobuzUrl().replace(/\/+$/, '');
         }
-        return 'https://qobuzapi.bitperfect.remotewire.net';
+        return 'https://qz-api.bitperfect.dedyn.io';
     }
 
     getAppId(): string {

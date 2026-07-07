@@ -3295,9 +3295,9 @@ export const devModeSettings = {
 
     getUrl() {
         try {
-            return localStorage.getItem(this.URL_KEY) || 'https://hifiapi.bitperfect.remotewire.net';
+            return localStorage.getItem(this.URL_KEY) || 'https://hf-core.bitperfect.dedyn.io';
         } catch {
-            return 'https://hifiapi.bitperfect.remotewire.net';
+            return 'https://hf-core.bitperfect.dedyn.io';
         }
     },
 
@@ -3307,9 +3307,9 @@ export const devModeSettings = {
 
     getQobuzUrl() {
         try {
-            return localStorage.getItem(this.QOBUZ_URL_KEY) || 'https://qobuzapi.bitperfect.remotewire.net';
+            return localStorage.getItem(this.QOBUZ_URL_KEY) || 'https://qz-api.bitperfect.dedyn.io';
         } catch {
-            return 'https://qobuzapi.bitperfect.remotewire.net';
+            return 'https://qz-api.bitperfect.dedyn.io';
         }
     },
 
