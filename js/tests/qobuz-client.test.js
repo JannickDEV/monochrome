@@ -36,11 +36,13 @@ describe('QobuzClient', () => {
             url: 'https://custom.example.com/',
             appId: 'custom-app',
             token: 'custom-token',
+            userId: 'custom-user',
         });
 
         expect(customClient.getBaseUrl()).toBe('https://custom.example.com');
         expect(customClient.getAppId()).toBe('custom-app');
         expect(customClient.getToken()).toBe('custom-token');
+        expect(customClient.getUserId()).toBe('custom-user');
     });
 
     test('request constructs correct URL and headers', async () => {

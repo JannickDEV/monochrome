@@ -87,7 +87,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
     const devModeUrlSetting = document.getElementById('dev-mode-url-setting');
     const devModeUrlInput = document.getElementById('dev-mode-url-input');
     const devModeQobuzUrlInput = document.getElementById('dev-mode-qobuz-url-input');
-    const devModeQobuzAppIdInput = document.getElementById('dev-mode-qobuz-appid-input');
     const devModeQobuzUserIdInput = document.getElementById('dev-mode-qobuz-userid-input');
     const devModeQobuzTokenInput = document.getElementById('dev-mode-qobuz-token-input');
     const testQobuzBtn = document.getElementById('test-qobuz-connection-btn');
@@ -97,7 +96,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         if (devModeUrlSetting) devModeUrlSetting.style.display = devModeSettings.isEnabled() ? '' : 'none';
         if (devModeUrlInput) devModeUrlInput.value = devModeSettings.getUrl();
         if (devModeQobuzUrlInput) devModeQobuzUrlInput.value = devModeSettings.getQobuzUrl();
-        if (devModeQobuzAppIdInput) devModeQobuzAppIdInput.value = devModeSettings.getQobuzAppId();
         if (devModeQobuzUserIdInput) devModeQobuzUserIdInput.value = devModeSettings.getQobuzUserId();
         if (devModeQobuzTokenInput) devModeQobuzTokenInput.value = devModeSettings.getQobuzToken();
     }
@@ -123,12 +121,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         });
     }
 
-    if (devModeQobuzAppIdInput) {
-        devModeQobuzAppIdInput.addEventListener('change', (e) => {
-            devModeSettings.setQobuzAppId(e.target.value.trim());
-        });
-    }
-
     if (devModeQobuzUserIdInput) {
         devModeQobuzUserIdInput.addEventListener('change', (e) => {
             devModeSettings.setQobuzUserId(e.target.value.trim());
@@ -148,11 +140,9 @@ export async function initializeSettings(scrobbler, player, api, ui) {
             testQobuzBtn.textContent = 'Testing...';
             try {
                 const userId = devModeSettings.getQobuzUserId();
-                const appId = devModeSettings.getQobuzAppId();
                 const token = devModeSettings.getQobuzToken();
-                const url = devModeSettings.getQobuzUrl().replace(/\/+$/, '') + `/user/login?user_id=${encodeURIComponent(userId)}&user_auth_token=${encodeURIComponent(token)}&app_id=${encodeURIComponent(appId)}`;
+                const url = devModeSettings.getQobuzUrl().replace(/\/+$/, '') + `/user/login?user_id=${encodeURIComponent(userId)}&user_auth_token=${encodeURIComponent(token)}`;
                 const headers = { 'Accept': 'application/json' };
-                if (appId) headers['X-App-Id'] = appId;
                 if (token) headers['X-User-Auth-Token'] = token;
                 if (userId) headers['X-User-Id'] = userId;
                 

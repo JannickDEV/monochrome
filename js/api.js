@@ -84,7 +84,6 @@ export class LosslessAPI {
     getFallbackProvider() {
         const qobuzUrl = devModeSettings.getQobuzUrl();
         const qobuzToken = devModeSettings.getQobuzToken();
-        const qobuzAppId = devModeSettings.getQobuzAppId();
         const qobuzUserId = devModeSettings.getQobuzUserId();
         const tidalUrl = devModeSettings.getUrl();
 
@@ -92,13 +91,11 @@ export class LosslessAPI {
             !this._fallbackProvider ||
             this._lastQobuzUrl !== qobuzUrl ||
             this._lastQobuzToken !== qobuzToken ||
-            this._lastQobuzAppId !== qobuzAppId ||
             this._lastQobuzUserId !== qobuzUserId ||
             this._lastTidalUrl !== tidalUrl
         ) {
             this._lastQobuzUrl = qobuzUrl;
             this._lastQobuzToken = qobuzToken;
-            this._lastQobuzAppId = qobuzAppId;
             this._lastQobuzUserId = qobuzUserId;
             this._lastTidalUrl = tidalUrl;
 

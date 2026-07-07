@@ -45,12 +45,14 @@ export class QobuzClient {
     private customUrl?: string;
     private customAppId?: string;
     private customToken?: string;
+    private customUserId?: string;
 
-    constructor(options: { url?: string; appId?: string; token?: string; maxConcurrency?: number } = {}) {
+    constructor(options: { url?: string; appId?: string; token?: string; userId?: string; maxConcurrency?: number } = {}) {
         this.queue = new RequestQueue(options.maxConcurrency ?? 2);
         this.customUrl = options.url;
         this.customAppId = options.appId;
         this.customToken = options.token;
+        this.customUserId = options.userId;
     }
 
     getBaseUrl(): string {
@@ -64,9 +66,9 @@ export class QobuzClient {
     getAppId(): string {
         if (this.customAppId) return this.customAppId;
         if (typeof devModeSettings !== 'undefined' && typeof devModeSettings.getQobuzAppId === 'function') {
-            return devModeSettings.getQobuzAppId() || '712080172';
+            return devModeSettings.getQobuzAppId() || '';
         }
-        return '712080172';
+        return '';
     }
 
     getToken(): string {
@@ -78,6 +80,7 @@ export class QobuzClient {
     }
 
     getUserId(): string {
+        if (this.customUserId !== undefined) return this.customUserId;
         if (typeof devModeSettings !== 'undefined' && typeof devModeSettings.getQobuzUserId === 'function') {
             return devModeSettings.getQobuzUserId() || '2759740';
         }
