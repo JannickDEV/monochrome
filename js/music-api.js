@@ -139,30 +139,44 @@ export class MusicAPI {
 
     // Get methods
     async getTrack(id, quality) {
+        if (String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getTrackById(id);
+        }
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(id);
         return api.getTrack(cleanId, quality);
     }
 
     async getTrackMetadata(id) {
+        if (String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getTrackById(id);
+        }
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(id);
         return api.getTrackMetadata(cleanId);
     }
 
     async getAlbum(id) {
+        if (String(id).startsWith('sc_')) return { album: null, tracks: [] };
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(id);
         return api.getAlbum(cleanId);
     }
 
     async getArtist(id) {
+        if (String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getArtistById(id);
+        }
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(id);
         return api.getArtist(cleanId);
     }
 
     async getArtistBiography(id) {
+        if (String(id).startsWith('sc_')) return null;
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(id);
         if (typeof api.getArtistBiography === 'function') {
@@ -172,12 +186,14 @@ export class MusicAPI {
     }
 
     async getVideo(id) {
+        if (String(id).startsWith('sc_')) return null;
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(id);
         return api.getVideo(cleanId);
     }
 
     async getVideoStreamUrl(id) {
+        if (String(id).startsWith('sc_')) return null;
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(id);
         if (typeof api.getVideoStreamUrl === 'function') {
@@ -200,6 +216,10 @@ export class MusicAPI {
     }
 
     async getTrackRecommendations(id) {
+        if (String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getTrackRecommendations(id);
+        }
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(id);
         if (typeof api.getTrackRecommendations === 'function') {
@@ -210,6 +230,10 @@ export class MusicAPI {
 
     // Stream methods
     async getStreamUrl(id, quality) {
+        if (String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getStreamUrl(id);
+        }
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(id);
         return api.getStreamUrl(cleanId, quality);
@@ -217,14 +241,14 @@ export class MusicAPI {
 
     // Cover/artwork methods
     getCoverUrl(id, size = '320') {
-        if (typeof id === 'string' && id.startsWith('blob:')) {
+        if (typeof id === 'string' && (id.startsWith('blob:') || id.startsWith('http') || id.startsWith('assets/') || id.startsWith('sc_'))) {
             return id;
         }
         return this.tidalAPI.getCoverUrl(this.stripProviderPrefix(id), size);
     }
 
     getCoverSrcset(id) {
-        if (typeof id === 'string' && id.startsWith('blob:')) {
+        if (typeof id === 'string' && (id.startsWith('blob:') || id.startsWith('http') || id.startsWith('assets/') || id.startsWith('sc_'))) {
             return '';
         }
         return this.tidalAPI.getCoverSrcset(this.stripProviderPrefix(id));
@@ -234,7 +258,7 @@ export class MusicAPI {
         if (!imageId) {
             return null;
         }
-        if (typeof imageId === 'string' && imageId.startsWith('blob:')) {
+        if (typeof imageId === 'string' && (imageId.startsWith('blob:') || imageId.startsWith('http') || imageId.startsWith('assets/') || imageId.startsWith('sc_'))) {
             return imageId;
         }
         return this.tidalAPI.getVideoCoverUrl(this.stripProviderPrefix(imageId), size);
@@ -267,10 +291,16 @@ export class MusicAPI {
     }
 
     getArtistPictureUrl(id, size = '320') {
+        if (typeof id === 'string' && (id.startsWith('blob:') || id.startsWith('http') || id.startsWith('assets/') || id.startsWith('sc_'))) {
+            return id;
+        }
         return this.tidalAPI.getArtistPictureUrl(this.stripProviderPrefix(id), size);
     }
 
     getArtistPictureSrcset(id) {
+        if (typeof id === 'string' && (id.startsWith('blob:') || id.startsWith('http') || id.startsWith('assets/') || id.startsWith('sc_'))) {
+            return '';
+        }
         return this.tidalAPI.getArtistPictureSrcset(this.stripProviderPrefix(id));
     }
 
@@ -353,16 +383,27 @@ export class MusicAPI {
 
     // Similar/recommendation methods
     async getSimilarArtists(artistId) {
+        if (String(artistId).startsWith('sc_')) return [];
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(artistId);
         return api.getSimilarArtists(cleanId);
     }
 
     async getArtistTopTracks(artistId, options = {}) {
+        if (String(artistId).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            const tracks = await soundCloudAPI.getArtistTopTracks(artistId, options);
+            return {
+                tracks: tracks || [],
+                total: (tracks || []).length,
+                hasMore: false,
+            };
+        }
         return this.tidalAPI.getArtistTopTracks(artistId, options);
     }
 
     async getSimilarAlbums(albumId) {
+        if (String(albumId).startsWith('sc_')) return [];
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(albumId);
         return api.getSimilarAlbums(cleanId);

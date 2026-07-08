@@ -1393,7 +1393,12 @@ export class LosslessAPI {
     async getArtistTopTracks(artistId, options = {}) {
         if (String(artistId).startsWith('sc_')) {
             const { soundCloudAPI } = await import('./soundcloud-api.js');
-            return await soundCloudAPI.getArtistTopTracks(artistId, options);
+            const tracks = await soundCloudAPI.getArtistTopTracks(artistId, options);
+            return {
+                tracks: tracks || [],
+                total: (tracks || []).length,
+                hasMore: false,
+            };
         }
         const offset = options.offset || 0;
         const limit = options.limit || 15;
@@ -3264,6 +3269,9 @@ export class LosslessAPI {
 
         if (
             track.album?.id &&
+            !track.isSoundCloud &&
+            track.provider !== 'soundcloud' &&
+            !String(id).startsWith('sc_') &&
             (track.album?.totalDiscs == null || track.album?.numberOfTracksOnDisc == null || !track.album?.cover)
         ) {
             try {
@@ -3303,12 +3311,18 @@ export class LosslessAPI {
         }
 
         if (!externalProvider) {
-            externalProvider = 'tidal';
+            externalProvider = track?.provider === 'soundcloud' || track?.isSoundCloud || String(id).startsWith('sc_') ? 'soundcloud' : 'tidal';
         }
         enrichedTrack.provider = externalProvider;
+        if (externalProvider === 'soundcloud') {
+            enrichedTrack.isSoundCloud = true;
+        }
 
         const finalEnriched = new EnrichedTrack(enrichedTrack);
         finalEnriched.provider = externalProvider;
+        if (externalProvider === 'soundcloud') {
+            finalEnriched.isSoundCloud = true;
+        }
         const result = { lookup, enrichedTrack: finalEnriched, isVideo };
         result.provider = externalProvider;
         if (externalStreamUrl) {
