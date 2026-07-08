@@ -272,48 +272,80 @@ export class SoundCloudAPI {
 
         const transcodings = trackData.media.transcodings;
 
-        // Prefer progressive HTTP stream (audio/mpeg) for clean direct playback and downloading
-        let selected = transcodings.find((t) => t.format && t.format.protocol === 'progressive');
-        if (!selected) {
-            // Fallback to HLS (m3u8)
-            selected = transcodings.find((t) => t.format && t.format.protocol === 'hls');
-        }
-
-        if (!selected || !selected.url) {
-            throw new Error('Could not find a supported stream protocol in SoundCloud transcodings');
-        }
-
-        let targetStreamUrl = selected.url;
-        if (targetStreamUrl.startsWith('https://api-v2.soundcloud.com')) {
-            targetStreamUrl = targetStreamUrl.replace('https://api-v2.soundcloud.com', this.getApiBase());
-        } else if (targetStreamUrl.startsWith('https://api.soundcloud.com')) {
-            targetStreamUrl = targetStreamUrl.replace('https://api.soundcloud.com', this.getApiBase());
-        }
-
-        const clientId = await this.getClientId();
-        const separator = targetStreamUrl.includes('?') ? '&' : '?';
-        const streamRes = await fetch(`${targetStreamUrl}${separator}client_id=${clientId}`, {
-            signal: options.signal,
+        // Prefer progressive HTTP stream (audio/mpeg) first, then HLS audio/mpeg, then other HLS formats
+        const sortedTranscodings = [...transcodings].sort((a, b) => {
+            const score = (t) => {
+                if (t?.format?.protocol === 'progressive') return 3;
+                if (t?.format?.protocol === 'hls' && t?.format?.mime_type === 'audio/mpeg') return 2;
+                if (t?.format?.protocol === 'hls') return 1;
+                return 0;
+            };
+            return score(b) - score(a);
         });
 
-        if (!streamRes.ok) {
-            throw new Error(`Failed to resolve SoundCloud stream URL: ${streamRes.status}`);
+        let lastError = null;
+        for (let attempt = 0; attempt < 2; attempt++) {
+            const clientId = await this.getClientId();
+
+            for (const selected of sortedTranscodings) {
+                if (!selected || !selected.url) continue;
+
+                let targetStreamUrl = selected.url;
+                if (targetStreamUrl.startsWith('https://api-v2.soundcloud.com')) {
+                    targetStreamUrl = targetStreamUrl.replace('https://api-v2.soundcloud.com', this.getApiBase());
+                } else if (targetStreamUrl.startsWith('https://api.soundcloud.com')) {
+                    targetStreamUrl = targetStreamUrl.replace('https://api.soundcloud.com', this.getApiBase());
+                }
+
+                const separator = targetStreamUrl.includes('?') ? '&' : '?';
+                try {
+                    const streamRes = await fetch(`${targetStreamUrl}${separator}client_id=${clientId}`, {
+                        signal: options.signal,
+                    });
+
+                    if (streamRes.status === 401 || streamRes.status === 403 || streamRes.status === 429) {
+                        lastError = new Error(`SoundCloud auth/rate-limit (${streamRes.status}) resolving stream`);
+                        break; // Break out of transcodings loop to rotate client ID and retry
+                    }
+
+                    if (!streamRes.ok) {
+                        lastError = new Error(`Failed to resolve SoundCloud stream URL: ${streamRes.status}`);
+                        console.warn(`[SoundCloudAPI] Transcoding (${selected.format?.protocol} ${selected.format?.mime_type}) returned ${streamRes.status}. Trying next transcoding...`);
+                        continue;
+                    }
+
+                    const streamJson = await streamRes.json();
+                    if (!streamJson || !streamJson.url) {
+                        lastError = new Error('SoundCloud stream URL response was empty');
+                        continue;
+                    }
+
+                    return {
+                        url: streamJson.url,
+                        provider: 'soundcloud',
+                        quality: 'HIGH',
+                        qualityDisplay: 'MP3 320 / AAC',
+                        mimeType: selected.format?.mime_type || 'audio/mpeg',
+                        protocol: selected.format?.protocol || 'progressive',
+                        rgInfo: null,
+                    };
+                } catch (err) {
+                    lastError = err;
+                    if (err.name === 'AbortError') throw err;
+                    console.warn(`[SoundCloudAPI] Error fetching transcoding ${selected.url}:`, err);
+                }
+            }
+
+            // If we broke or failed due to 401/403/429 authorization/rate limit, rotate client ID and retry
+            if (attempt === 0 && lastError && (lastError.message.includes('401') || lastError.message.includes('403') || lastError.message.includes('429'))) {
+                console.warn('[SoundCloudAPI] Rotating clientId due to stream authorization/rate-limit error');
+                this.rotateClientId();
+                continue;
+            }
+            break;
         }
 
-        const streamJson = await streamRes.json();
-        if (!streamJson || !streamJson.url) {
-            throw new Error('SoundCloud stream URL response was empty');
-        }
-
-        return {
-            url: streamJson.url,
-            provider: 'soundcloud',
-            quality: 'HIGH',
-            qualityDisplay: 'MP3 320 / AAC',
-            mimeType: selected.format?.mime_type || 'audio/mpeg',
-            protocol: selected.format?.protocol || 'progressive',
-            rgInfo: null,
-        };
+        throw lastError || new Error('Could not resolve a valid stream URL from any SoundCloud transcoding');
     }
 
     async getTrackRecommendations(trackId, options = {}) {

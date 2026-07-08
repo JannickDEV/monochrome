@@ -1491,7 +1491,10 @@ export class Player {
                 if (this.playbackSequence !== currentSequence) return;
 
                 // Handle playback
+                const isHlsStream = typeof streamUrl === 'string' && (streamUrl.includes('.m3u8') || streamUrl.includes('application/vnd.apple.mpegurl') || resolvedStreamInfo.protocol === 'hls');
+
                 const shouldUseShaka =
+                    !isHlsStream &&
                     streamUrl &&
                     !track.isLocal &&
                     (resolvedStreamInfo.playbackType?.includes('cenc') ||
@@ -1499,6 +1502,12 @@ export class Player {
                         (streamUrl.startsWith('blob:') && resolvedStreamInfo.playbackType !== 'direct'));
 
                 if (shouldUseShaka) {
+                    if (this.hls) {
+                        try {
+                            this.hls.destroy();
+                        } catch {}
+                        this.hls = null;
+                    }
                     // It's likely a DASH manifest URL
                     if (this.shakaPlayer.getMediaElement() !== activeElement) {
                         await this.shakaPlayer.attach(activeElement);
@@ -1545,6 +1554,20 @@ export class Player {
                     // Instantly trigger playback rather than explicitly waiting for 'canplay'
                     // which delays the event loop and natively adds gap/latency
                     await this.safePlay(activeElement);
+                } else if (isHlsStream) {
+                    if (this.shakaInitialized) {
+                        try {
+                            this.shakaPlayer.unload();
+                            this.shakaPlayer.detach();
+                        } catch {}
+                        this.shakaInitialized = false;
+                    }
+                    await this.setupHlsVideo(activeElement, { hlsUrl: getProxyUrl(streamUrl) }, null);
+                    this.applyAudioEffects();
+                    this.updateAdaptiveQualityBadge();
+                    if (startTime > 0) {
+                        activeElement.currentTime = startTime;
+                    }
                 } else {
                     if (this.shakaInitialized) {
                         try {
@@ -1552,6 +1575,12 @@ export class Player {
                             this.shakaPlayer.detach();
                         } catch {}
                         this.shakaInitialized = false;
+                    }
+                    if (this.hls) {
+                        try {
+                            this.hls.destroy();
+                        } catch {}
+                        this.hls = null;
                     }
                     activeElement.src = getProxyUrl(streamUrl);
                     this.applyAudioEffects();
