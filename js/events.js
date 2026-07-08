@@ -540,6 +540,11 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
                 if (player.isFallbackInProgress || canFallback) {
                     return;
                 }
+                if (player.currentTrack.provider === 'soundcloud' || player.currentTrack.isSoundCloud || String(player.currentTrack.id).startsWith('sc_')) {
+                    import('./soundcloud-api.js').then((m) => m.notifySoundCloudSourceMissing && m.notifySoundCloudSourceMissing()).catch(() => {});
+                } else {
+                    showNotification(`Could not play track (${errorMsg || 'Media error'})`);
+                }
             }
         });
 

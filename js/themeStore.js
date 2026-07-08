@@ -2,6 +2,7 @@ import { syncManager } from './accounts/pocketbase.js';
 import { authManager } from './accounts/auth.js';
 import { navigate } from './router.js';
 import { SVG_BIN, SVG_SQUARE_PEN } from './icons.js';
+import { showNotification } from './downloads.js';
 
 const THEMES_PER_PAGE = 50;
 
@@ -176,6 +177,7 @@ export class ThemeStore {
             });
         } catch (err) {
             console.error('Failed to load themes:', err);
+            showNotification('Could not load community themes');
             this.loadingIndicator.style.display = 'none';
             this.grid.innerHTML = '<div class="empty-state">Failed to load themes.</div>';
         }
@@ -276,11 +278,11 @@ export class ThemeStore {
             if (!fbUser) throw new Error('Not authenticated');
 
             await this.pb.collection('themes').delete(themeId);
-            alert('Theme deleted successfully.');
+            showNotification('Theme deleted successfully');
             await this.loadThemes();
         } catch (err) {
             console.error('Failed to delete theme:', err);
-            alert('Failed to delete theme. You might not have permission.');
+            showNotification('Failed to delete theme. You might not have permission.');
         }
     }
 
@@ -533,7 +535,7 @@ export class ThemeStore {
 
         const fbUser = authManager?.user;
         if (!fbUser) {
-            alert('You must be logged in to upload themes.');
+            showNotification('You must be logged in to upload themes');
             return;
         }
 
@@ -565,11 +567,11 @@ export class ThemeStore {
 
             if (this.editingThemeId) {
                 await this.pb.collection('themes').update(this.editingThemeId, formData);
-                alert('Theme updated successfully!');
+                showNotification('Theme updated successfully!');
             } else {
                 formData.author = userId;
                 await this.pb.collection('themes').create(formData);
-                alert('Theme uploaded successfully!');
+                showNotification('Theme uploaded successfully!');
             }
 
             this.resetEditState();
@@ -595,12 +597,12 @@ export class ThemeStore {
                 for (const [key, value] of Object.entries(responseData)) {
                     msg += `• ${key}: ${value.message}\n`;
                 }
-                alert(msg);
+                showNotification(msg.trim());
             } else {
                 const message = err.message || err.data?.message || 'Unknown error';
                 const debugInfo = `User ID: ${userId} (${userId?.length} chars) | Status: ${err.status}`;
                 console.error('Upload failed (debug info):', debugInfo);
-                alert(`Failed to upload theme: ${message}`);
+                showNotification(`Failed to upload theme: ${message}`);
             }
         }
     }

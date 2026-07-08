@@ -4468,6 +4468,7 @@ export class UIRenderer {
         } catch (error) {
             if (error.name === 'AbortError') return;
             console.error('Search failed:', error);
+            showNotification('Search failed (Check connection or API)');
             const errorMsg = createPlaceholder(`Error during search. ${error.message}`);
             tracksContainer.innerHTML = errorMsg;
             artistsContainer.innerHTML = errorMsg;
@@ -5063,6 +5064,7 @@ export class UIRenderer {
             }
         } catch (error) {
             console.error('Failed to load album:', error);
+            showNotification('Could not load album details');
             tracklistContainer.innerHTML = createPlaceholder(`Could not load album details. ${error.message}`);
         }
     }
@@ -5487,6 +5489,7 @@ export class UIRenderer {
             this.setupTracklistSearch();
         } catch (error) {
             console.error('Failed to load playlist:', error);
+            showNotification('Could not load playlist details');
             tracklistContainer.innerHTML = createPlaceholder(`Could not load playlist details. ${error.message}`);
         }
     }
@@ -5538,6 +5541,7 @@ export class UIRenderer {
             }
         } catch (error) {
             console.error('Failed to load folder:', error);
+            showNotification('Could not load folder details');
             container.innerHTML = createPlaceholder('Folder not found.');
         }
     }
@@ -5698,6 +5702,7 @@ export class UIRenderer {
             document.title = displayTitle;
         } catch (error) {
             console.error('Failed to load mix:', error);
+            showNotification('Could not load mix details');
             tracklistContainer.innerHTML = createPlaceholder(`Could not load mix details. ${error.message}`);
         }
     }
@@ -6439,6 +6444,7 @@ export class UIRenderer {
             document.title = artist.name;
         } catch (error) {
             console.error('Failed to load artist:', error);
+            showNotification('Could not load artist details');
             tracksContainer.innerHTML = albumsContainer.innerHTML = createPlaceholder(
                 `Could not load artist details. ${error.message}`
             );
@@ -6557,13 +6563,14 @@ export class UIRenderer {
                             clearBtn.style.display = 'none';
                         } catch (err) {
                             console.error('Failed to clear history:', err);
-                            alert('Failed to clear history');
+                            showNotification('Failed to clear history');
                         }
                     }
                 };
             }
         } catch (error) {
             console.error('Failed to load history:', error);
+            showNotification('Could not load listening history');
             container.innerHTML = createPlaceholder('Failed to load history.');
             if (clearBtn) clearBtn.style.display = 'none';
         }
@@ -7169,6 +7176,7 @@ export class UIRenderer {
             document.title = `${track.title} - ${getTrackArtists(track)}`;
         } catch (error) {
             console.error('Failed to load track:', error);
+            showNotification('Could not load track details');
             titleEl.textContent = 'Track not found';
             artistEl.innerHTML = '';
         }
@@ -7249,6 +7257,7 @@ export class UIRenderer {
             await this.loadAllPodcastEpisodes();
         } catch (error) {
             console.error('Failed to load podcast:', error);
+            showNotification('Could not load podcast details');
             nameEl.textContent = 'Podcast not found';
             episodesContainer.innerHTML = createPlaceholder('Failed to load podcast.');
         }
@@ -7286,6 +7295,7 @@ export class UIRenderer {
             }
         } catch (error) {
             console.error('Failed to load podcast episodes:', error);
+            showNotification('Could not load podcast episodes');
             episodesContainer.innerHTML = createPlaceholder('Failed to load episodes.');
         }
 
@@ -7310,6 +7320,7 @@ export class UIRenderer {
             }
         } catch (error) {
             console.error('Podcast search failed:', error);
+            showNotification('Podcast search failed');
             podcastsContainer.innerHTML = createPlaceholder('Failed to search podcasts.');
         }
     }
@@ -7330,6 +7341,7 @@ export class UIRenderer {
             }
         } catch (error) {
             console.error('SoundCloud search failed:', error);
+            showNotification('SoundCloud search failed');
             soundcloudContainer.innerHTML = createPlaceholder('Failed to search SoundCloud.');
         }
     }

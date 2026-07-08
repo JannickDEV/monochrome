@@ -909,11 +909,27 @@ export class Player {
                     await this.setupVideoQualitySelector();
                 });
                 this.hls.on(Hls.Events.ERROR, (_event, data) => {
-                    if (data.fatal) {
-                        console.warn('HLS fatal error:', data.type);
-                        if (fallbackImg) video.replaceWith(fallbackImg);
-                        this.hls.destroy();
-                        this.hls = null;
+                    if (data.fatal || data.details === Hls.ErrorDetails.BUFFER_ADD_CODEC_ERROR || data.details === Hls.ErrorDetails.BUFFER_APPEND_ERROR || data.details === Hls.ErrorDetails.BUFFER_APPENDING_ERROR) {
+                        console.warn('HLS error:', data.type, data.details);
+                        if (fallbackImg && video !== this.activeElement) {
+                            video.replaceWith(fallbackImg);
+                        } else if (video === this.activeElement) {
+                            try {
+                                if (this.hls) {
+                                    this.hls.destroy();
+                                    this.hls = null;
+                                }
+                            } catch {}
+                            video.src = url;
+                            this.safePlay(video).catch(() => {});
+                        } else {
+                            try {
+                                if (this.hls) {
+                                    this.hls.destroy();
+                                    this.hls = null;
+                                }
+                            } catch {}
+                        }
                     }
                 });
             } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -1494,10 +1510,10 @@ export class Player {
                 const isHlsStream = typeof streamUrl === 'string' && (streamUrl.includes('.m3u8') || streamUrl.includes('application/vnd.apple.mpegurl') || resolvedStreamInfo.protocol === 'hls');
 
                 const shouldUseShaka =
-                    !isHlsStream &&
                     streamUrl &&
                     !track.isLocal &&
-                    (resolvedStreamInfo.playbackType?.includes('cenc') ||
+                    (isHlsStream ||
+                        resolvedStreamInfo.playbackType?.includes('cenc') ||
                         streamUrl.includes('.mpd') ||
                         (streamUrl.startsWith('blob:') && resolvedStreamInfo.playbackType !== 'direct'));
 
@@ -1508,7 +1524,7 @@ export class Player {
                         } catch {}
                         this.hls = null;
                     }
-                    // It's likely a DASH manifest URL
+                    // It's likely a DASH or HLS manifest URL
                     if (this.shakaPlayer.getMediaElement() !== activeElement) {
                         await this.shakaPlayer.attach(activeElement);
                         this.shakaInitialized = true;
@@ -1537,10 +1553,30 @@ export class Player {
                             await this.shakaPlayer.load(getProxyUrl(loadTarget), null, shakaMimeType);
                         }
                     } catch (e) {
-                        console.error('PreloadManager load Error:', e);
-                        if (loadTarget !== streamUrl)
+                        console.warn('PreloadManager/Shaka load Error:', e);
+                        if (!isHlsStream && loadTarget !== streamUrl) {
                             await this.shakaPlayer.load(getProxyUrl(streamUrl), null, shakaMimeType);
-                        else throw e;
+                        } else if (isHlsStream) {
+                            if (this.shakaInitialized) {
+                                try {
+                                    this.shakaPlayer.unload();
+                                    this.shakaPlayer.detach();
+                                } catch {}
+                                this.shakaInitialized = false;
+                            }
+                            if (activeElement.canPlayType('application/vnd.apple.mpegurl')) {
+                                activeElement.src = getProxyUrl(streamUrl);
+                            } else {
+                                await this.setupHlsVideo(activeElement, { hlsUrl: getProxyUrl(streamUrl) }, null);
+                            }
+                            this.applyAudioEffects();
+                            this.updateAdaptiveQualityBadge();
+                            if (startTime > 0) activeElement.currentTime = startTime;
+                            await this.safePlay(activeElement);
+                            return;
+                        } else {
+                            throw e;
+                        }
                     }
 
                     this.shakaInitialized = true;
@@ -1554,20 +1590,6 @@ export class Player {
                     // Instantly trigger playback rather than explicitly waiting for 'canplay'
                     // which delays the event loop and natively adds gap/latency
                     await this.safePlay(activeElement);
-                } else if (isHlsStream) {
-                    if (this.shakaInitialized) {
-                        try {
-                            this.shakaPlayer.unload();
-                            this.shakaPlayer.detach();
-                        } catch {}
-                        this.shakaInitialized = false;
-                    }
-                    await this.setupHlsVideo(activeElement, { hlsUrl: getProxyUrl(streamUrl) }, null);
-                    this.applyAudioEffects();
-                    this.updateAdaptiveQualityBadge();
-                    if (startTime > 0) {
-                        activeElement.currentTime = startTime;
-                    }
                 } else {
                     if (this.shakaInitialized) {
                         try {
@@ -1622,6 +1644,15 @@ export class Player {
             }
 
             console.error(`Could not play track: ${trackTitle}`, error);
+            if (track && (track.provider === 'soundcloud' || track.isSoundCloud || String(track.id).startsWith('sc_'))) {
+                import('./soundcloud-api.js').then((m) => {
+                    if (m.notifySoundCloudSourceMissing) m.notifySoundCloudSourceMissing();
+                }).catch(() => {});
+            } else {
+                import('./downloads.js').then((m) => {
+                    m.showNotification(`Could not play track: ${trackTitle || 'Unknown'}`);
+                }).catch(() => {});
+            }
         }
     }
 

@@ -10,6 +10,7 @@ import {
     SVG_GLOBE,
 } from './icons.js';
 import { sidePanelManager } from './side-panel.js';
+import { showNotification } from './downloads.js';
 
 const loadAmLyrics = () => {
     const images = Array.from(document.images).filter((img) => !img.complete);
@@ -532,7 +533,7 @@ export class LyricsManager {
     getLRC(lyricsData, track) {
         const lrcContent = this.generateLRCContent(lyricsData, track);
         if (!lrcContent) {
-            alert('No synced lyrics available for this track');
+            showNotification('No synced lyrics available for this track');
             return;
         }
 
@@ -949,7 +950,7 @@ export function openLyricsPanel(track, audioPlayer, lyricsManager, forceOpen = f
                                 manager.geniusManager.cache.get(track.id)?.referents
                             );
                     } catch (e) {
-                        alert(e.message);
+                        showNotification(e.message || 'Error fetching Genius lyrics');
                         manager.isGeniusMode = false;
                         geniusBtn.classList.remove('active-genius');
                         geniusBtn.style.color = '';

@@ -22,6 +22,14 @@ const REVOKED_CLIENT_IDS = new Set([
     'fDoItMDbsbZz8dY16ZzURWhAsJ6q150Y',
 ]);
 
+let lastSoundCloudMissingNotifyAt = 0;
+export function notifySoundCloudSourceMissing() {
+    const now = Date.now();
+    if (now - lastSoundCloudMissingNotifyAt < 3000) return;
+    lastSoundCloudMissingNotifyAt = now;
+    import('./downloads.js').then((m) => m.showNotification('Could not find SoundCloud Audio Source (Go+ / Subscriber Only)')).catch(() => {});
+}
+
 export class SoundCloudAPI {
     constructor() {
         this.clientId = null;
@@ -272,11 +280,12 @@ export class SoundCloudAPI {
 
         const transcodings = trackData.media.transcodings;
 
-        // Prefer progressive HTTP stream (audio/mpeg) first, then HLS audio/mpeg, then other HLS formats
+        // Prefer progressive HTTP stream (audio/mpeg) first, then HLS audio/mpeg, then HLS AAC/mp4, then Opus
         const sortedTranscodings = [...transcodings].sort((a, b) => {
             const score = (t) => {
-                if (t?.format?.protocol === 'progressive') return 3;
-                if (t?.format?.protocol === 'hls' && t?.format?.mime_type === 'audio/mpeg') return 2;
+                if (t?.format?.protocol === 'progressive') return 4;
+                if (t?.format?.protocol === 'hls' && (t?.format?.mime_type === 'audio/mpeg' || t?.format?.mime_type?.includes('mpeg'))) return 3;
+                if (t?.format?.protocol === 'hls' && t?.format?.mime_type?.includes('mp4')) return 2;
                 if (t?.format?.protocol === 'hls') return 1;
                 return 0;
             };
@@ -284,7 +293,7 @@ export class SoundCloudAPI {
         });
 
         let lastError = null;
-        for (let attempt = 0; attempt < 2; attempt++) {
+        for (let attempt = 0; attempt < 3; attempt++) {
             const clientId = await this.getClientId();
 
             for (const selected of sortedTranscodings) {
@@ -336,15 +345,21 @@ export class SoundCloudAPI {
                 }
             }
 
-            // If we broke or failed due to 401/403/429 authorization/rate limit, rotate client ID and retry
-            if (attempt === 0 && lastError && (lastError.message.includes('401') || lastError.message.includes('403') || lastError.message.includes('429'))) {
-                console.warn('[SoundCloudAPI] Rotating clientId due to stream authorization/rate-limit error');
-                this.rotateClientId();
+            // If we broke or failed due to 401/403/404/429 authorization/rate limit, rotate/extract client ID and retry
+            if (attempt < 2 && lastError && (lastError.message.includes('401') || lastError.message.includes('403') || lastError.message.includes('404') || lastError.message.includes('429'))) {
+                if (attempt === 0) {
+                    console.warn('[SoundCloudAPI] Rotating static clientId due to stream authorization/rate-limit/not-found error');
+                    this.rotateClientId();
+                } else if (attempt === 1) {
+                    console.warn('[SoundCloudAPI] Attempting to extract a fresh clientId from SoundCloud via proxy due to stream error');
+                    await this.extractFreshClientId();
+                }
                 continue;
             }
             break;
         }
 
+        notifySoundCloudSourceMissing();
         throw lastError || new Error('Could not resolve a valid stream URL from any SoundCloud transcoding');
     }
 

@@ -3,6 +3,7 @@ import { escapeHtml, trackDataStore, formatTime } from './utils.js';
 import { navigate } from './router.js';
 import { SVG_MENU, SVG_PLAY, SVG_HEART } from './icons.js';
 import { Player } from './player.js';
+import { showNotification } from './downloads.js';
 
 let artistsData = [];
 let artistsPopularity = new Map(); // name -> popularity score
@@ -124,6 +125,7 @@ async function loadArtistsData() {
         });
     } catch (e) {
         console.error('Failed to load Artists List:', e);
+        showNotification('Could not load unreleased artists data');
     }
 }
 
@@ -401,7 +403,7 @@ export async function renderTrackerArtistPage(sheetId, container) {
     // Set up download button
     if (downloadBtn) {
         downloadBtn.onclick = () => {
-            alert('Bulk download coming soon! You can download individual tracks from the project pages.');
+            showNotification('Bulk download coming soon! You can download individual tracks from project pages.');
         };
     }
 
@@ -623,7 +625,7 @@ export async function renderTrackerProjectPage(sheetId, projectName, container, 
     if (downloadBtn) {
         downloadBtn.innerHTML = `<span>Download</span>`;
         downloadBtn.onclick = () => {
-            alert('Project download coming soon! You can download individual tracks from the menu.');
+            showNotification('Project download coming soon! You can download individual tracks from the menu.');
         };
     }
 

@@ -5,6 +5,7 @@ import { MusicAPI } from './music-api.js';
 import { apiSettings } from './storage.js';
 import { debounce, escapeHtml } from './utils.js';
 import { Player } from './player.js';
+import { showNotification } from './downloads.js';
 
 // objects execution february 29th 2027
 
@@ -96,7 +97,7 @@ function setupImageUploadControl(idPrefix) {
         if (!file) return;
 
         if (!file.type.startsWith('image/')) {
-            alert('Please select an image file');
+            showNotification('Please select a valid image file');
             return;
         }
 
@@ -607,7 +608,7 @@ async function saveProfile() {
             window.history.replaceState(null, '', `/user/@${newUsername}`);
         }
     } catch (e) {
-        alert('Failed to save profile. See console.');
+        showNotification('Failed to save profile');
         console.error(e);
     } finally {
         saveProfileBtn.disabled = false;
@@ -836,10 +837,11 @@ async function handleArtistClick(name) {
         if (results.items.length > 0) {
             navigate(`/artist/${results.items[0].id}`);
         } else {
-            alert('Artist not found in library');
+            showNotification('Artist not found in library');
         }
     } catch (e) {
         console.error(e);
+        showNotification('Error searching for artist');
     }
 }
 
@@ -850,10 +852,11 @@ async function handleAlbumClick(name, artist) {
         if (results.items.length > 0) {
             navigate(`/album/${results.items[0].id}`);
         } else {
-            alert('Album not found in library');
+            showNotification('Album not found in library');
         }
     } catch (e) {
         console.error(e);
+        showNotification('Error searching for album');
     }
 }
 
@@ -868,10 +871,11 @@ async function handleTrackClick(title, artist) {
                 Player.instance.playTrackFromQueue();
             }
         } else {
-            alert('Track not found');
+            showNotification('Track not found');
         }
     } catch (e) {
         console.error(e);
+        showNotification('Error searching for track');
     }
 }
 
