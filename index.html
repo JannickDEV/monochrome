@@ -6636,7 +6636,7 @@
                             "
                         >
                             <a
-                                href="https://downloads.samidy.com/android.apk"
+                                href="https://github.com/monochrome-music/monochrome/releases/latest/download/monochrome-android.apk"
                                 class="btn-primary"
                                 style="display: inline-flex; align-items: center; gap: 8px"
                             >
@@ -6644,17 +6644,18 @@
                                 Download for Android
                             </a>
                             <a
-                                href="https://downloads.samidy.com/iOS.ipa"
+                                href="#"
                                 class="btn-primary"
-                                style="display: inline-flex; align-items: center; gap: 8px"
+                                style="display: inline-flex; align-items: center; gap: 8px; opacity: 0.7; cursor: not-allowed"
+                                onclick="event.preventDefault(); window.showNotification ? window.showNotification('iOS (IPA) version is Coming Soon!') : alert('iOS (IPA) version is Coming Soon!');"
                             >
-                                <use svg="!lucide/download.svg" size="18" />
-                                Download for iOS
+                                <use svg="!lucide/clock.svg" size="18" />
+                                Download for iOS (Coming Soon)
                             </a>
                         </div>
 
                         <p style="color: var(--muted-foreground); margin-bottom: var(--space-3)">
-                            The iOS app must be sideloaded. If you need help getting started, check out this
+                            The iOS app must be sideloaded when it comes out. If you need help getting started, check out this
                             <a
                                 href="https://fmhy.net/mobile#ios-sideloading"
                                 target="_blank"

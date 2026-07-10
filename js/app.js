@@ -2743,6 +2743,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (isNativeApp) {
         console.log('[Amazon SW Decrypter] PWA disabled for native app shell');
         await disablePwaForAuthGate().catch(console.error);
+        const mobileContainer = document.querySelector('.mobile-download-container');
+        if (mobileContainer) mobileContainer.style.display = 'none';
     } else if (window.__AUTH_GATE__) {
         console.log('[Amazon SW Decrypter] PWA disabled for auth gate');
         await disablePwaForAuthGate().catch(console.error);
