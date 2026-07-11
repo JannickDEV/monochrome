@@ -39,7 +39,11 @@ export class SoundCloudAPI {
     }
 
     getApiBase() {
-        return soundcloudSettings.getApiBaseUrl().replace(/\/$/, '');
+        const url = soundcloudSettings.getApiBaseUrl().replace(/\/$/, '');
+        if (url.startsWith('/') && (window.Capacitor?.isNativePlatform() || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:')) {
+            return FALLBACK_SC_API_BASE;
+        }
+        return url;
     }
 
     async getClientId() {

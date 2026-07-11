@@ -10,6 +10,11 @@ const config: CapacitorConfig = {
         splashBackgroundColor: '#000000',
         splashBackgroundColorDark: '#000000',
     },
+    plugins: {
+        CapacitorHttp: {
+            enabled: true,
+        },
+    },
 };
 
 export default config;
