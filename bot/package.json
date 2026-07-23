@@ -5,7 +5,9 @@
   "main": "src/index.ts",
   "scripts": {
     "start": "bun run src/index.ts",
-    "dev": "bun --watch src/index.ts"
+    "dev": "bun --watch src/index.ts",
+    "build": "tsc",
+    "start:node": "node dist/index.js"
   },
   "dependencies": {
     "@discordjs/voice": "^0.18.0",
