@@ -32,6 +32,17 @@ client.once('clientReady', () => {
     console.log(`[Discord Bot] Logged in as ${client.user?.tag}!`);
 });
 
+client.on('voiceStateUpdate', (oldState, newState) => {
+    // If the bot itself left or was kicked from a voice channel
+    if (oldState.channelId && !newState.channelId && oldState.id === client.user?.id) {
+        const player = getPlayer(oldState.guild.id);
+        if (player.connection) {
+            console.log(`[Voice] Bot left channel ${oldState.channelId}, clearing queue...`);
+            player.stop();
+        }
+    }
+});
+
 client.on('interactionCreate', async (interaction: Interaction) => {
     // Handle Slash Commands
     if (interaction.isChatInputCommand()) {
