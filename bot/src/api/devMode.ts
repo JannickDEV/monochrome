@@ -13,7 +13,7 @@ class BotTidalProvider implements Provider {
         const res = await fetch(`${devModeUrl}/search/?s=${encodeURIComponent(query)}&limit=${limit}`);
         if (!res.ok) throw new Error(`Tidal search failed: ${res.statusText}`);
         const data = await res.json();
-        return { items: data.tracks?.items || [] };
+        return { items: data.data?.items || data.items || [] };
     }
 
     async getStreamUrl(id: string | number): Promise<StreamInfo> {
