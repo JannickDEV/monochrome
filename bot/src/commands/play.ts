@@ -1,6 +1,6 @@
 import { ChatInputCommandInteraction, GuildMember, SlashCommandBuilder, TextChannel, MessageFlags } from 'discord.js';
 import { getPlayer, Track } from '../audio/musicPlayer.js';
-import { defaultSearchProvider } from '../api/devMode.js';
+import { defaultSearchProvider, tidalProvider, qobuzProvider } from '../api/devMode.js';
 import { SoundCloudProvider } from '../api/soundcloud.js';
 
 const scProvider = new SoundCloudProvider();
@@ -47,14 +47,49 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
         let tracks: Track[] = [];
 
-        // 1. URL Support & SoundCloud Direct Bypass Mode
+        // 1. URL Support
         if (query && (query.startsWith('http://') || query.startsWith('https://'))) {
             if (query.includes('soundcloud.com')) {
                 const scTrack = await scProvider.resolveUrl(query);
                 if (scTrack) tracks.push(scTrack);
+            } else if (query.includes('tidal.com/')) {
+                const match = query.match(/track\/(\d+)/);
+                if (match) {
+                    const id = match[1];
+                    const metadata = await tidalProvider.getTrackMetadata(id);
+                    if (metadata) {
+                        tracks.push({
+                            id: metadata.id,
+                            title: metadata.title,
+                            artist: { name: metadata.artist?.name || 'Unknown', id: metadata.artist?.id },
+                            provider: 'tidal',
+                            cover: metadata.album?.cover ? tidalProvider.getCoverUrl(metadata.album.cover) : null
+                        });
+                    }
+                } else {
+                    await interaction.editReply('Could not extract a valid Tidal track ID from the URL. Please ensure it is a track URL.');
+                    return;
+                }
+            } else if (query.includes('qobuz.com/')) {
+                const match = query.match(/track\/([a-zA-Z0-9_-]+)/);
+                if (match) {
+                    const id = match[1];
+                    const metadata = await qobuzProvider.getTrackMetadata(id);
+                    if (metadata) {
+                        tracks.push({
+                            id: metadata.id || id,
+                            title: metadata.title,
+                            artist: { name: metadata.performer?.name || metadata.artist?.name || 'Unknown', id: null },
+                            provider: 'qobuz',
+                            cover: metadata.album?.image?.large || metadata.album?.image?.small || metadata.image?.large || null
+                        });
+                    }
+                } else {
+                    await interaction.editReply('Could not extract a valid Qobuz track ID from the URL. Please ensure it is a track URL.');
+                    return;
+                }
             } else {
-                // TODO: Support Monochrome sharing links (e.g., https://monochrome.tf/track/123)
-                await interaction.editReply('Generic URLs not fully supported yet unless it is SoundCloud.');
+                await interaction.editReply('That URL provider is not fully supported yet (Only SoundCloud, Tidal, and Qobuz track URLs are supported).');
                 return;
             }
         } 
