@@ -2,6 +2,9 @@
     "name": "monochrome",
     "type": "module",
     "version": "2.5.6",
+    "workspaces": [
+        "bot"
+    ],
     "description": "[<img src=\"https://github.com/monochrome-music/monochrome/blob/main/assets/512.png?raw=true\" alt=\"Monochrome Logo\">](https://monochrome.tf)",
     "scripts": {
         "dev": "vite",
