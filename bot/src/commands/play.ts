@@ -79,7 +79,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                         tracks.push({
                             id: metadata.id || id,
                             title: metadata.title,
-                            artist: { name: metadata.performer?.name || metadata.artist?.name || 'Unknown', id: null },
+                            artist: { name: metadata.performer?.name || metadata.artist?.name || 'Unknown', id: undefined },
                             provider: 'qobuz',
                             cover: metadata.album?.image?.large || metadata.album?.image?.small || metadata.image?.large || null
                         });

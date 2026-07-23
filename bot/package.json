@@ -6,7 +6,7 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun --watch src/index.ts",
-    "build": "tsc",
+    "build": "bun build src/index.ts --target=node --outfile=dist/index.js",
     "start:node": "node dist/index.js"
   },
   "dependencies": {
