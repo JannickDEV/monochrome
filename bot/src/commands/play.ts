@@ -73,7 +73,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                     title: item.title,
                     artist: { name: item.artist?.name || 'Unknown', id: item.artist?.id },
                     provider: item.provider || 'tidal', // defaultSearchProvider is tidalProvider
-                    cover: item.cover || item.image || null
+                    cover: item.album?.cover ? defaultSearchProvider.getCoverUrl(item.album.cover) : (item.cover || item.image || null)
                 });
             }
         }

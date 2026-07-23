@@ -14,6 +14,10 @@ import { SoundCloudProvider } from '../api/soundcloud.js';
 import { updateDashboard } from '../ui/dashboard.js';
 import ffmpegPath from 'ffmpeg-static';
 
+if (ffmpegPath) {
+    process.env.FFMPEG_PATH = ffmpegPath;
+}
+
 export interface Track {
     id: string;
     title: string;
@@ -98,6 +102,8 @@ export class MusicPlayer {
             if (!streamInfo || !streamInfo.url) {
                 throw new Error('Stream URL not found');
             }
+
+            this.currentTrack.provider = streamInfo.provider || this.currentTrack.provider;
 
             console.log(`[MusicPlayer] Playing stream URL: ${streamInfo.url.substring(0, 50)}...`);
 
