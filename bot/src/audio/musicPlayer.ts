@@ -115,20 +115,15 @@ export class MusicPlayer {
                 '-c:a', 'libopus',
                 '-b:a', '128k',
                 '-vbr', 'on',
-                '-compression_level', '10',
-                '-frame_duration', '20',
-                '-application', 'audio',
-                '-f', 'opus',
+                '-f', 'webm',
                 'pipe:1'
             ];
 
             const ffmpegProcess = spawn(process.env.FFMPEG_PATH || 'ffmpeg', args);
             
             ffmpegProcess.stderr.on('data', (data) => {
-                const msg = data.toString();
-                if (msg.includes('Error') || msg.includes('403') || msg.includes('404')) {
-                    console.error(`[FFmpeg] ${msg.trim()}`);
-                }
+                // Log all FFmpeg output to catch ANY issues (it usually prints to stderr even on success)
+                console.log(`[FFmpeg-Debug] ${data.toString().trim()}`);
             });
             
             ffmpegProcess.on('error', (err) => {
@@ -136,7 +131,7 @@ export class MusicPlayer {
             });
 
             const resource = createAudioResource(ffmpegProcess.stdout, {
-                inputType: StreamType.OggOpus,
+                inputType: StreamType.WebmOpus,
             });
 
             resource.playStream.on('error', (err: any) => {
