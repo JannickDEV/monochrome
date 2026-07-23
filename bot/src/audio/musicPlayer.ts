@@ -107,9 +107,35 @@ export class MusicPlayer {
 
             console.log(`[MusicPlayer] Playing stream URL: ${streamInfo.url.substring(0, 50)}...`);
 
-            // Pass the URL directly so FFmpeg handles the HTTPS fetch and libopus encoding natively (avoids opusscript CPU lag)
-            const resource = createAudioResource(streamInfo.url, {
-                inputType: streamInfo.url.includes('m3u8') ? undefined : undefined, 
+            // Spawn FFmpeg manually to bypass the Akamai CDN User-Agent block (which rejects default FFmpeg)
+            // and output raw OggOpus packets to completely bypass Node.js opusscript CPU lag.
+            const { spawn } = await import('child_process');
+            const { StreamType } = await import('@discordjs/voice');
+            
+            const args = [
+                '-reconnect', '1',
+                '-reconnect_streamed', '1',
+                '-reconnect_delay_max', '5',
+                '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                '-i', streamInfo.url,
+                '-c:a', 'libopus',
+                '-b:a', '128k',
+                '-vbr', 'on',
+                '-compression_level', '10',
+                '-frame_duration', '20',
+                '-application', 'audio',
+                '-f', 'opus',
+                'pipe:1'
+            ];
+
+            const ffmpegProcess = spawn(process.env.FFMPEG_PATH || 'ffmpeg', args);
+            
+            ffmpegProcess.on('error', (err) => {
+                console.error('[MusicPlayer] FFmpeg spawn error:', err);
+            });
+
+            const resource = createAudioResource(ffmpegProcess.stdout, {
+                inputType: StreamType.OggOpus,
             });
 
             resource.playStream.on('error', (err: any) => {
