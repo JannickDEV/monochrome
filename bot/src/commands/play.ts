@@ -91,6 +91,80 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                     await interaction.editReply('Could not extract a valid Qobuz track ID from the URL. Please ensure it is a track URL.');
                     return;
                 }
+            } else if (query.includes('qobuz.com/album/') || query.includes('play.qobuz.com/album/')) {
+                const idMatch = query.match(/album\/[^\/]+\/([a-zA-Z0-9]+)/) || query.match(/album\/([a-zA-Z0-9]+)/);
+                if (idMatch) {
+                    await interaction.editReply('Fetching Qobuz album...');
+                    try {
+                        const qobuzRes = await fetch(`https://qz-api.bitperfect.dedyn.io/album/get?album_id=${idMatch[1]}`);
+                        if (qobuzRes.ok) {
+                            const data = await qobuzRes.json();
+                            const items = data.tracks?.items || [];
+                            if (items.length > 0) {
+                                for (const item of items) {
+                                    if (item && item.id) {
+                                        tracks.push({
+                                            id: item.id.toString(),
+                                            title: item.title,
+                                            artist: { name: item.performer?.name || item.artist?.name || 'Unknown', id: item.performer?.id?.toString() || item.artist?.id?.toString() },
+                                            provider: 'qobuz',
+                                            cover: item.album?.image?.large || data.image?.large ? defaultSearchProvider.getCoverUrl(item.album?.image?.large || data.image?.large) : null
+                                        });
+                                    }
+                                }
+                            } else {
+                                await interaction.editReply('Album is empty or could not be found.');
+                                return;
+                            }
+                        } else {
+                            await interaction.editReply(`Failed to fetch Qobuz album. Error ${qobuzRes.status}`);
+                            return;
+                        }
+                    } catch (e) {
+                        await interaction.editReply(`Failed to parse Qobuz album: ${e.message}`);
+                        return;
+                    }
+                } else {
+                    await interaction.editReply('Could not extract a valid Qobuz album ID from the URL.');
+                    return;
+                }
+            } else if (query.includes('qobuz.com/playlist/') || query.includes('play.qobuz.com/playlist/')) {
+                const idMatch = query.match(/playlist\/[^\/]+\/([a-zA-Z0-9-]+)/) || query.match(/playlist\/([a-zA-Z0-9-]+)/);
+                if (idMatch) {
+                    await interaction.editReply('Fetching Qobuz playlist...');
+                    try {
+                        const qobuzRes = await fetch(`https://qz-api.bitperfect.dedyn.io/playlist/get?playlist_id=${idMatch[1]}&extra=tracks`);
+                        if (qobuzRes.ok) {
+                            const data = await qobuzRes.json();
+                            const items = data.tracks?.items || [];
+                            if (items.length > 0) {
+                                for (const item of items) {
+                                    if (item && item.id) {
+                                        tracks.push({
+                                            id: item.id.toString(),
+                                            title: item.title,
+                                            artist: { name: item.performer?.name || item.artist?.name || 'Unknown', id: item.performer?.id?.toString() || item.artist?.id?.toString() },
+                                            provider: 'qobuz',
+                                            cover: item.album?.image?.large ? defaultSearchProvider.getCoverUrl(item.album.image.large) : null
+                                        });
+                                    }
+                                }
+                            } else {
+                                await interaction.editReply('Playlist is empty or could not be found.');
+                                return;
+                            }
+                        } else {
+                            await interaction.editReply(`Failed to fetch Qobuz playlist. Error ${qobuzRes.status}`);
+                            return;
+                        }
+                    } catch (e) {
+                        await interaction.editReply(`Failed to parse Qobuz playlist: ${e.message}`);
+                        return;
+                    }
+                } else {
+                    await interaction.editReply('Could not extract a valid Qobuz playlist ID from the URL.');
+                    return;
+                }
             } else if (query.includes('tidal.com/browse/playlist/') || query.includes('tidal.com/playlist/')) {
                 const idMatch = query.match(/playlist\/([a-zA-Z0-9-]+)/);
                 if (idMatch) {
