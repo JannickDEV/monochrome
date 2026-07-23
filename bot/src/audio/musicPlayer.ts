@@ -113,6 +113,10 @@ export class MusicPlayer {
                 inputType: streamInfo.url.includes('m3u8') ? undefined : undefined, 
             });
 
+            resource.playStream.on('error', (err: any) => {
+                console.error('[MusicPlayer] Stream Error (FFmpeg):', err);
+            });
+
             this.player.play(resource);
             this.refreshDashboard();
         } catch (error) {
