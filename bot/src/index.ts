@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Interaction, REST, Routes } from 'discord.js';
+import { Client, GatewayIntentBits, Interaction, REST, Routes, MessageFlags } from 'discord.js';
 import * as dotenv from 'dotenv';
 import PocketBase from 'pocketbase';
 import { data as playCommandData, execute as executePlayCommand } from './commands/play.js';
@@ -44,20 +44,23 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 
         const player = getPlayer(guildId);
         if (!player.connection) {
-            await interaction.reply({ content: 'Bot is not in a voice channel!', ephemeral: true });
+            await interaction.reply({ content: 'Bot is not in a voice channel!', flags: MessageFlags.Ephemeral });
             return;
         }
 
         const customId = interaction.customId;
-        await interaction.deferUpdate();
 
         if (customId === 'btn_playpause') {
-            if (player.player.state.status === 'playing') player.pause();
+            const isPlaying = player.player.state.status === 'playing';
+            if (isPlaying) player.pause();
             else player.resume();
+            await interaction.reply({ content: isPlaying ? 'Paused playback.' : 'Resumed playback.', flags: MessageFlags.Ephemeral });
         } else if (customId === 'btn_skip') {
             player.skip();
+            await interaction.reply({ content: 'Skipped track.', flags: MessageFlags.Ephemeral });
         } else if (customId === 'btn_stop') {
             player.stop();
+            await interaction.reply({ content: 'Stopped playback.', flags: MessageFlags.Ephemeral });
         }
     }
 });
