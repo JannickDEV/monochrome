@@ -6,11 +6,16 @@ import {
     demuxProbe,
     joinVoiceChannel,
     VoiceConnection,
-    VoiceConnectionStatus
+    VoiceConnectionStatus,
+    generateDependencyReport
 } from '@discordjs/voice';
 import { GuildMember, TextChannel } from 'discord.js';
 import { fallbackProvider } from '../api/devMode.js';
 import { SoundCloudProvider } from '../api/soundcloud.js';
+
+console.log("=== Discord Voice Dependencies ===");
+console.log(generateDependencyReport());
+console.log("==================================");
 import { updateDashboard } from '../ui/dashboard.js';
 
 
