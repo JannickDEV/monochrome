@@ -28,7 +28,8 @@ class BotTidalProvider implements Provider {
         const cleanId = String(id).replace(/^t:/, '');
         const res = await fetch(`${devModeUrl}/info/?id=${cleanId}`);
         if (!res.ok) throw new Error(`Tidal metadata failed: ${res.statusText}`);
-        return await res.json();
+        const data = await res.json();
+        return data.data || data;
     }
 
     // Dummy implementations for Provider interface
