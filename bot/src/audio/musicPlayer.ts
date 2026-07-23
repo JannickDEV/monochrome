@@ -13,7 +13,6 @@ import { fallbackProvider } from '../api/devMode.js';
 import { SoundCloudProvider } from '../api/soundcloud.js';
 import { updateDashboard } from '../ui/dashboard.js';
 import ffmpegPath from 'ffmpeg-static';
-import { Readable } from 'stream';
 
 if (ffmpegPath) {
     process.env.FFMPEG_PATH = ffmpegPath;
@@ -108,16 +107,9 @@ export class MusicPlayer {
 
             console.log(`[MusicPlayer] Playing stream URL: ${streamInfo.url.substring(0, 50)}...`);
 
-            // Fetch the stream manually to ensure it's not blocked by 403 Forbidden
-            const streamResponse = await fetch(streamInfo.url);
-            if (!streamResponse.ok) {
-                throw new Error(`CDN Error: ${streamResponse.status} ${streamResponse.statusText}`);
-            }
-
-            const stream = Readable.fromWeb(streamResponse.body as any);
-
-            const resource = createAudioResource(stream, {
-                inlineVolume: true
+            // Pass the URL directly so FFmpeg handles the HTTPS fetch and libopus encoding natively (avoids opusscript CPU lag)
+            const resource = createAudioResource(streamInfo.url, {
+                inputType: streamInfo.url.includes('m3u8') ? undefined : undefined, 
             });
 
             resource.playStream.on('error', (err: any) => {
