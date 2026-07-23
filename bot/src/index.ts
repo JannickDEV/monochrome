@@ -2,6 +2,8 @@ import { Client, GatewayIntentBits, Interaction, REST, Routes, MessageFlags } fr
 import * as dotenv from 'dotenv';
 import PocketBase from 'pocketbase';
 import { data as playCommandData, execute as executePlayCommand } from './commands/play.js';
+import { data as queueCommandData, execute as executeQueueCommand } from './commands/queue.js';
+import { data as clearCommandData, execute as executeClearCommand } from './commands/clear.js';
 import { getPlayer } from './audio/musicPlayer.js';
 
 dotenv.config();
@@ -35,6 +37,10 @@ client.on('interactionCreate', async (interaction: Interaction) => {
     if (interaction.isChatInputCommand()) {
         if (interaction.commandName === 'play') {
             await executePlayCommand(interaction);
+        } else if (interaction.commandName === 'queue') {
+            await executeQueueCommand(interaction);
+        } else if (interaction.commandName === 'clear') {
+            await executeClearCommand(interaction);
         }
     } 
     // Handle Button Interactions from the Dashboard
@@ -70,9 +76,16 @@ async function registerCommands() {
     const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN!);
     try {
         console.log('Started refreshing application (/) commands.');
+
+        const commands = [
+            playCommandData.toJSON(),
+            queueCommandData.toJSON(),
+            clearCommandData.toJSON()
+        ];
+
         await rest.put(
             Routes.applicationCommands(CLIENT_ID!),
-            { body: [playCommandData.toJSON()] },
+            { body: commands },
         );
         console.log('Successfully reloaded application (/) commands.');
     } catch (error) {

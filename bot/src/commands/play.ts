@@ -91,6 +91,82 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                     await interaction.editReply('Could not extract a valid Qobuz track ID from the URL. Please ensure it is a track URL.');
                     return;
                 }
+            } else if (query.includes('tidal.com/browse/playlist/') || query.includes('tidal.com/playlist/')) {
+                const idMatch = query.match(/playlist\/([a-zA-Z0-9-]+)/);
+                if (idMatch) {
+                    await interaction.editReply('Fetching Tidal playlist...');
+                    try {
+                        const tidalRes = await fetch(`https://hf-core.bitperfect.dedyn.io/playlist/?id=${idMatch[1]}`);
+                        if (tidalRes.ok) {
+                            const data = await tidalRes.json();
+                            const items = data.items || data.playlist?.items || [];
+                            if (items.length > 0) {
+                                for (const entry of items) {
+                                    const item = entry.item || entry;
+                                    if (item && item.id) {
+                                        tracks.push({
+                                            id: item.id.toString(),
+                                            title: item.title,
+                                            artist: { name: item.artist?.name || 'Unknown', id: item.artist?.id?.toString() },
+                                            provider: 'tidal',
+                                            cover: item.album?.cover ? defaultSearchProvider.getCoverUrl(item.album.cover) : null
+                                        });
+                                    }
+                                }
+                            } else {
+                                await interaction.editReply('Playlist is empty or could not be found.');
+                                return;
+                            }
+                        } else {
+                            await interaction.editReply(`Failed to fetch Tidal playlist. Error ${tidalRes.status}`);
+                            return;
+                        }
+                    } catch (e) {
+                        await interaction.editReply(`Failed to parse Tidal playlist: ${e.message}`);
+                        return;
+                    }
+                } else {
+                    await interaction.editReply('Could not extract a valid Tidal playlist ID from the URL.');
+                    return;
+                }
+            } else if (query.includes('tidal.com/browse/album/') || query.includes('tidal.com/album/')) {
+                const idMatch = query.match(/album\/([0-9]+)/);
+                if (idMatch) {
+                    await interaction.editReply('Fetching Tidal album...');
+                    try {
+                        const tidalRes = await fetch(`https://hf-core.bitperfect.dedyn.io/album/?id=${idMatch[1]}`);
+                        if (tidalRes.ok) {
+                            const data = await tidalRes.json();
+                            const items = data.items || data.data?.items || [];
+                            if (items.length > 0) {
+                                for (const entry of items) {
+                                    const item = entry.item || entry;
+                                    if (item && item.id) {
+                                        tracks.push({
+                                            id: item.id.toString(),
+                                            title: item.title,
+                                            artist: { name: item.artist?.name || 'Unknown', id: item.artist?.id?.toString() },
+                                            provider: 'tidal',
+                                            cover: item.album?.cover || data.data?.cover ? defaultSearchProvider.getCoverUrl(item.album?.cover || data.data?.cover) : null
+                                        });
+                                    }
+                                }
+                            } else {
+                                await interaction.editReply('Album is empty or could not be found.');
+                                return;
+                            }
+                        } else {
+                            await interaction.editReply(`Failed to fetch Tidal album. Error ${tidalRes.status}`);
+                            return;
+                        }
+                    } catch (e) {
+                        await interaction.editReply(`Failed to parse Tidal album: ${e.message}`);
+                        return;
+                    }
+                } else {
+                    await interaction.editReply('Could not extract a valid Tidal album ID from the URL.');
+                    return;
+                }
             } else if (query.includes('open.spotify.com/playlist/') || query.includes('open.spotify.com/album/')) {
                 await interaction.editReply('Parsing Spotify playlist... this may take a moment.');
                 try {
