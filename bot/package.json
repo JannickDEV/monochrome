@@ -17,7 +17,8 @@
     "ffmpeg-static": "^5.2.0",
     "libsodium-wrappers": "^0.7.15",
     "opusscript": "^0.1.1",
-    "pocketbase": "^0.22.0"
+    "pocketbase": "^0.22.0",
+    "spotify-url-info": "^3.3.1"
   },
   "devDependencies": {
     "@types/node": "^22.5.4",

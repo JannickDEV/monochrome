@@ -1,5 +1,8 @@
 import { ChatInputCommandInteraction, GuildMember, SlashCommandBuilder, TextChannel, MessageFlags } from 'discord.js';
 import { getPlayer, Track } from '../audio/musicPlayer.js';
+import spotifyUrlInfo from 'spotify-url-info';
+
+const { getTracks: getSpotifyTracks } = spotifyUrlInfo(fetch);
 import { defaultSearchProvider, tidalProvider, qobuzProvider } from '../api/devMode.js';
 import { SoundCloudProvider } from '../api/soundcloud.js';
 
@@ -88,8 +91,42 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                     await interaction.editReply('Could not extract a valid Qobuz track ID from the URL. Please ensure it is a track URL.');
                     return;
                 }
+            } else if (query.includes('open.spotify.com/playlist/') || query.includes('open.spotify.com/album/')) {
+                await interaction.editReply('Parsing Spotify playlist... this may take a moment.');
+                try {
+                    const spTracks = await getSpotifyTracks(query);
+                    if (spTracks && spTracks.length > 0) {
+                        await interaction.editReply(`Found ${spTracks.length} tracks on Spotify. Resolving on Tidal/Qobuz...`);
+                        let addedCount = 0;
+                        for (const spTrack of spTracks) {
+                            const searchQuery = `${spTrack.name} ${spTrack.artist || spTrack.artists?.[0]?.name || ''}`.trim();
+                            const searchResults = await defaultSearchProvider.searchTracks(searchQuery, { limit: 1 });
+                            if (searchResults?.items?.length > 0) {
+                                const item = searchResults.items[0];
+                                tracks.push({
+                                    id: item.id,
+                                    title: item.title,
+                                    artist: { name: item.artist?.name || 'Unknown', id: item.artist?.id },
+                                    provider: item.provider || 'tidal',
+                                    cover: item.album?.cover ? defaultSearchProvider.getCoverUrl(item.album.cover) : null
+                                });
+                                addedCount++;
+                            }
+                        }
+                        if (addedCount === 0) {
+                            await interaction.editReply('Could not resolve any of the Spotify tracks on Tidal/Qobuz.');
+                            return;
+                        }
+                    } else {
+                        await interaction.editReply('Could not find any tracks in this Spotify URL.');
+                        return;
+                    }
+                } catch (e) {
+                    await interaction.editReply(`Failed to parse Spotify URL: ${e.message}`);
+                    return;
+                }
             } else {
-                await interaction.editReply('That URL provider is not fully supported yet (Only SoundCloud, Tidal, and Qobuz track URLs are supported).');
+                await interaction.editReply('That URL provider is not fully supported yet (Only SoundCloud, Tidal, Qobuz, and Spotify Playlists are supported).');
                 return;
             }
         } 
