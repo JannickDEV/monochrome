@@ -12,11 +12,7 @@ import { GuildMember, TextChannel } from 'discord.js';
 import { fallbackProvider } from '../api/devMode.js';
 import { SoundCloudProvider } from '../api/soundcloud.js';
 import { updateDashboard } from '../ui/dashboard.js';
-import ffmpegPath from 'ffmpeg-static';
 
-if (ffmpegPath) {
-    process.env.FFMPEG_PATH = ffmpegPath;
-}
 
 export interface Track {
     id: string;
@@ -107,21 +103,15 @@ export class MusicPlayer {
 
             console.log(`[MusicPlayer] Playing stream URL: ${streamInfo.url.substring(0, 50)}...`);
 
-            // We MUST fetch the stream natively via Node.js to bypass the Akamai CDN User-Agent/IP block.
-            // FFmpeg's native HTTP client is being completely blocked or dropped by the CDN.
-            const streamResponse = await fetch(streamInfo.url);
-            if (!streamResponse.ok) {
-                throw new Error(`CDN Error: ${streamResponse.status} ${streamResponse.statusText}`);
-            }
-
-            const { Readable } = await import('stream');
-            const stream = Readable.fromWeb(streamResponse.body as any);
-
             const { spawn } = await import('child_process');
             const { StreamType } = await import('@discordjs/voice');
             
             const args = [
-                '-i', 'pipe:0',
+                '-reconnect', '1',
+                '-reconnect_streamed', '1',
+                '-reconnect_delay_max', '5',
+                '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                '-i', streamInfo.url,
                 '-c:a', 'libopus',
                 '-b:a', '128k',
                 '-vbr', 'on',
@@ -134,8 +124,12 @@ export class MusicPlayer {
 
             const ffmpegProcess = spawn(process.env.FFMPEG_PATH || 'ffmpeg', args);
             
-            // Pipe the raw CDN stream into FFmpeg so it can decode and re-encode to OggOpus
-            stream.pipe(ffmpegProcess.stdin);
+            ffmpegProcess.stderr.on('data', (data) => {
+                const msg = data.toString();
+                if (msg.includes('Error') || msg.includes('403') || msg.includes('404')) {
+                    console.error(`[FFmpeg] ${msg.trim()}`);
+                }
+            });
             
             ffmpegProcess.on('error', (err) => {
                 console.error('[MusicPlayer] FFmpeg spawn error:', err);
