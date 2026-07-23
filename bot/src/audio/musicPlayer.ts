@@ -107,17 +107,21 @@ export class MusicPlayer {
 
             console.log(`[MusicPlayer] Playing stream URL: ${streamInfo.url.substring(0, 50)}...`);
 
-            // Spawn FFmpeg manually to bypass the Akamai CDN User-Agent block (which rejects default FFmpeg)
-            // and output raw OggOpus packets to completely bypass Node.js opusscript CPU lag.
+            // We MUST fetch the stream natively via Node.js to bypass the Akamai CDN User-Agent/IP block.
+            // FFmpeg's native HTTP client is being completely blocked or dropped by the CDN.
+            const streamResponse = await fetch(streamInfo.url);
+            if (!streamResponse.ok) {
+                throw new Error(`CDN Error: ${streamResponse.status} ${streamResponse.statusText}`);
+            }
+
+            const { Readable } = await import('stream');
+            const stream = Readable.fromWeb(streamResponse.body as any);
+
             const { spawn } = await import('child_process');
             const { StreamType } = await import('@discordjs/voice');
             
             const args = [
-                '-reconnect', '1',
-                '-reconnect_streamed', '1',
-                '-reconnect_delay_max', '5',
-                '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                '-i', streamInfo.url,
+                '-i', 'pipe:0',
                 '-c:a', 'libopus',
                 '-b:a', '128k',
                 '-vbr', 'on',
@@ -129,6 +133,9 @@ export class MusicPlayer {
             ];
 
             const ffmpegProcess = spawn(process.env.FFMPEG_PATH || 'ffmpeg', args);
+            
+            // Pipe the raw CDN stream into FFmpeg so it can decode and re-encode to OggOpus
+            stream.pipe(ffmpegProcess.stdin);
             
             ffmpegProcess.on('error', (err) => {
                 console.error('[MusicPlayer] FFmpeg spawn error:', err);
