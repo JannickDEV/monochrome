@@ -59,6 +59,10 @@ export class MusicPlayer {
         
         this.dashboardChannel = channel;
 
+        this.connection.on('stateChange', (oldState, newState) => {
+            console.log(`[VoiceConnection] State changed from ${oldState.status} to ${newState.status}`);
+        });
+
         this.connection.on(VoiceConnectionStatus.Disconnected, () => {
             this.stop();
         });
