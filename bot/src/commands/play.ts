@@ -22,6 +22,10 @@ export const data = new SlashCommandBuilder()
     .addStringOption(option => 
         option.setName('artist')
             .setDescription('Specific artist to search for')
+            .setRequired(false))
+    .addStringOption(option => 
+        option.setName('url')
+            .setDescription('Direct URL (Spotify, Tidal, Qobuz, SoundCloud)')
             .setRequired(false));
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -32,12 +36,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         return interaction.reply({ content: 'You must be in a voice channel!', flags: MessageFlags.Ephemeral });
     }
 
-    const query = interaction.options.getString('query');
+    const rawQuery = interaction.options.getString('query');
+    const urlQuery = interaction.options.getString('url');
+    const query = rawQuery || urlQuery;
     const title = interaction.options.getString('title');
     const artist = interaction.options.getString('artist');
 
     if (!query && !title) {
-        return interaction.reply({ content: 'You must provide a query or a title!', flags: MessageFlags.Ephemeral });
+        return interaction.reply({ content: 'You must provide a query, url, or a title!', flags: MessageFlags.Ephemeral });
     }
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
@@ -73,28 +79,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                     await interaction.editReply('Could not extract a valid Tidal track ID from the URL. Please ensure it is a track URL.');
                     return;
                 }
-            } else if (query.includes('qobuz.com/')) {
-                const match = query.match(/track\/([a-zA-Z0-9_-]+)/);
-                if (match) {
-                    const id = match[1];
-                    const metadata = await qobuzProvider.getTrackMetadata(id);
-                    if (metadata) {
-                        tracks.push({
-                            id: metadata.id || id,
-                            title: metadata.title,
-                            artist: { name: metadata.performer?.name || metadata.artist?.name || 'Unknown', id: undefined },
-                            provider: 'qobuz',
-                            cover: metadata.album?.image?.large || metadata.album?.image?.small || metadata.image?.large || null
-                        });
-                    }
-                } else {
-                    await interaction.editReply('Could not extract a valid Qobuz track ID from the URL. Please ensure it is a track URL.');
-                    return;
-                }
-            } else if (query.includes('qobuz.com/album/') || query.includes('play.qobuz.com/album/')) {
-                const idMatch = query.match(/album\/[^\/]+\/([a-zA-Z0-9]+)/) || query.match(/album\/([a-zA-Z0-9]+)/);
-                if (idMatch) {
-                    await interaction.editReply('Fetching Qobuz album...');
+            } else if (query.includes('qobuz.com/') || query.includes('m-app.bitperfect.dedyn.io/')) {
+                // First check if it's an album or playlist
+                if (query.includes('/album/')) {
+                    const idMatch = query.match(/album\/[^\/]+\/([a-zA-Z0-9]+)/) || query.match(/album\/([a-zA-Z0-9]+)/);
+                    if (idMatch) {
+                        await interaction.editReply('Fetching Qobuz album...');
                     try {
                         const qobuzRes = await fetch(`https://qz-api.bitperfect.dedyn.io/album/get?album_id=${idMatch[1]}`);
                         if (qobuzRes.ok) {
@@ -128,7 +118,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                     await interaction.editReply('Could not extract a valid Qobuz album ID from the URL.');
                     return;
                 }
-            } else if (query.includes('qobuz.com/playlist/') || query.includes('play.qobuz.com/playlist/')) {
+            } else if (query.includes('qobuz.com/playlist/') || query.includes('play.qobuz.com/playlist/') || query.includes('m-app.bitperfect.dedyn.io/playlist/')) {
                 const idMatch = query.match(/playlist\/[^\/]+\/([a-zA-Z0-9-]+)/) || query.match(/playlist\/([a-zA-Z0-9-]+)/);
                 if (idMatch) {
                     await interaction.editReply('Fetching Qobuz playlist...');
@@ -165,7 +155,27 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                     await interaction.editReply('Could not extract a valid Qobuz playlist ID from the URL.');
                     return;
                 }
-            } else if (query.includes('tidal.com/browse/playlist/') || query.includes('tidal.com/playlist/')) {
+            } else {
+                // Handle tracks
+                const match = query.match(/track\/([a-zA-Z0-9_-]+)/);
+                if (match) {
+                    const id = match[1];
+                    const metadata = await qobuzProvider.getTrackMetadata(id);
+                    if (metadata) {
+                        tracks.push({
+                            id: metadata.id || id,
+                            title: metadata.title,
+                            artist: { name: metadata.performer?.name || metadata.artist?.name || 'Unknown', id: undefined },
+                            provider: 'qobuz',
+                            cover: metadata.album?.image?.large || metadata.album?.image?.small || metadata.image?.large || null
+                        });
+                    }
+                } else {
+                    await interaction.editReply('Could not extract a valid Qobuz track ID from the URL. Please ensure it is a track URL.');
+                    return;
+                }
+            }
+        } else if (query.includes('tidal.com/browse/playlist/') || query.includes('tidal.com/playlist/')) {
                 const idMatch = query.match(/playlist\/([a-zA-Z0-9-]+)/);
                 if (idMatch) {
                     await interaction.editReply('Fetching Tidal playlist...');
