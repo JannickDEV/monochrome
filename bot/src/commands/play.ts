@@ -1,4 +1,4 @@
-import { ChatInputCommandInteraction, GuildMember, SlashCommandBuilder, TextChannel } from 'discord.js';
+import { ChatInputCommandInteraction, GuildMember, SlashCommandBuilder, TextChannel, MessageFlags } from 'discord.js';
 import { getPlayer, Track } from '../audio/musicPlayer.js';
 import { defaultSearchProvider } from '../api/devMode.js';
 import { SoundCloudProvider } from '../api/soundcloud.js';
@@ -26,7 +26,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const channel = interaction.channel as TextChannel;
     
     if (!member.voice.channel) {
-        return interaction.reply({ content: 'You must be in a voice channel!', ephemeral: true });
+        return interaction.reply({ content: 'You must be in a voice channel!', flags: MessageFlags.Ephemeral });
     }
 
     const query = interaction.options.getString('query');
@@ -34,10 +34,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     const artist = interaction.options.getString('artist');
 
     if (!query && !title) {
-        return interaction.reply({ content: 'You must provide a query or a title!', ephemeral: true });
+        return interaction.reply({ content: 'You must provide a query or a title!', flags: MessageFlags.Ephemeral });
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const player = getPlayer(interaction.guildId!);
     
     try {
