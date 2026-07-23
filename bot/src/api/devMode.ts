@@ -10,7 +10,7 @@ class BotTidalProvider implements Provider {
 
     async searchTracks(query: string, options: SearchOptions = {}): Promise<{ items: any[] }> {
         const limit = options.limit || 10;
-        const res = await fetch(`${devModeUrl}/search/?q=${encodeURIComponent(query)}&limit=${limit}`);
+        const res = await fetch(`${devModeUrl}/search/?s=${encodeURIComponent(query)}&limit=${limit}`);
         if (!res.ok) throw new Error(`Tidal search failed: ${res.statusText}`);
         const data = await res.json();
         return { items: data.tracks?.items || [] };
