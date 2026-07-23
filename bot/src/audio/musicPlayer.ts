@@ -35,6 +35,7 @@ export class MusicPlayer {
     public queue: Track[] = [];
     public currentTrack: Track | null = null;
     public dashboardChannel: TextChannel | null = null;
+    private isProcessing: boolean = false;
     
     private soundCloudProvider = new SoundCloudProvider();
 
@@ -77,7 +78,7 @@ export class MusicPlayer {
 
     public async addTrack(track: Track) {
         this.queue.push(track);
-        if (this.player.state.status === AudioPlayerStatus.Idle) {
+        if (this.player.state.status === AudioPlayerStatus.Idle && !this.isProcessing) {
             this.playNext();
         } else {
             this.refreshDashboard();
@@ -85,11 +86,14 @@ export class MusicPlayer {
     }
 
     public async playNext() {
+        if (this.isProcessing) return;
+        
         if (this.queue.length === 0) {
             this.refreshDashboard();
             return;
         }
 
+        this.isProcessing = true;
         const track = this.queue.shift()!;
         this.currentTrack = track;
 
@@ -155,7 +159,11 @@ export class MusicPlayer {
             if (this.dashboardChannel) {
                 this.dashboardChannel.send(`❌ Failed to play **${track.title}**: ${error instanceof Error ? error.message : 'Unknown error'}`);
             }
-            this.playNext();
+        } finally {
+            this.isProcessing = false;
+            if (!this.currentTrack && this.queue.length > 0) {
+                this.playNext();
+            }
         }
     }
 
@@ -176,6 +184,7 @@ export class MusicPlayer {
     public stop() {
         this.queue = [];
         this.currentTrack = null;
+        this.isProcessing = false;
         this.player.stop();
         if (this.connection) {
             this.connection.destroy();

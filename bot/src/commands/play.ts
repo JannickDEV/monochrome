@@ -94,7 +94,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                                 for (const item of items) {
                                     if (item && item.id) {
                                         tracks.push({
-                                            id: item.id.toString(),
+                                            id: `q:${item.id}`,
                                             title: item.title,
                                             artist: { name: item.performer?.name || item.artist?.name || 'Unknown', id: item.performer?.id?.toString() || item.artist?.id?.toString() },
                                             provider: 'qobuz',
@@ -131,7 +131,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                                 for (const item of items) {
                                     if (item && item.id) {
                                         tracks.push({
-                                            id: item.id.toString(),
+                                            id: `q:${item.id}`,
                                             title: item.title,
                                             artist: { name: item.performer?.name || item.artist?.name || 'Unknown', id: item.performer?.id?.toString() || item.artist?.id?.toString() },
                                             provider: 'qobuz',
@@ -163,7 +163,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
                     const metadata = await qobuzProvider.getTrackMetadata(id);
                     if (metadata) {
                         tracks.push({
-                            id: metadata.id || id,
+                            id: `q:${metadata.id || id}`,
                             title: metadata.title,
                             artist: { name: metadata.performer?.name || metadata.artist?.name || 'Unknown', id: undefined },
                             provider: 'qobuz',
