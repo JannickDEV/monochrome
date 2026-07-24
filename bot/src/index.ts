@@ -4,6 +4,7 @@ import PocketBase from 'pocketbase';
 import { data as playCommandData, execute as executePlayCommand } from './commands/play.js';
 import { data as queueCommandData, execute as executeQueueCommand } from './commands/queue.js';
 import { data as clearCommandData, execute as executeClearCommand } from './commands/clear.js';
+import { data as shuffleCommandData, execute as executeShuffleCommand } from './commands/shuffle.js';
 import { getPlayer } from './audio/musicPlayer.js';
 
 dotenv.config();
@@ -52,6 +53,8 @@ client.on('interactionCreate', async (interaction: Interaction) => {
             await executeQueueCommand(interaction);
         } else if (interaction.commandName === 'clear') {
             await executeClearCommand(interaction);
+        } else if (interaction.commandName === 'shuffle') {
+            await executeShuffleCommand(interaction);
         }
     } 
     // Handle Button Interactions from the Dashboard
@@ -75,6 +78,9 @@ client.on('interactionCreate', async (interaction: Interaction) => {
         } else if (customId === 'btn_skip') {
             player.skip();
             await interaction.reply({ content: 'Skipped track.', flags: MessageFlags.Ephemeral });
+        } else if (customId === 'btn_shuffle') {
+            player.shuffle();
+            await interaction.reply({ content: 'Shuffled the queue! 🔀', flags: MessageFlags.Ephemeral });
         } else if (customId === 'btn_stop') {
             player.stop();
             await interaction.reply({ content: 'Stopped playback.', flags: MessageFlags.Ephemeral });
@@ -91,7 +97,8 @@ async function registerCommands() {
         const commands = [
             playCommandData.toJSON(),
             queueCommandData.toJSON(),
-            clearCommandData.toJSON()
+            clearCommandData.toJSON(),
+            shuffleCommandData.toJSON()
         ];
 
         await rest.put(

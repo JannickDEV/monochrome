@@ -181,6 +181,15 @@ export class MusicPlayer {
         this.player.stop(); // triggers Idle event -> playNext()
     }
 
+    public shuffle() {
+        if (this.queue.length === 0) return;
+        for (let i = this.queue.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [this.queue[i], this.queue[j]] = [this.queue[j], this.queue[i]];
+        }
+        this.refreshDashboard();
+    }
+
     public stop() {
         this.queue = [];
         this.currentTrack = null;

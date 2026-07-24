@@ -42,6 +42,10 @@ export async function updateDashboard(channel: TextChannel, player: MusicPlayer)
                     .setLabel('Skip')
                     .setStyle(ButtonStyle.Secondary),
                 new ButtonBuilder()
+                    .setCustomId('btn_shuffle')
+                    .setLabel('Shuffle')
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
                     .setCustomId('btn_stop')
                     .setLabel('Stop')
                     .setStyle(ButtonStyle.Danger)
