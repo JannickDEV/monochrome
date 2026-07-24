@@ -128,6 +128,8 @@ export class MusicPlayer {
                 '-c:a', 'libopus',
                 '-b:a', '128k',
                 '-vbr', 'on',
+                '-ar', '48000',
+                '-ac', '2',
                 '-f', 'webm',
                 'pipe:1'
             ];
