@@ -388,7 +388,7 @@ export async function renderTrackerArtistPage(sheetId, container, tabSlug = null
     const downloadBtn = document.getElementById('download-tracker-artist-btn');
 
     const normalizedName = normalizeArtistName(artist.name);
-    imageEl.src = `https://artistgrid.cx/assets/${normalizedName}.webp`;
+    imageEl.src = `https://assets.artistgrid.cx/webp/${normalizedName}.webp`;
     imageEl.onerror = function () {
         this.src = 'assets/logo.svg';
     };
@@ -830,7 +830,7 @@ export async function renderUnreleasedPage(container) {
         artistCard.dataset.artistName = artist.name.toLowerCase();
 
         const normalizedName = normalizeArtistName(artist.name);
-        const coverImage = `https://artistgrid.cx/assets/${normalizedName}.webp`;
+        const coverImage = `https://assets.artistgrid.cx/webp/${normalizedName}.webp`;
 
         artistCard.innerHTML = `
             <div class="card-image-wrapper">
