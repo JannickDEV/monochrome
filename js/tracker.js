@@ -148,9 +148,12 @@ function eraSubtitle(era) {
     return (era.aka && era.aka[0]) || 'Unreleased';
 }
 
-async function fetchTrackerData(sheetId) {
+async function fetchTrackerData(sheetId, tabSlug = null) {
     try {
-        const response = await fetch(`${TRACKER_API_BASE}${sheetId}/`);
+        const url = tabSlug 
+            ? `${TRACKER_API_BASE}${sheetId}/?tab=${tabSlug}`
+            : `${TRACKER_API_BASE}${sheetId}/`;
+        const response = await fetch(url);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return await response.json();
     } catch (e) {
@@ -338,7 +341,7 @@ export function createProjectCardHTML(era, _artist, sheetId, trackCount) {
 }
 
 // Render tracker artist page (grid of projects)
-export async function renderTrackerArtistPage(sheetId, container) {
+export async function renderTrackerArtistPage(sheetId, container, tabSlug = null) {
     if (!artistsData.length) {
         await loadArtistsData();
     }
@@ -351,7 +354,7 @@ export async function renderTrackerArtistPage(sheetId, container) {
     }
 
     // Fetch tracker data
-    const trackerData = await fetchTrackerData(sheetId);
+    const trackerData = await fetchTrackerData(sheetId, tabSlug);
     if (!trackerData || !trackerData.eras) {
         container.innerHTML = '<p style="text-align: center; padding: 2rem;">Failed to load tracker data.</p>';
         return;
@@ -376,7 +379,47 @@ export async function renderTrackerArtistPage(sheetId, container) {
         this.src = 'assets/logo.svg';
     };
     nameEl.textContent = artist.name;
-    metaEl.innerHTML = `<span>${eras.length} unreleased projects</span>`;
+    const tabName = trackerData.tab ? trackerData.tab.name : 'projects';
+    metaEl.innerHTML = `<span>${eras.length} ${tabName.toLowerCase()}</span>`;
+
+    // Add Tab selector if multiple tabs exist
+    let tabContainer = document.getElementById('unreleased-tab-container');
+    if (trackerData.tabs && trackerData.tabs.length > 1) {
+        if (!tabContainer) {
+            tabContainer = document.createElement('div');
+            tabContainer.id = 'unreleased-tab-container';
+            tabContainer.style.cssText = 'margin: 1rem 0; padding: 0 1rem;';
+            projectsContainer.parentNode.insertBefore(tabContainer, projectsContainer);
+        }
+        
+        const currentTabSlug = trackerData.tab ? trackerData.tab.slug : (tabSlug || 'main');
+        
+        tabContainer.innerHTML = `
+            <select id="tracker-tab-select" style="
+                width: 100%;
+                padding: 0.75rem 1rem;
+                border-radius: var(--radius);
+                border: 1px solid var(--border);
+                background: var(--background);
+                color: var(--foreground);
+                font-size: 1rem;
+                outline: none;
+                cursor: pointer;
+            ">
+                ${trackerData.tabs.map(t => 
+                    `<option value="${t.slug}" ${t.slug === currentTabSlug ? 'selected' : ''}>${escapeHtml(t.name)}</option>`
+                ).join('')}
+            </select>
+        `;
+
+        document.getElementById('tracker-tab-select').addEventListener('change', (e) => {
+            const newTabSlug = e.target.value;
+            projectsContainer.innerHTML = '<p style="text-align: center; padding: 2rem; width: 100%; color: var(--muted-foreground);">Loading...</p>';
+            renderTrackerArtistPage(sheetId, container, newTabSlug);
+        });
+    } else if (tabContainer) {
+        tabContainer.remove();
+    }
 
     // Set up shuffle play button
     if (playBtn) {
@@ -473,7 +516,11 @@ export async function renderTrackerArtistPage(sheetId, container) {
     });
 
     // Add search functionality
-    const searchInput = document.getElementById('unreleased-search-input');
+    let searchInput = document.getElementById('unreleased-search-input');
+    const newSearchInput = searchInput.cloneNode(true);
+    searchInput.parentNode.replaceChild(newSearchInput, searchInput);
+    searchInput = newSearchInput;
+
     searchInput.addEventListener('input', (e) => {
         const query = e.target.value.toLowerCase().trim();
         if (!query) {
