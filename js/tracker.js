@@ -129,16 +129,19 @@ async function loadArtistsData() {
     }
 }
 
-// Some trackers are hosted at their own domain instead of a Google Sheets URL;
-// the domain itself doubles as the sheetId on the tracker API.
-const SPECIAL_TRACKER_DOMAINS = ['yetracker.net'];
-
 function getSheetId(url) {
     if (!url) return null;
-    const special = SPECIAL_TRACKER_DOMAINS.find((domain) => url.includes(domain));
-    if (special) return special;
+    
+    // Some older versions might have full Google Sheets URLs
     const match = url.match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
-    return match ? match[1] : null;
+    if (match) return match[1];
+
+    // ArtistGrid recently changed their CSV to provide either the raw sheet ID 
+    // or a custom domain directly (e.g. "12nGHPPh5dVTfLuBLVQYzC3QgPxKfvp-jgCoNccvEasM" or "franktracker.net")
+    let cleaned = url.replace(/^https?:\/\//, '').split('/')[0].trim();
+    if (cleaned.length > 0) return cleaned;
+
+    return null;
 }
 
 const TRACKER_API_BASE = 'https://trackerapi.artistgrid.cx/sh/';
