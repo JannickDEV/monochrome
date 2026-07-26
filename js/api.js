@@ -1869,25 +1869,46 @@ export class LosslessAPI {
     async getTrackFromDevMode(id, quality = 'LOSSLESS') {
         const devBaseUrl = devModeSettings.getUrl().replace(/\/+$/, '');
         const requestedQuality = normalizeQualityToken(quality) || quality || 'LOSSLESS';
-        const params = new URLSearchParams({
-            id: String(id),
-            quality: requestedQuality,
-            adaptive: 'false',
-        });
-        for (const format of this.getTrackManifestFormats(quality)) {
-            params.append('formats', format);
+        
+        const qualitiesToTry = [requestedQuality];
+        if (requestedQuality === 'HI_RES_LOSSLESS') {
+            qualitiesToTry.push('LOSSLESS', 'HIGH');
+        } else if (requestedQuality === 'LOSSLESS') {
+            qualitiesToTry.push('HIGH');
         }
 
-        const url = `${devBaseUrl}/trackManifests/?${params.toString()}`;
-        if (import.meta.env.DEV) {
-            console.log('[dev-mode]', url);
+        let lastError = null;
+
+        for (const currentQuality of qualitiesToTry) {
+            const params = new URLSearchParams({
+                id: String(id),
+                quality: currentQuality,
+                adaptive: 'false',
+            });
+            for (const format of this.getTrackManifestFormats(currentQuality)) {
+                params.append('formats', format);
+            }
+
+            const url = `${devBaseUrl}/trackManifests/?${params.toString()}`;
+            if (import.meta.env.DEV) {
+                console.log('[dev-mode]', url);
+            }
+            const response = await fetch(url);
+            
+            if (response.ok) {
+                const jsonResponse = await response.json();
+                return this.parseTrackLookup(await this.normalizeTrackManifestResponse(jsonResponse, currentQuality));
+            }
+            
+            lastError = new Error(`Dev mode request failed for quality ${currentQuality}: ${response.status} ${response.statusText}`);
+            
+            // If it's not a 403/404, or we're on the lowest quality already, don't keep trying
+            if (response.status !== 403 && response.status !== 404) {
+                break;
+            }
         }
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Dev mode request failed: ${response.status} ${response.statusText}`);
-        }
-        const jsonResponse = await response.json();
-        return this.parseTrackLookup(await this.normalizeTrackManifestResponse(jsonResponse, quality));
+        
+        throw lastError;
     }
 
     async getTrack(id, quality = 'LOSSLESS', { adaptive = false, _fromProvider = false } = {}) {
@@ -1903,19 +1924,47 @@ export class LosslessAPI {
         if (cached) return cached;
 
         const requestedQuality = normalizeQualityToken(quality) || quality || 'LOSSLESS';
-        const params = new URLSearchParams({
-            id: String(id),
-            quality: requestedQuality,
-            adaptive: String(adaptive),
-        });
-        const formats = adaptive ? this.getAdaptiveTrackManifestFormats() : this.getTrackManifestFormats(quality);
-        for (const format of formats) {
-            params.append('formats', format);
+        
+        const qualitiesToTry = [requestedQuality];
+        if (requestedQuality === 'HI_RES_LOSSLESS') {
+            qualitiesToTry.push('LOSSLESS', 'HIGH');
+        } else if (requestedQuality === 'LOSSLESS') {
+            qualitiesToTry.push('HIGH');
         }
 
-        const response = await this.fetchWithRetry(`/trackManifests/?${params.toString()}`, { type: 'streaming' });
+        let lastError = null;
+        let response = null;
+        let currentQuality = requestedQuality;
+
+        for (const q of qualitiesToTry) {
+            currentQuality = q;
+            const params = new URLSearchParams({
+                id: String(id),
+                quality: currentQuality,
+                adaptive: String(adaptive),
+            });
+            const formats = adaptive ? this.getAdaptiveTrackManifestFormats() : this.getTrackManifestFormats(q);
+            for (const format of formats) {
+                params.append('formats', format);
+            }
+
+            try {
+                response = await this.fetchWithRetry(`/trackManifests/?${params.toString()}`, { type: 'streaming' });
+                lastError = null;
+                break;
+            } catch (err) {
+                lastError = err;
+                if (err.message && (err.message.includes('403') || err.message.includes('404'))) {
+                    continue;
+                }
+                break;
+            }
+        }
+
+        if (lastError) throw lastError;
+
         const jsonResponse = await response.json();
-        const result = this.parseTrackLookup(await this.normalizeTrackManifestResponse(jsonResponse, quality));
+        const result = this.parseTrackLookup(await this.normalizeTrackManifestResponse(jsonResponse, currentQuality));
 
         if (!(response instanceof TidalResponse)) {
             await this.cache.set('track', cacheKey, result);
