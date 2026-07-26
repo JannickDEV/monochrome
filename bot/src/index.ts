@@ -69,6 +69,22 @@ app.get('/proxy-audio', async (req, res) => {
     }
 });
 
+app.get('/proxy-api', async (req, res) => {
+    const targetUrl = req.query.url as string;
+    if (!targetUrl) return res.status(400).send('Missing url parameter');
+
+    try {
+        const fetchRes = await fetch(targetUrl);
+        if (!fetchRes.ok) return res.status(fetchRes.status).send(fetchRes.statusText);
+        
+        const data = await fetchRes.json();
+        res.json(data);
+    } catch (err) {
+        console.error('[API Proxy] Error:', err);
+        res.status(500).send('API Proxy error');
+    }
+});
+
 const PROXY_PORT = process.env.PROXY_PORT || 8080;
 app.listen(PROXY_PORT, () => {
     console.log(`[Audio Proxy] Listening on port ${PROXY_PORT}`);

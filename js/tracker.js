@@ -146,17 +146,21 @@ function getSheetId(url) {
 
 const TRACKER_API_BASE = 'https://trackerapi.artistgrid.cx/sh/';
 
-// Short label for a project card/header (the full `timeline` field is a long historical blurb)
 function eraSubtitle(era) {
     return (era.aka && era.aka[0]) || 'Unreleased';
 }
 
 async function fetchTrackerData(sheetId, tabSlug = null) {
     try {
-        const url = tabSlug 
+        const targetUrl = tabSlug 
             ? `${TRACKER_API_BASE}${sheetId}/?tab=${tabSlug}`
             : `${TRACKER_API_BASE}${sheetId}/`;
-        const response = await fetch(url);
+            
+        // ArtistGrid recently restricted their CORS policy (Access-Control-Allow-Origin), 
+        // so we route the fetch through our bot's Express server proxy to bypass it!
+        const proxyUrl = `https://audio.bitperfect.dedyn.io/proxy-api?url=${encodeURIComponent(targetUrl)}`;
+        
+        const response = await fetch(proxyUrl);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return await response.json();
     } catch (e) {
