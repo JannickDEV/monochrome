@@ -1,4 +1,4 @@
-const AUDIO_PROXY_BASE_URL = 'https://audio-proxy.binimum.org/proxy-audio/';
+const AUDIO_PROXY_BASE_URL = 'https://audio.bitperfect.dedyn.io/proxy-audio/?url=';
 
 export const isTidalAudioUrl = (url) => {
     if (!url || typeof url !== 'string') return false;
@@ -24,7 +24,7 @@ export const getProxyUrl = (url) => {
     if (url.includes('/api/decrypt-stream')) return url;
 
     if (isTidalAudioUrl(url)) {
-        return `${AUDIO_PROXY_BASE_URL}${url}`;
+        return `${AUDIO_PROXY_BASE_URL}${encodeURIComponent(url)}`;
     }
 
     return url;

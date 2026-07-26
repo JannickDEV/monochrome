@@ -6,6 +6,9 @@ import { data as queueCommandData, execute as executeQueueCommand } from './comm
 import { data as clearCommandData, execute as executeClearCommand } from './commands/clear.js';
 import { data as shuffleCommandData, execute as executeShuffleCommand } from './commands/shuffle.js';
 import { getPlayer } from './audio/musicPlayer.js';
+import express from 'express';
+import cors from 'cors';
+import { Readable } from 'stream';
 
 dotenv.config();
 
@@ -31,6 +34,44 @@ const client = new Client({
 
 client.once('clientReady', () => {
     console.log(`[Discord Bot] Logged in as ${client.user?.tag}!`);
+});
+
+// Setup Audio Proxy Server
+const app = express();
+app.use(cors());
+
+app.get('/proxy-audio', async (req, res) => {
+    const targetUrl = req.query.url as string;
+    if (!targetUrl) return res.status(400).send('Missing url parameter');
+    
+    try {
+        const fetchOptions: RequestInit = {};
+        if (req.headers.range) {
+            fetchOptions.headers = { 'Range': req.headers.range };
+        }
+
+        const fetchRes = await fetch(targetUrl, fetchOptions);
+        if (!fetchRes.ok) return res.status(fetchRes.status).send(fetchRes.statusText);
+        
+        if (fetchRes.headers.has('content-type')) res.setHeader('Content-Type', fetchRes.headers.get('content-type')!);
+        if (fetchRes.headers.has('content-length')) res.setHeader('Content-Length', fetchRes.headers.get('content-length')!);
+        if (fetchRes.headers.has('accept-ranges')) res.setHeader('Accept-Ranges', fetchRes.headers.get('accept-ranges')!);
+        if (fetchRes.headers.has('content-range')) res.setHeader('Content-Range', fetchRes.headers.get('content-range')!);
+        
+        if (fetchRes.body) {
+            Readable.fromWeb(fetchRes.body as any).pipe(res);
+        } else {
+            res.end();
+        }
+    } catch (err) {
+        console.error('[Audio Proxy] Error:', err);
+        res.status(500).send('Proxy error');
+    }
+});
+
+const PROXY_PORT = process.env.PROXY_PORT || 8080;
+app.listen(PROXY_PORT, () => {
+    console.log(`[Audio Proxy] Listening on port ${PROXY_PORT}`);
 });
 
 client.on('voiceStateUpdate', (oldState, newState) => {
