@@ -180,6 +180,9 @@ export class QobuzProvider implements Provider {
     }
 
     async getStreamUrl(id: string | number, quality?: string): Promise<StreamInfo> {
+        if (quality === 'DOLBY_ATMOS') {
+            throw new ProviderError('Qobuz does not support Dolby Atmos', this.id, 'getStreamUrl');
+        }
         try {
             const formatId = getQobuzFormatId(quality);
             const res = await this.client.request('/trackManifests/', { id: cleanId(id), format_id: formatId, intent: 'stream' });
@@ -199,6 +202,9 @@ export class QobuzProvider implements Provider {
     }
 
     async getTrackForDownload(id: string | number, quality?: string): Promise<StreamInfo> {
+        if (quality === 'DOLBY_ATMOS') {
+            throw new ProviderError('Qobuz does not support Dolby Atmos', this.id, 'getTrackForDownload');
+        }
         try {
             const formatId = getQobuzFormatId(quality);
             const res = await this.client.request('/track/getFileUrl', { track_id: cleanId(id), id: cleanId(id), format_id: formatId, intent: 'stream' });

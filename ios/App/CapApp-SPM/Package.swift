@@ -12,10 +12,10 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", exact: "8.3.0"),
-        .package(name: "CapacitorApp", path: "../../../node_modules/@capacitor/app"),
-        .package(name: "CapacitorBrowser", path: "../../../node_modules/@capacitor/browser"),
-        .package(name: "CapacitorHaptics", path: "../../../node_modules/@capacitor/haptics"),
-        .package(name: "CapgoCapacitorMediaSession", path: "../../../node_modules/@capgo/capacitor-media-session")
+        .package(name: "CapacitorApp", path: "..\..\..\node_modules\.bun\@capacitor+app@8.1.0+db0c1b46371b240c\node_modules\@capacitor\app"),
+        .package(name: "CapacitorBrowser", path: "..\..\..\node_modules\.bun\@capacitor+browser@8.0.3+db0c1b46371b240c\node_modules\@capacitor\browser"),
+        .package(name: "CapacitorHaptics", path: "..\..\..\node_modules\.bun\@capacitor+haptics@8.0.2+db0c1b46371b240c\node_modules\@capacitor\haptics"),
+        .package(name: "CapgoCapacitorMediaSession", path: "..\..\..\node_modules\.bun\@capgo+capacitor-media-session@8.0.19+db0c1b46371b240c\node_modules\@capgo\capacitor-media-session")
     ],
     targets: [
         .target(

@@ -20,6 +20,7 @@ import {
     autoplaySettings,
     binauralDspSettings,
     contentBlockingSettings,
+    preferDolbyAtmosSettings,
 } from './storage.js';
 import { audioContextManager } from './audio-context.js';
 import { isIos, isSafari, canUseNativeAmazonCenc } from './platform-detection.js';
@@ -608,10 +609,11 @@ export class Player {
             const isPodcast = track.isPodcast || (track.id && String(track.id).startsWith('podcast_'));
             if (track.isLocal || isTracker || isPodcast || (track.audioUrl && !track.isLocal)) continue;
             try {
+                const requestQuality = (preferDolbyAtmosSettings?.isEnabled() && (track.audioModes?.includes('DOLBY_ATMOS') || track.audioQuality === 'DOLBY_ATMOS' || deriveTrackQuality(track) === 'DOLBY_ATMOS')) ? 'DOLBY_ATMOS' : this.quality;
                 const streamInfo =
                     track.type == 'video'
                         ? await this.api.getVideoStreamUrl(track.id)
-                        : await this.api.getStreamUrl(track.id, this.quality);
+                        : await this.api.getStreamUrl(track.id, requestQuality);
 
                 if (this.preloadAbortController.signal.aborted) break;
 
@@ -1450,9 +1452,10 @@ export class Player {
                 }
 
                 // Tidal: Try to get ReplayGain from manifest first, supplement with track info if needed
+                const requestQuality = (preferDolbyAtmosSettings?.isEnabled() && (track.audioModes?.includes('DOLBY_ATMOS') || track.audioQuality === 'DOLBY_ATMOS' || deriveTrackQuality(track) === 'DOLBY_ATMOS')) ? 'DOLBY_ATMOS' : this.quality;
                 const streamInfoPromise = this.preloadCache.has(track.id)
                     ? Promise.resolve(this.preloadCache.get(track.id))
-                    : this.api.getStreamUrl(track.id, this.quality);
+                    : this.api.getStreamUrl(track.id, requestQuality);
 
                 // We only need the legacy track info if we missed getting ReplayGain from the manifest endpoint
                 let resolvedStreamInfo = await streamInfoPromise;
