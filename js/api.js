@@ -2947,28 +2947,30 @@ export class LosslessAPI {
         let deezerResult = null;
 
         const preferAmazon = Math.random() >= 0.5;
-        if (preferAmazon) {
-            amazonResult = await this.getAmazonMusicStreamUrl(id, actualQuality, {
-                preferAdaptiveAuto: true,
-                track,
-                allowCencWithoutKeyId: needsProxyDecryption,
-            });
-            if (!amazonResult?.url && track?.isrc) {
-                qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality);
-            }
-        } else {
-            if (track?.isrc) {
-                qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality);
-            }
-            if (!qobuzResult?.url) {
+        if (quality !== 'DOLBY_ATMOS') {
+            if (preferAmazon) {
                 amazonResult = await this.getAmazonMusicStreamUrl(id, actualQuality, {
                     preferAdaptiveAuto: true,
                     track,
                     allowCencWithoutKeyId: needsProxyDecryption,
                 });
+                if (!amazonResult?.url && track?.isrc) {
+                    qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality);
+                }
+            } else {
+                if (track?.isrc) {
+                    qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality);
+                }
+                if (!qobuzResult?.url) {
+                    amazonResult = await this.getAmazonMusicStreamUrl(id, actualQuality, {
+                        preferAdaptiveAuto: true,
+                        track,
+                        allowCencWithoutKeyId: needsProxyDecryption,
+                    });
+                }
             }
         }
-        if (!amazonResult?.url && !qobuzResult?.url && track?.isrc) {
+        if (quality !== 'DOLBY_ATMOS' && !amazonResult?.url && !qobuzResult?.url && track?.isrc) {
             deezerResult = await this.getDeezerStreamUrl(track.isrc, quality);
         }
 
@@ -3217,7 +3219,7 @@ export class LosslessAPI {
             let fallbackStream = null;
             try {
                 const fallbackProvider = this.getFallbackProvider(true);
-                if (fallbackProvider) {
+                if (fallbackProvider && cleanQuality !== 'DOLBY_ATMOS') {
                     fallbackStream = await fallbackProvider.getTrackForDownload(id, cleanQuality);
                 }
             } catch (err) {
@@ -3253,13 +3255,15 @@ export class LosslessAPI {
                 }
             };
 
-            if (track?.isrc) {
-                qobuzResult = await this.getQobuzStreamUrl(track.isrc, cleanQuality);
-            }
-            if (!qobuzResult?.url) {
-                amazonResult = await getAmazonForDownload();
-                if (!amazonResult?.url && track?.isrc) {
-                    deezerResult = await this.getDeezerStreamUrl(track.isrc, cleanQuality);
+            if (cleanQuality !== 'DOLBY_ATMOS') {
+                if (track?.isrc) {
+                    qobuzResult = await this.getQobuzStreamUrl(track.isrc, cleanQuality);
+                }
+                if (!qobuzResult?.url) {
+                    amazonResult = await getAmazonForDownload();
+                    if (!amazonResult?.url && track?.isrc) {
+                        deezerResult = await this.getDeezerStreamUrl(track.isrc, cleanQuality);
+                    }
                 }
             }
 
@@ -3285,7 +3289,7 @@ export class LosslessAPI {
                     },
                 };
             } else {
-                deezerResult = track?.isrc ? await this.getDeezerStreamUrl(track.isrc, 'LOSSLESS') : null;
+                deezerResult = track?.isrc && cleanQuality !== 'DOLBY_ATMOS' ? await this.getDeezerStreamUrl(track.isrc, 'LOSSLESS') : null;
                 if (deezerResult?.url) {
                     externalProvider = 'deezer';
                     externalStreamUrl = deezerResult.url;
