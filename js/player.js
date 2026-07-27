@@ -609,7 +609,9 @@ export class Player {
             const isPodcast = track.isPodcast || (track.id && String(track.id).startsWith('podcast_'));
             if (track.isLocal || isTracker || isPodcast || (track.audioUrl && !track.isLocal)) continue;
             try {
-                const requestQuality = (preferDolbyAtmosSettings?.isEnabled() && (track.audioModes?.includes('DOLBY_ATMOS') || track.audioQuality === 'DOLBY_ATMOS' || deriveTrackQuality(track) === 'DOLBY_ATMOS')) ? 'DOLBY_ATMOS' : this.quality;
+                const isExplicitAtmos = track.audioQuality === 'DOLBY_ATMOS' || deriveTrackQuality(track) === 'DOLBY_ATMOS';
+                const preferAtmos = preferDolbyAtmosSettings?.isEnabled() && track.audioModes?.includes('DOLBY_ATMOS');
+                const requestQuality = (isExplicitAtmos || preferAtmos) ? 'DOLBY_ATMOS' : this.quality;
                 const streamInfo =
                     track.type == 'video'
                         ? await this.api.getVideoStreamUrl(track.id)
@@ -1452,7 +1454,9 @@ export class Player {
                 }
 
                 // Tidal: Try to get ReplayGain from manifest first, supplement with track info if needed
-                const requestQuality = (preferDolbyAtmosSettings?.isEnabled() && (track.audioModes?.includes('DOLBY_ATMOS') || track.audioQuality === 'DOLBY_ATMOS' || deriveTrackQuality(track) === 'DOLBY_ATMOS')) ? 'DOLBY_ATMOS' : this.quality;
+                const isExplicitAtmos = track.audioQuality === 'DOLBY_ATMOS' || deriveTrackQuality(track) === 'DOLBY_ATMOS';
+                const preferAtmos = preferDolbyAtmosSettings?.isEnabled() && track.audioModes?.includes('DOLBY_ATMOS');
+                const requestQuality = (isExplicitAtmos || preferAtmos) ? 'DOLBY_ATMOS' : this.quality;
                 const streamInfoPromise = this.preloadCache.has(track.id)
                     ? Promise.resolve(this.preloadCache.get(track.id))
                     : this.api.getStreamUrl(track.id, requestQuality);
