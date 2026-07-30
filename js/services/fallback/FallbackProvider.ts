@@ -118,6 +118,32 @@ export class FallbackProvider implements Provider {
                             console.warn(`[FallbackProvider] Rejecting fallback for ${id}: first result had ISRC ${firstResult.isrc} which didn't match ${isrc}`);
                         }
                     }
+
+                    // Validate the ISRC match to prevent label metadata errors (different song, same ISRC)
+                    if (match) {
+                        if (!meta && sourceProvider) {
+                            try {
+                                meta = typeof sourceProvider.getTrackMetadata === 'function' 
+                                    ? await sourceProvider.getTrackMetadata(id)
+                                    : (typeof sourceProvider.getTrack === 'function' ? await sourceProvider.getTrack(id) : null);
+                            } catch (e) {
+                                console.warn(`[FallbackProvider] Could not fetch metadata for validation for ${id}:`, e);
+                            }
+                        }
+                        
+                        if (meta && meta.title && match.title) {
+                            const mTitle = meta.title.toLowerCase().trim();
+                            const tTitle = match.title.toLowerCase().trim();
+                            
+                            // Check if titles are at least partially similar
+                            const isTitleSimilar = tTitle === mTitle || tTitle.includes(mTitle) || mTitle.includes(tTitle);
+                            
+                            if (!isTitleSimilar) {
+                                console.warn(`[FallbackProvider] ISRC match rejected due to completely different title! Expected "${meta.title}", got "${match.title}" (ISRC: ${isrc})`);
+                                match = null;
+                            }
+                        }
+                    }
                 }
             } catch (err: any) {
                 console.warn(`[FallbackProvider] ISRC search failed on ${targetProvider.name} for ISRC ${isrc}:`, err);
