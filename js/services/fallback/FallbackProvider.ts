@@ -147,15 +147,40 @@ export class FallbackProvider implements Provider {
                     const items = fallbackSearchRes?.items || [];
                     
                     if (items.length > 0) {
-                        // Find the closest match or take the first one
-                        match = items.find((t: any) => {
-                            const tTitle = t.title?.toLowerCase().trim();
-                            const mTitle = meta.title?.toLowerCase().trim();
-                            return tTitle === mTitle;
-                        });
+                        const mTitle = meta.title?.toLowerCase().trim();
+                        const mDuration = meta.duration || 0;
                         
-                        if (!match) {
-                            match = items[0]; // Assume first result is the best match
+                        // Filter by duration if available
+                        let validCandidates = items;
+                        if (mDuration > 0) {
+                            validCandidates = items.filter((t: any) => {
+                                const tDuration = t.duration || 0;
+                                if (tDuration === 0) return true; // Can't compare, assume valid
+                                return Math.abs(tDuration - mDuration) <= 10;
+                            });
+                        }
+                        
+                        if (validCandidates.length > 0) {
+                            // Try exact title match first
+                            match = validCandidates.find((t: any) => {
+                                const tTitle = t.title?.toLowerCase().trim();
+                                return tTitle === mTitle;
+                            });
+                            
+                            // If no exact match, try partial title match
+                            if (!match) {
+                                match = validCandidates.find((t: any) => {
+                                    const tTitle = t.title?.toLowerCase().trim();
+                                    return tTitle?.includes(mTitle) || mTitle?.includes(tTitle);
+                                });
+                            }
+                            
+                            // If still no match, take the first valid candidate
+                            if (!match) {
+                                match = validCandidates[0];
+                            }
+                        } else {
+                            console.warn(`[FallbackProvider] No search results matched the expected duration (~${mDuration}s). First result duration: ${items[0].duration}s`);
                         }
                     }
                 } catch (err: any) {
