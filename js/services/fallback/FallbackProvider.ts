@@ -15,6 +15,7 @@ export class FallbackProvider implements Provider {
     }
 
     private isrcCache = new Map<string, string>();
+    private durationCache = new Map<string, number>();
     private trackIdMapCache = new Map<string, string | number>();
 
     private getProviderForId(id: string | number): Provider {
@@ -52,9 +53,10 @@ export class FallbackProvider implements Provider {
             return this.trackIdMapCache.get(cacheKey)!;
         }
 
-        // We need to translate the ID via ISRC from the source provider
         let isrc = this.isrcCache.get(strId);
-        if (!isrc) {
+        let originalDuration = this.durationCache.get(strId);
+        
+        if (!isrc || !originalDuration) {
             const sourceProvider = this.getProviderForId(id);
             if (sourceProvider && typeof sourceProvider.getTrackMetadata === 'function') {
                 try {
@@ -63,16 +65,24 @@ export class FallbackProvider implements Provider {
                         isrc = meta.isrc;
                         this.isrcCache.set(strId, isrc);
                     }
+                    if (meta?.duration) {
+                        originalDuration = meta.duration;
+                        this.durationCache.set(strId, originalDuration);
+                    }
                 } catch (e) {
                     console.warn(`[FallbackProvider] Could not fetch metadata from source provider for ${id}:`, e);
                 }
             }
-            if (!isrc && sourceProvider && typeof sourceProvider.getTrack === 'function') {
+            if ((!isrc || !originalDuration) && sourceProvider && typeof sourceProvider.getTrack === 'function') {
                 try {
                     const track = await sourceProvider.getTrack(id);
                     if (track?.isrc) {
                         isrc = track.isrc;
                         this.isrcCache.set(strId, isrc);
+                    }
+                    if (track?.duration) {
+                        originalDuration = track.duration;
+                        this.durationCache.set(strId, originalDuration);
                     }
                 } catch (e) {
                     console.warn(`[FallbackProvider] Could not fetch track from source provider for ${id}:`, e);
@@ -94,6 +104,15 @@ export class FallbackProvider implements Provider {
             // Match exact ISRC case-insensitively
             let match = items.find((t: any) => t.isrc?.toLowerCase() === isrc!.toLowerCase());
             
+            // Validate duration if available
+            if (match && originalDuration && match.duration) {
+                const diff = Math.abs(match.duration - originalDuration);
+                if (diff > 3) {
+                    console.warn(`[FallbackProvider] Rejecting fallback for ${id}: Duration mismatch (expected ${originalDuration}, got ${match.duration}) despite ISRC match`);
+                    match = undefined;
+                }
+            }
+
             // If search result doesn't include ISRC, we must fetch the track details to verify it
             if (!match && items[0]) {
                 const firstResult = items[0];
@@ -104,7 +123,11 @@ export class FallbackProvider implements Provider {
                             : (typeof targetProvider.getTrack === 'function' ? await targetProvider.getTrack(firstResult.id) : null);
                             
                         if (trackMeta?.isrc?.toLowerCase() === isrc!.toLowerCase()) {
-                            match = firstResult;
+                            if (originalDuration && trackMeta.duration && Math.abs(trackMeta.duration - originalDuration) > 3) {
+                                console.warn(`[FallbackProvider] Rejecting fallback for ${id}: Duration mismatch (expected ${originalDuration}, got ${trackMeta.duration})`);
+                            } else {
+                                match = firstResult;
+                            }
                         } else {
                             console.warn(`[FallbackProvider] Rejecting fallback for ${id}: ISRC mismatch (expected ${isrc}, got ${trackMeta?.isrc})`);
                         }
