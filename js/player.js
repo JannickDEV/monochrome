@@ -1156,6 +1156,23 @@ export class Player {
             });
         }
 
+        // IMPORTANT: Populate FallbackProvider's caches with known metadata before requesting stream
+        if (this.api && typeof this.api.getAPI === 'function') {
+            try {
+                const losslessApi = this.api.getAPI();
+                if (losslessApi && typeof losslessApi.getFallbackProvider === 'function') {
+                    const fp = losslessApi.getFallbackProvider(true);
+                    if (fp) {
+                        if (track.isrc) fp.isrcCache?.set(String(track.id), track.isrc);
+                        if (!fp.metaCache) fp.metaCache = new Map();
+                        fp.metaCache.set(String(track.id), track);
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to populate fallback caches:', e);
+            }
+        }
+
         const trackInfo = document.querySelector('.now-playing-bar .track-info');
         const coverEl = trackInfo?.querySelector('.cover:not(#audio-player):not(#video-player)');
 

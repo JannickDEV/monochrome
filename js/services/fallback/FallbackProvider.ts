@@ -5,17 +5,20 @@ export class FallbackProvider implements Provider {
     readonly id = 'fallback';
     readonly name = 'Fallback';
     private providers: Provider[];
+    public isrcCache: Map<string, string>;
+    public metaCache: Map<string, any>;
+    private trackIdMapCache: Map<string, string | number>;
 
     constructor(providers: Provider[]) {
         this.providers = providers || [];
+        this.isrcCache = new Map();
+        this.metaCache = new Map();
+        this.trackIdMapCache = new Map();
     }
 
     getProviders(): Provider[] {
         return this.providers;
     }
-
-    private isrcCache = new Map<string, string>();
-    private trackIdMapCache = new Map<string, string | number>();
 
     private getProviderForId(id: string | number): Provider {
         if (!this.providers.length) {
@@ -63,11 +66,29 @@ export class FallbackProvider implements Provider {
 
         if (sourceProvider) {
             try {
+                // Attempt to fetch metadata, fallback to getTrack if it fails or returns something without a title
                 meta = typeof sourceProvider.getTrackMetadata === 'function' 
                     ? await sourceProvider.getTrackMetadata(id)
-                    : (typeof sourceProvider.getTrack === 'function' ? await sourceProvider.getTrack(id) : null);
+                    : null;
+                
+                if (!meta || !meta.title) {
+                    meta = typeof sourceProvider.getTrack === 'function' ? await sourceProvider.getTrack(id) : null;
+                }
+                
+                // Some providers return { item: {...} } or { tracks: [...] }
+                if (meta && meta.item) meta = meta.item;
+                if (meta && meta.tracks && meta.tracks[0]) meta = meta.tracks[0];
             } catch (e) {
                 console.warn(`[FallbackProvider] Could not fetch metadata from source provider for ${id}:`, e);
+            }
+        }
+
+        // If metadata fetch failed or returned something without a title, try our metaCache
+        if (!meta || !meta.title) {
+            const cachedMeta = this.metaCache.get(strId);
+            if (cachedMeta && cachedMeta.title) {
+                meta = cachedMeta;
+                console.log(`[FallbackProvider] Rescued metadata from metaCache for ${id}: ${meta.title}`);
             }
         }
 
@@ -146,11 +167,13 @@ export class FallbackProvider implements Provider {
 
         // If ISRC search failed to yield a match, fallback to search by Title + Artist
         if (!match) {
-            console.log(`[FallbackProvider] ISRC search yielded no match for ${id}, falling back to metadata search...`);
+            console.log(`[FallbackProvider] ISRC search yielded no match for ${id} (ISRC: ${isrc}), falling back to metadata search...`);
 
-            if (meta && meta.title) {
+            if (meta && (meta.title || meta.name)) {
+                const title = meta.title || meta.name;
                 const artistName = meta.artist?.name || meta.artists?.[0]?.name || '';
-                const query = artistName ? `${artistName} ${meta.title}` : meta.title;
+                const query = artistName ? `${artistName} ${title}` : title;
+                console.log(`[FallbackProvider] Running Title+Artist search with query: "${query}"`);
                 
                 try {
                     const fallbackSearchRes = await targetProvider.searchTracks(query, { limit: 10 });
