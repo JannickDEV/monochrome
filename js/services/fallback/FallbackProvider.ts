@@ -91,8 +91,31 @@ export class FallbackProvider implements Provider {
                 return id;
             }
 
-            // Match exact ISRC case-insensitively, or fall back to first search result
-            const match = items.find((t: any) => t.isrc?.toLowerCase() === isrc!.toLowerCase()) || items[0];
+            // Match exact ISRC case-insensitively
+            let match = items.find((t: any) => t.isrc?.toLowerCase() === isrc!.toLowerCase());
+            
+            // If search result doesn't include ISRC, we must fetch the track details to verify it
+            if (!match && items[0]) {
+                const firstResult = items[0];
+                if (!firstResult.isrc) {
+                    try {
+                        const trackMeta = typeof targetProvider.getTrackMetadata === 'function' 
+                            ? await targetProvider.getTrackMetadata(firstResult.id)
+                            : (typeof targetProvider.getTrack === 'function' ? await targetProvider.getTrack(firstResult.id) : null);
+                            
+                        if (trackMeta?.isrc?.toLowerCase() === isrc!.toLowerCase()) {
+                            match = firstResult;
+                        } else {
+                            console.warn(`[FallbackProvider] Rejecting fallback for ${id}: ISRC mismatch (expected ${isrc}, got ${trackMeta?.isrc})`);
+                        }
+                    } catch (err) {
+                        console.warn(`[FallbackProvider] Failed to verify ISRC for ${firstResult.id}:`, err);
+                    }
+                } else {
+                    console.warn(`[FallbackProvider] Rejecting fallback for ${id}: first result had ISRC ${firstResult.isrc} which didn't match ${isrc}`);
+                }
+            }
+
             if (!match || !match.id) {
                 return id;
             }
