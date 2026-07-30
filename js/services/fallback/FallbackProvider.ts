@@ -15,7 +15,6 @@ export class FallbackProvider implements Provider {
     }
 
     private isrcCache = new Map<string, string>();
-    private durationCache = new Map<string, number>();
     private trackIdMapCache = new Map<string, string | number>();
 
     private getProviderForId(id: string | number): Provider {
@@ -53,36 +52,29 @@ export class FallbackProvider implements Provider {
             return this.trackIdMapCache.get(cacheKey)!;
         }
 
+        // We need to translate the ID via ISRC from the source provider
         let isrc = this.isrcCache.get(strId);
-        let originalDuration = this.durationCache.get(strId);
-        
-        if (!isrc || !originalDuration) {
-            const sourceProvider = this.getProviderForId(id);
+        let meta: any = null;
+        const sourceProvider = this.getProviderForId(id);
+
+        if (!isrc) {
             if (sourceProvider && typeof sourceProvider.getTrackMetadata === 'function') {
                 try {
-                    const meta = await sourceProvider.getTrackMetadata(id);
+                    meta = await sourceProvider.getTrackMetadata(id);
                     if (meta?.isrc) {
                         isrc = meta.isrc;
                         this.isrcCache.set(strId, isrc);
-                    }
-                    if (meta?.duration) {
-                        originalDuration = meta.duration;
-                        this.durationCache.set(strId, originalDuration);
                     }
                 } catch (e) {
                     console.warn(`[FallbackProvider] Could not fetch metadata from source provider for ${id}:`, e);
                 }
             }
-            if ((!isrc || !originalDuration) && sourceProvider && typeof sourceProvider.getTrack === 'function') {
+            if (!isrc && sourceProvider && typeof sourceProvider.getTrack === 'function') {
                 try {
-                    const track = await sourceProvider.getTrack(id);
-                    if (track?.isrc) {
-                        isrc = track.isrc;
+                    meta = await sourceProvider.getTrack(id);
+                    if (meta?.isrc) {
+                        isrc = meta.isrc;
                         this.isrcCache.set(strId, isrc);
-                    }
-                    if (track?.duration) {
-                        originalDuration = track.duration;
-                        this.durationCache.set(strId, originalDuration);
                     }
                 } catch (e) {
                     console.warn(`[FallbackProvider] Could not fetch track from source provider for ${id}:`, e);
@@ -90,66 +82,95 @@ export class FallbackProvider implements Provider {
             }
         }
 
-        if (!isrc || typeof targetProvider.searchTracks !== 'function') {
-            throw new Error(`Cannot translate track ID ${id} to ${targetProvider.name} (missing ISRC or search API)`);
+        if (typeof targetProvider.searchTracks !== 'function') {
+            throw new Error(`Cannot translate track ID ${id} to ${targetProvider.name} (missing search API)`);
         }
 
-        try {
-            const searchRes = await targetProvider.searchTracks(isrc, { limit: 10 });
-            const items = searchRes?.items || [];
-            if (!items.length) {
-                throw new Error(`Cannot translate track ID ${id} to ${targetProvider.name} (no search results for ISRC)`);
-            }
+        let match: any = null;
 
-            // Match exact ISRC case-insensitively
-            let match = items.find((t: any) => t.isrc?.toLowerCase() === isrc!.toLowerCase());
-            
-            // Validate duration if available
-            if (match && originalDuration && match.duration) {
-                const diff = Math.abs(match.duration - originalDuration);
-                if (diff > 3) {
-                    console.warn(`[FallbackProvider] Rejecting fallback for ${id}: Duration mismatch (expected ${originalDuration}, got ${match.duration}) despite ISRC match`);
-                    match = undefined;
-                }
-            }
+        if (isrc) {
+            try {
+                const searchRes = await targetProvider.searchTracks(isrc, { limit: 10 });
+                const items = searchRes?.items || [];
 
-            // If search result doesn't include ISRC, we must fetch the track details to verify it
-            if (!match && items[0]) {
-                const firstResult = items[0];
-                if (!firstResult.isrc) {
-                    try {
-                        const trackMeta = typeof targetProvider.getTrackMetadata === 'function' 
-                            ? await targetProvider.getTrackMetadata(firstResult.id)
-                            : (typeof targetProvider.getTrack === 'function' ? await targetProvider.getTrack(firstResult.id) : null);
-                            
-                        if (trackMeta?.isrc?.toLowerCase() === isrc!.toLowerCase()) {
-                            if (originalDuration && trackMeta.duration && Math.abs(trackMeta.duration - originalDuration) > 3) {
-                                console.warn(`[FallbackProvider] Rejecting fallback for ${id}: Duration mismatch (expected ${originalDuration}, got ${trackMeta.duration})`);
-                            } else {
-                                match = firstResult;
+                if (items.length > 0) {
+                    // Match exact ISRC case-insensitively
+                    match = items.find((t: any) => t.isrc?.toLowerCase() === isrc!.toLowerCase());
+                    
+                    // If search result doesn't include ISRC, we must fetch the track details to verify it
+                    if (!match && items[0]) {
+                        const firstResult = items[0];
+                        if (!firstResult.isrc) {
+                            try {
+                                const trackMeta = typeof targetProvider.getTrackMetadata === 'function' 
+                                    ? await targetProvider.getTrackMetadata(firstResult.id)
+                                    : (typeof targetProvider.getTrack === 'function' ? await targetProvider.getTrack(firstResult.id) : null);
+                                    
+                                if (trackMeta?.isrc?.toLowerCase() === isrc!.toLowerCase()) {
+                                    match = firstResult;
+                                } else {
+                                    console.warn(`[FallbackProvider] Rejecting fallback for ${id}: ISRC mismatch (expected ${isrc}, got ${trackMeta?.isrc})`);
+                                }
+                            } catch (err) {
+                                console.warn(`[FallbackProvider] Failed to verify ISRC for ${firstResult.id}:`, err);
                             }
                         } else {
-                            console.warn(`[FallbackProvider] Rejecting fallback for ${id}: ISRC mismatch (expected ${isrc}, got ${trackMeta?.isrc})`);
+                            console.warn(`[FallbackProvider] Rejecting fallback for ${id}: first result had ISRC ${firstResult.isrc} which didn't match ${isrc}`);
                         }
-                    } catch (err) {
-                        console.warn(`[FallbackProvider] Failed to verify ISRC for ${firstResult.id}:`, err);
                     }
-                } else {
-                    console.warn(`[FallbackProvider] Rejecting fallback for ${id}: first result had ISRC ${firstResult.isrc} which didn't match ${isrc}`);
+                }
+            } catch (err: any) {
+                console.warn(`[FallbackProvider] ISRC search failed on ${targetProvider.name} for ISRC ${isrc}:`, err);
+            }
+        }
+
+        // If ISRC search failed to yield a match, fallback to search by Title + Artist
+        if (!match) {
+            console.log(`[FallbackProvider] ISRC search yielded no match for ${id}, falling back to metadata search...`);
+            
+            if (!meta && sourceProvider) {
+                try {
+                    meta = typeof sourceProvider.getTrackMetadata === 'function' 
+                        ? await sourceProvider.getTrackMetadata(id)
+                        : (typeof sourceProvider.getTrack === 'function' ? await sourceProvider.getTrack(id) : null);
+                } catch (e) {
+                    console.warn(`[FallbackProvider] Could not fetch metadata for title/artist fallback for ${id}:`, e);
                 }
             }
 
-            if (!match || !match.id) {
-                throw new Error(`Cannot translate track ID ${id} to ${targetProvider.name} (ISRC mismatch)`);
+            if (meta && meta.title) {
+                const artistName = meta.artist?.name || meta.artists?.[0]?.name || '';
+                const query = artistName ? `${artistName} ${meta.title}` : meta.title;
+                
+                try {
+                    const fallbackSearchRes = await targetProvider.searchTracks(query, { limit: 10 });
+                    const items = fallbackSearchRes?.items || [];
+                    
+                    if (items.length > 0) {
+                        // Find the closest match or take the first one
+                        match = items.find((t: any) => {
+                            const tTitle = t.title?.toLowerCase().trim();
+                            const mTitle = meta.title?.toLowerCase().trim();
+                            return tTitle === mTitle;
+                        });
+                        
+                        if (!match) {
+                            match = items[0]; // Assume first result is the best match
+                        }
+                    }
+                } catch (err: any) {
+                    console.warn(`[FallbackProvider] Title/Artist search failed on ${targetProvider.name} for query "${query}":`, err);
+                }
             }
-
-            console.log(`[FallbackProvider] Resolved track ID ${id} -> ${match.id} on ${targetProvider.name} (ISRC: ${isrc})`);
-            this.trackIdMapCache.set(cacheKey, match.id);
-            return match.id;
-        } catch (err: any) {
-            console.warn(`[FallbackProvider] ISRC search failed on ${targetProvider.name} for ISRC ${isrc}:`, err);
-            throw new Error(`Cannot translate track ID ${id} to ${targetProvider.name} (search failed: ${err.message})`);
         }
+
+        if (!match || !match.id) {
+            throw new Error(`Cannot translate track ID ${id} to ${targetProvider.name} (no match found via ISRC or title/artist)`);
+        }
+
+        console.log(`[FallbackProvider] Resolved track ID ${id} -> ${match.id} on ${targetProvider.name}`);
+        this.trackIdMapCache.set(cacheKey, match.id);
+        return match.id;
     }
 
     private async executeWithFallback<T>(
