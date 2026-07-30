@@ -81,14 +81,14 @@ export class FallbackProvider implements Provider {
         }
 
         if (!isrc || typeof targetProvider.searchTracks !== 'function') {
-            return id;
+            throw new Error(`Cannot translate track ID ${id} to ${targetProvider.name} (missing ISRC or search API)`);
         }
 
         try {
             const searchRes = await targetProvider.searchTracks(isrc, { limit: 10 });
             const items = searchRes?.items || [];
             if (!items.length) {
-                return id;
+                throw new Error(`Cannot translate track ID ${id} to ${targetProvider.name} (no search results for ISRC)`);
             }
 
             // Match exact ISRC case-insensitively
@@ -117,15 +117,15 @@ export class FallbackProvider implements Provider {
             }
 
             if (!match || !match.id) {
-                return id;
+                throw new Error(`Cannot translate track ID ${id} to ${targetProvider.name} (ISRC mismatch)`);
             }
 
             console.log(`[FallbackProvider] Resolved track ID ${id} -> ${match.id} on ${targetProvider.name} (ISRC: ${isrc})`);
             this.trackIdMapCache.set(cacheKey, match.id);
             return match.id;
-        } catch (err) {
-            console.warn(`[FallbackProvider] ISRC search failed on ${targetProvider.name} for ISRC ${isrc}, falling back to original ID ${id}:`, err);
-            return id;
+        } catch (err: any) {
+            console.warn(`[FallbackProvider] ISRC search failed on ${targetProvider.name} for ISRC ${isrc}:`, err);
+            throw new Error(`Cannot translate track ID ${id} to ${targetProvider.name} (search failed: ${err.message})`);
         }
     }
 
