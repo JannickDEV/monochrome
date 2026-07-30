@@ -58,11 +58,7 @@ export class FallbackProvider implements Provider {
         // We need to translate the ID via ISRC from the source provider
         let isrc = this.isrcCache.get(strId);
         let meta: any = null;
-        const sourceProvider = this.getProviderForId(id);
-
-        let isrc = this.isrcCache.get(strId);
-        let meta: any = null;
-        const sourceProvider = this.getProviderForId(id);
+        const sourceProvider = this.getProviderForId(id) || targetProvider;
 
         if (sourceProvider) {
             try {
