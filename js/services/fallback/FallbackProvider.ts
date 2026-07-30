@@ -190,17 +190,23 @@ export class FallbackProvider implements Provider {
                         }
                         
                         if (validCandidates.length > 0) {
-                            // Try exact title match first
+                            const mArtist = (meta.artist?.name || meta.artists?.[0]?.name || '').toLowerCase().trim();
+                            
+                            // Try exact title + artist match first
                             match = validCandidates.find((t: any) => {
                                 const tTitle = t.title?.toLowerCase().trim();
-                                return tTitle === mTitle;
+                                const tArtist = (t.artist?.name || t.artists?.[0]?.name || '').toLowerCase().trim();
+                                const artistMatches = !mArtist || !tArtist || tArtist === mArtist || tArtist.includes(mArtist) || mArtist.includes(tArtist);
+                                return tTitle === mTitle && artistMatches;
                             });
                             
-                            // If no exact match, try partial title match
+                            // If no exact match, try partial title + artist match
                             if (!match) {
                                 match = validCandidates.find((t: any) => {
                                     const tTitle = t.title?.toLowerCase().trim();
-                                    return tTitle?.includes(mTitle) || mTitle?.includes(tTitle);
+                                    const tArtist = (t.artist?.name || t.artists?.[0]?.name || '').toLowerCase().trim();
+                                    const artistMatches = !mArtist || !tArtist || tArtist === mArtist || tArtist.includes(mArtist) || mArtist.includes(tArtist);
+                                    return (tTitle?.includes(mTitle) || mTitle?.includes(tTitle)) && artistMatches;
                                 });
                             }
                         } else {

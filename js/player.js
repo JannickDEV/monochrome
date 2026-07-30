@@ -612,6 +612,23 @@ export class Player {
                 const isExplicitAtmos = track.audioQuality === 'DOLBY_ATMOS' || deriveTrackQuality(track) === 'DOLBY_ATMOS';
                 const preferAtmos = preferDolbyAtmosSettings?.isEnabled() && track.audioModes?.includes('DOLBY_ATMOS');
                 const requestQuality = (isExplicitAtmos || preferAtmos) ? 'DOLBY_ATMOS' : this.quality;
+
+                if (this.api && typeof this.api.getAPI === 'function') {
+                    try {
+                        const losslessApi = this.api.getAPI();
+                        if (losslessApi && typeof losslessApi.getFallbackProvider === 'function') {
+                            const fp = losslessApi.getFallbackProvider(true);
+                            if (fp) {
+                                if (track.isrc) fp.isrcCache?.set(String(track.id), track.isrc);
+                                if (!fp.metaCache) fp.metaCache = new Map();
+                                fp.metaCache.set(String(track.id), track);
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Failed to populate fallback caches during preload:', e);
+                    }
+                }
+
                 const streamInfo =
                     track.type == 'video'
                         ? await this.api.getVideoStreamUrl(track.id)
