@@ -57,29 +57,23 @@ export class FallbackProvider implements Provider {
         let meta: any = null;
         const sourceProvider = this.getProviderForId(id);
 
-        if (!isrc) {
-            if (sourceProvider && typeof sourceProvider.getTrackMetadata === 'function') {
-                try {
-                    meta = await sourceProvider.getTrackMetadata(id);
-                    if (meta?.isrc) {
-                        isrc = meta.isrc;
-                        this.isrcCache.set(strId, isrc);
-                    }
-                } catch (e) {
-                    console.warn(`[FallbackProvider] Could not fetch metadata from source provider for ${id}:`, e);
-                }
+        let isrc = this.isrcCache.get(strId);
+        let meta: any = null;
+        const sourceProvider = this.getProviderForId(id);
+
+        if (sourceProvider) {
+            try {
+                meta = typeof sourceProvider.getTrackMetadata === 'function' 
+                    ? await sourceProvider.getTrackMetadata(id)
+                    : (typeof sourceProvider.getTrack === 'function' ? await sourceProvider.getTrack(id) : null);
+            } catch (e) {
+                console.warn(`[FallbackProvider] Could not fetch metadata from source provider for ${id}:`, e);
             }
-            if (!isrc && sourceProvider && typeof sourceProvider.getTrack === 'function') {
-                try {
-                    meta = await sourceProvider.getTrack(id);
-                    if (meta?.isrc) {
-                        isrc = meta.isrc;
-                        this.isrcCache.set(strId, isrc);
-                    }
-                } catch (e) {
-                    console.warn(`[FallbackProvider] Could not fetch track from source provider for ${id}:`, e);
-                }
-            }
+        }
+
+        if (!isrc && meta && meta.isrc) {
+            isrc = meta.isrc;
+            this.isrcCache.set(strId, isrc);
         }
 
         if (typeof targetProvider.searchTracks !== 'function') {
@@ -153,16 +147,6 @@ export class FallbackProvider implements Provider {
         // If ISRC search failed to yield a match, fallback to search by Title + Artist
         if (!match) {
             console.log(`[FallbackProvider] ISRC search yielded no match for ${id}, falling back to metadata search...`);
-            
-            if (!meta && sourceProvider) {
-                try {
-                    meta = typeof sourceProvider.getTrackMetadata === 'function' 
-                        ? await sourceProvider.getTrackMetadata(id)
-                        : (typeof sourceProvider.getTrack === 'function' ? await sourceProvider.getTrack(id) : null);
-                } catch (e) {
-                    console.warn(`[FallbackProvider] Could not fetch metadata for title/artist fallback for ${id}:`, e);
-                }
-            }
 
             if (meta && meta.title) {
                 const artistName = meta.artist?.name || meta.artists?.[0]?.name || '';
@@ -199,11 +183,6 @@ export class FallbackProvider implements Provider {
                                     const tTitle = t.title?.toLowerCase().trim();
                                     return tTitle?.includes(mTitle) || mTitle?.includes(tTitle);
                                 });
-                            }
-                            
-                            // If still no match, take the first valid candidate
-                            if (!match) {
-                                match = validCandidates[0];
                             }
                         } else {
                             console.warn(`[FallbackProvider] No search results matched the expected duration (~${mDuration}s). First result duration: ${items[0].duration}s`);
