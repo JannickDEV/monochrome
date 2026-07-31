@@ -42,11 +42,19 @@ export class FallbackProvider implements Provider {
 
     private async resolveProviderTrackId(targetProvider: Provider, id: string | number): Promise<string | number> {
         const strId = String(id);
-        const sourceProvider = this.getProviderForId(id) || targetProvider;
 
-        // If the ID already belongs to the target provider, return it directly
-        if (sourceProvider.id === targetProvider.id) {
+        // Strict target validation: 
+        // Qobuz tracks must start with "q:" from the UI.
+        // Tidal tracks are purely numerical or start with "t:".
+        if (targetProvider.id === 'qobuz' && strId.startsWith('q:')) {
             return id;
+        } else if (targetProvider.id === 'tidal' && (strId.startsWith('t:') || /^\d+$/.test(strId))) {
+            return id;
+        } else if (targetProvider.id !== 'qobuz' && targetProvider.id !== 'tidal') {
+            const sourceProvider = this.getProviderForId(id) || targetProvider;
+            if (sourceProvider.id === targetProvider.id) {
+                return id;
+            }
         }
 
         const cacheKey = `${targetProvider.id}_${strId}`;
