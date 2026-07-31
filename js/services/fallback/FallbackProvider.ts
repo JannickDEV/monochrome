@@ -42,11 +42,10 @@ export class FallbackProvider implements Provider {
 
     private async resolveProviderTrackId(targetProvider: Provider, id: string | number): Promise<string | number> {
         const strId = String(id);
-        const isTargetQobuz = targetProvider.id === 'qobuz';
-        const isIdQobuz = strId.startsWith('q:');
+        const sourceProvider = this.getProviderForId(id) || targetProvider;
 
-        // If the ID already matches the target provider's catalog format, return it directly
-        if ((isTargetQobuz && isIdQobuz) || (!isTargetQobuz && !isIdQobuz)) {
+        // If the ID already belongs to the target provider, return it directly
+        if (sourceProvider.id === targetProvider.id) {
             return id;
         }
 
@@ -58,7 +57,6 @@ export class FallbackProvider implements Provider {
         // We need to translate the ID via ISRC from the source provider
         let isrc = this.isrcCache.get(strId);
         let meta: any = null;
-        const sourceProvider = this.getProviderForId(id) || targetProvider;
 
         if (sourceProvider) {
             try {
