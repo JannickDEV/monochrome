@@ -161,64 +161,6 @@ export class FallbackProvider implements Provider {
             }
         }
 
-        // If ISRC search failed to yield a match, fallback to search by Title + Artist
-        if (!match) {
-            console.log(`[FallbackProvider] ISRC search yielded no match for ${id} (ISRC: ${isrc}), falling back to metadata search...`);
-
-            if (meta && (meta.title || meta.name)) {
-                const title = meta.title || meta.name;
-                const artistName = meta.artist?.name || meta.artists?.[0]?.name || '';
-                const query = artistName ? `${artistName} ${title}` : title;
-                console.log(`[FallbackProvider] Running Title+Artist search with query: "${query}"`);
-                
-                try {
-                    const fallbackSearchRes = await targetProvider.searchTracks(query, { limit: 10 });
-                    const items = fallbackSearchRes?.items || [];
-                    
-                    if (items.length > 0) {
-                        const mTitle = (meta.title || meta.name)?.toLowerCase().trim();
-                        const mDuration = meta.duration || 0;
-                        
-                        // Filter by duration if available
-                        let validCandidates = items;
-                        if (mDuration > 0) {
-                            validCandidates = items.filter((t: any) => {
-                                const tDuration = t.duration || 0;
-                                if (tDuration === 0) return true; // Can't compare, assume valid
-                                return Math.abs(tDuration - mDuration) <= 10;
-                            });
-                        }
-                        
-                        if (validCandidates.length > 0) {
-                            const mArtist = (meta.artist?.name || meta.artists?.[0]?.name || '').toLowerCase().trim();
-                            
-                            // Try exact title + artist match first
-                            match = validCandidates.find((t: any) => {
-                                const tTitle = t.title?.toLowerCase().trim();
-                                const tArtist = (t.artist?.name || t.artists?.[0]?.name || '').toLowerCase().trim();
-                                const artistMatches = !mArtist || !tArtist || tArtist === mArtist || tArtist.includes(mArtist) || mArtist.includes(tArtist);
-                                return tTitle === mTitle && artistMatches;
-                            });
-                            
-                            // If no exact match, try partial title + artist match
-                            if (!match) {
-                                match = validCandidates.find((t: any) => {
-                                    const tTitle = t.title?.toLowerCase().trim();
-                                    const tArtist = (t.artist?.name || t.artists?.[0]?.name || '').toLowerCase().trim();
-                                    const artistMatches = !mArtist || !tArtist || tArtist === mArtist || tArtist.includes(mArtist) || mArtist.includes(tArtist);
-                                    return (tTitle?.includes(mTitle) || mTitle?.includes(tTitle)) && artistMatches;
-                                });
-                            }
-                        } else {
-                            console.warn(`[FallbackProvider] No search results matched the expected duration (~${mDuration}s). First result duration: ${items[0].duration}s`);
-                        }
-                    }
-                } catch (err: any) {
-                    console.warn(`[FallbackProvider] Title/Artist search failed on ${targetProvider.name} for query "${query}":`, err);
-                }
-            }
-        }
-
         if (!match || !match.id) {
             throw new Error(`Cannot translate track ID ${id} to ${targetProvider.name} (no match found via ISRC or title/artist)`);
         }
