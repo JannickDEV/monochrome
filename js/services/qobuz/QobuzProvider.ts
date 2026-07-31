@@ -183,6 +183,16 @@ export class QobuzProvider implements Provider {
         if (quality === 'DOLBY_ATMOS') {
             throw new ProviderError('Qobuz does not support Dolby Atmos', this.id, 'getStreamUrl');
         }
+        // Reject raw numeric IDs that look like TIDAL IDs — these should never reach Qobuz.
+        // Valid Qobuz IDs carry the 'q:' prefix from normalizeItem.
+        const rawId = String(id);
+        if (/^\d+$/.test(rawId) && !rawId.startsWith('q:')) {
+            throw new ProviderError(
+                `Rejecting raw numeric ID ${id} — this appears to be a TIDAL ID, not a Qobuz ID`,
+                this.id,
+                'getStreamUrl'
+            );
+        }
         try {
             const formatId = getQobuzFormatId(quality);
             const res = await this.client.request('/trackManifests/', { id: cleanId(id), format_id: formatId, intent: 'stream' });
@@ -204,6 +214,15 @@ export class QobuzProvider implements Provider {
     async getTrackForDownload(id: string | number, quality?: string): Promise<StreamInfo> {
         if (quality === 'DOLBY_ATMOS') {
             throw new ProviderError('Qobuz does not support Dolby Atmos', this.id, 'getTrackForDownload');
+        }
+        // Reject raw numeric IDs that look like TIDAL IDs
+        const rawId = String(id);
+        if (/^\d+$/.test(rawId) && !rawId.startsWith('q:')) {
+            throw new ProviderError(
+                `Rejecting raw numeric ID ${id} — this appears to be a TIDAL ID, not a Qobuz ID`,
+                this.id,
+                'getTrackForDownload'
+            );
         }
         try {
             const formatId = getQobuzFormatId(quality);

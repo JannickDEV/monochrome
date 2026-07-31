@@ -184,6 +184,17 @@ export class FallbackProvider implements Provider {
             throw new Error(`Cannot translate track ID ${id} to ${targetProvider.name} (no match found via ISRC or title/artist)`);
         }
 
+        // Final safety net: if target is Qobuz, ensure the resolved ID is actually a Qobuz ID.
+        // Qobuz IDs from normalizeItem always carry the 'q:' prefix. A raw numeric ID here
+        // means a TIDAL ID leaked through — reject it immediately to force TIDAL fallback.
+        if (targetProvider.id === 'qobuz') {
+            const resolvedStr = String(match.id);
+            if (!resolvedStr.startsWith('q:') && /^\d+$/.test(resolvedStr)) {
+                console.warn(`[FallbackProvider] SAFETY NET: Resolved ID ${match.id} for Qobuz looks like a raw TIDAL ID. Rejecting to prevent wrong-provider playback.`);
+                throw new Error(`Resolved ID ${match.id} is a raw numeric ID — refusing to send to Qobuz (likely a TIDAL ID)`);
+            }
+        }
+
         console.log(`[FallbackProvider] Resolved track ID ${id} -> ${match.id} on ${targetProvider.name}`);
         this.trackIdMapCache.set(cacheKey, match.id);
         return match.id;
@@ -402,6 +413,10 @@ export class FallbackProvider implements Provider {
             [id, quality],
             async p => {
                 const targetId = await this.resolveProviderTrackId(p, id);
+                // Guard: never send a raw TIDAL numeric ID to Qobuz for streaming
+                if (p.id === 'qobuz' && /^\d+$/.test(String(targetId))) {
+                    throw new Error(`[getStreamUrl] Refusing to stream raw numeric ID ${targetId} on Qobuz — likely a TIDAL ID`);
+                }
                 return p.getStreamUrl(targetId, quality);
             },
             res => !res || !res.url
@@ -414,6 +429,10 @@ export class FallbackProvider implements Provider {
             [id, quality],
             async p => {
                 const targetId = await this.resolveProviderTrackId(p, id);
+                // Guard: never send a raw TIDAL numeric ID to Qobuz for download
+                if (p.id === 'qobuz' && /^\d+$/.test(String(targetId))) {
+                    throw new Error(`[getTrackForDownload] Refusing to download raw numeric ID ${targetId} on Qobuz — likely a TIDAL ID`);
+                }
                 if (typeof p.getTrackForDownload === 'function') {
                     return p.getTrackForDownload(targetId, quality);
                 }
