@@ -1972,7 +1972,7 @@ export class LosslessAPI {
         return result;
     }
 
-    async getQobuzStreamUrl(isrc, quality = 'LOSSLESS') {
+    async getQobuzStreamUrl(isrc, quality = 'LOSSLESS', expectedTitle = null) {
         let qobuzInstances = [];
         try {
             qobuzInstances = await this.settings.getInstances('qobuz');
@@ -2003,7 +2003,17 @@ export class LosslessAPI {
                 const trackJson = await trackRes.json();
 
                 const tracks = trackJson.data?.tracks?.items || [];
-                const match = tracks.find((t) => t.isrc?.toLowerCase() === isrc.toLowerCase()) || tracks[0];
+                let match = tracks.find((t) => t.isrc?.toLowerCase() === isrc.toLowerCase()) || tracks[0];
+
+                if (match && expectedTitle) {
+                    const mTitle = expectedTitle.toLowerCase().trim();
+                    const tTitle = (match.title || match.name || '').toLowerCase().trim();
+                    const isTitleSimilar = tTitle === mTitle || tTitle.includes(mTitle) || mTitle.includes(tTitle);
+                    if (!isTitleSimilar) {
+                        console.warn(`[api.js] ISRC match rejected for ${isrc}! Expected title "${expectedTitle}", but Qobuz returned "${match.title || match.name}" (ID: ${match.id}).`);
+                        match = null;
+                    }
+                }
 
                 if (match && match.id) {
                     const qobuzTrackId = match.id;
@@ -2954,11 +2964,11 @@ export class LosslessAPI {
                 allowCencWithoutKeyId: needsProxyDecryption,
             });
             if (!amazonResult?.url && track?.isrc) {
-                qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality);
+                qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality, track.title || track.name);
             }
         } else {
             if (track?.isrc) {
-                qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality);
+                qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality, track.title || track.name);
             }
             if (!qobuzResult?.url) {
                 amazonResult = await this.getAmazonMusicStreamUrl(id, actualQuality, {
@@ -3254,7 +3264,7 @@ export class LosslessAPI {
             };
 
             if (track?.isrc) {
-                qobuzResult = await this.getQobuzStreamUrl(track.isrc, cleanQuality);
+                qobuzResult = await this.getQobuzStreamUrl(track.isrc, cleanQuality, track.title || track.name);
             }
             if (!qobuzResult?.url) {
                 amazonResult = await getAmazonForDownload();
