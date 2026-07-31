@@ -1,1 +1,1035 @@
-//js/tracker.js\nimport { escapeHtml, trackDataStore, formatTime } from './utils.js';\nimport { navigate } from './router.js';\nimport { SVG_MENU, SVG_PLAY, SVG_HEART } from './icons.js';\nimport { Player } from './player.js';\nimport { showNotification } from './downloads.js';\n\nlet artistsData = [];\nlet artistsPopularity = new Map(); // name -> popularity score\n\n// Map to store artist info keyed by sheetId for quick lookup\nconst artistBySheetId = new Map();\n\n// Store all songs for search functionality\nlet allSongsCache = new Map(); // sheetId -> {era, songs}\n\n// Normalize artist name for image URL (no spaces, no special chars, all lowercase)\nfunction normalizeArtistName(name) {\n    return name.toLowerCase().replace(/[^a-z0-9]/g, '');\n}\n\n// Clean song title for scrobbling (remove producer credits)\nfunction cleanSongTitle(title) {\n    if (!title) return '';\n    // Remove (prod. ...), (produced by ...), [prod. ...], etc.\n    return title\n        .replace(/\s*[([]\s*prod\.?\s+[^)\]]+[)\]]/gi, '')\n        .replace(/\s*[([]\s*produced\s+by\s+[^)\]]+[)\]]/gi, '')\n        .replace(/\s+/g, ' ')\n        .trim();\n}\n\nasync function loadArtistsPopularity() {\n    try {\n        const response = await fetch('https://trends.artistgrid.cx');\n        if (!response.ok) return;\n        const data = await response.json();\n        if (data.results) {\n            data.results.forEach((artist, index) => {\n                // Store popularity score based on visitors and position\n                const score = artist.visitors * (1 - index / data.results.length);\n                artistsPopularity.set(artist.name, score);\n            });\n        }\n    } catch (e) {\n        console.log('Could not load popularity data:', e);\n    }\n}\n\n// Parse RFC4180-style CSV (quoted fields, escaped "" quotes, commas/newlines inside quotes)\nfunction parseCSVRows(text) {\n    const rows = [];\n    let row = [];\n    let field = '';\n    let inQuotes = false;\n    for (let i = 0; i < text.length; i++) {\n        const char = text[i];\n        if (inQuotes) {\n            if (char === '"') {\n                if (text[i + 1] === '"') {\n                    field += '"';\n                    i++;\n                } else {\n                    inQuotes = false;\n                }\n            } else {\n                field += char;\n            }\n        } else if (char === '"') {\n            inQuotes = true;\n        } else if (char === ',') {\n            row.push(field);\n            field = '';\n        } else if (char === '\n' || char === '\r') {\n            if (char === '\r' && text[i + 1] === '\n') i++;\n            row.push(field);\n            rows.push(row);\n            row = [];\n            field = '';\n        } else {\n            field += char;\n        }\n    }\n    if (field.length > 0 || row.length > 0) {\n        row.push(field);\n        rows.push(row);\n    }\n    return rows;\n}\n\nfunction parseArtistsCSV(text) {\n    const rows = parseCSVRows(text).filter((r) => r.length > 1 || r[0]);\n    if (rows.length < 2) return [];\n    const headers = rows[0];\n    return rows.slice(1).map((row) => {\n        const obj = {};\n        headers.forEach((header, i) => {\n            obj[header] = row[i] ?? '';\n        });\n        return obj;\n    });\n}\n\nasync function loadArtistsData() {\n    try {\n        const response = await fetch('https://artists.artistgrid.cx/artists.csv');\n        if (!response.ok) throw new Error('Network response was not ok');\n        const text = await response.text();\n        artistsData = parseArtistsCSV(text);\n\n        // Sort by popularity if available\n        artistsData.sort((a, b) => {\n            const popA = artistsPopularity.get(a.name) || 0;\n            const popB = artistsPopularity.get(b.name) || 0;\n            return popB - popA;\n        });\n\n        // Build sheetId lookup map\n        artistBySheetId.clear();\n        artistsData.forEach((artist) => {\n            const sheetId = getSheetId(artist.url);\n            if (sheetId) {\n                artistBySheetId.set(sheetId, artist);\n            }\n        });\n    } catch (e) {\n        console.error('Failed to load Artists List:', e);\n        showNotification('Could not load unreleased artists data');\n    }\n}\n\n// The artists CSV provides the tracker id directly: either a bare Google Sheets\n// id or a tracker domain (yetracker.net, franktracker.net, deftonestracker, ...).\n// Whatever it is, it's used as-is on the tracker API.\nfunction getSheetId(url) {\n    if (!url) return null;\n    \n    // Some older versions might have full Google Sheets URLs\n    const match = url.match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);\n    if (match) return match[1];\n\n    // ArtistGrid recently changed their CSV to provide either the raw sheet ID \n    // or a custom domain directly (e.g. "12nGHPPh5dVTfLuBLVQYzC3QgPxKfvp-jgCoNccvEasM" or "franktracker.net")\n    let cleaned = url.replace(/^https?:\/\//, '').split('/')[0].trim();\n    if (cleaned.length > 0) return cleaned;\n\n    return null;\n}\n\nconst TRACKER_API_BASE = 'https://trackerapi.artistgrid.cx/sh/';\nconst ASSETS_BASE_URL = 'https://assets.artistgrid.cx';\n\n// Artist images live at assets.artistgrid.cx/{format}/{normalizedname}.{format}\nfunction artistImageUrl(name, format) {\n    return `${ASSETS_BASE_URL}/${format}/${normalizeArtistName(name)}.${format}`;\n}\n\nfunction artistPictureHTML(name, imgAttrs = '') {\n    return `\n        <picture style="display: contents;">\n            <source srcset="${artistImageUrl(name, 'jxl')}" type="image/jxl">\n            <source srcset="${artistImageUrl(name, 'webp')}" type="image/webp">\n            <img crossorigin="anonymous" referrerpolicy="no-referrer" src="${artistImageUrl(name, 'jpg')}" alt="${escapeHtml(name)}" ${imgAttrs} onerror="this.src='assets/logo.svg'">\n        </picture>\n    `;\n}\n\n// Wrap an existing <img> element in a <picture> with jxl/webp sources\nfunction setArtistHeaderImage(imgEl, name) {\n    let picture = imgEl.parentElement;\n    if (!picture || picture.tagName !== 'PICTURE') {\n        picture = document.createElement('picture');\n        picture.style.display = 'contents';\n        imgEl.replaceWith(picture);\n        picture.appendChild(imgEl);\n    }\n    picture.querySelectorAll('source').forEach((s) => s.remove());\n    const jxlSource = document.createElement('source');\n    jxlSource.srcset = artistImageUrl(name, 'jxl');\n    jxlSource.type = 'image/jxl';\n    const webpSource = document.createElement('source');\n    webpSource.srcset = artistImageUrl(name, 'webp');\n    webpSource.type = 'image/webp';\n    picture.insertBefore(webpSource, imgEl);\n    picture.insertBefore(jxlSource, webpSource);\n    imgEl.onerror = function () {\n        picture.querySelectorAll('source').forEach((s) => s.remove());\n        this.onerror = null;\n        this.src = 'assets/logo.svg';\n    };\n    imgEl.src = artistImageUrl(name, 'jpg');\n}\n\nfunction eraSubtitle(era) {\n    return (era.aka && era.aka[0]) || 'Unreleased';\n}\n\nasync function fetchTrackerData(sheetId, tabSlug = null) {\n    try {\n        const targetUrl = tabSlug \n            ? `${TRACKER_API_BASE}${sheetId}/?tab=${tabSlug}`\n            : `${TRACKER_API_BASE}${sheetId}/`;\n            \n        // ArtistGrid recently restricted their CORS policy (Access-Control-Allow-Origin), \n        // so we route the fetch through our bot's Express server proxy to bypass it!\n        const proxyUrl = `https://audio.bitperfect.dedyn.io/proxy-api?url=${encodeURIComponent(targetUrl)}`;\n        \n        const response = await fetch(proxyUrl);\n        if (!response.ok) throw new Error(`HTTP ${response.status}`);\n        return await response.json();\n    } catch (e) {\n        console.error('Failed to fetch tracker data', e);\n        return null;\n    }\n}\n\nfunction parseDuration(durationStr) {\n    if (!durationStr || durationStr === 'N/A') return 0;\n    const parts = durationStr.replace(/[^0-9:]/g, '').split(':');\n    if (parts.length === 2) {\n        return (parseInt(parts[0]) || 0) * 60 + (parseInt(parts[1]) || 0);\n    }\n    return 0;\n}\n\nfunction getDirectUrl(rawUrl) {\n    if (!rawUrl) return null;\n\n    // Only return URLs that are known to be direct audio links\n    if (rawUrl.includes('pillows.su/f/')) {\n        const match = rawUrl.match(/pillows\.su\/f\/([a-f0-9]+)/);\n        if (match) return `https://api.pillows.su/api/download/${match[1]}`;\n    } else if (rawUrl.includes('music.froste.lol/song/')) {\n        const match = rawUrl.match(/music\.froste\.lol\/song\/([a-f0-9]+)/);\n        if (match) return `https://music.froste.lol/song/${match[1]}/download`;\n    }\n\n    // For other URLs, check if they look like direct audio files\n    const audioExtensions = ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac'];\n    const hasAudioExt = audioExtensions.some((ext) => rawUrl.toLowerCase().includes(ext));\n\n    if (hasAudioExt) {\n        return rawUrl;\n    }\n\n    // Return null for URLs that don't look like direct audio files\n    return null;\n}\n\n// Convert tracker song to standard track format\nexport function createTrackFromSong(song, era, artistName, index, sheetId = '') {\n    const isValidUrl = (u) => {\n        if (typeof u === 'string') return u.trim().length > 0;\n        if (u && typeof u === 'object' && typeof u.url === 'string') return u.url.trim().length > 0;\n        return false;\n    };\n    const getUrlString = (u) => typeof u === 'string' ? u : u.url;\n    \n    const validLinkObj = song.links && song.links.length ? song.links.find(isValidUrl) : null;\n    const rawUrl = validLinkObj ? getUrlString(validLinkObj) : null;\n    const directUrl = getDirectUrl(rawUrl);\n    const duration = parseDuration(song.track_length);\n    const title = (song.name && (song.name.title || song.name.raw)) || 'Unknown';\n    const cleanTitle = cleanSongTitle(title);\n    const category = song.quality && song.quality !== 'Not Available' ? song.quality : song.available_length || '';\n\n    return {\n        id: `tracker-${sheetId}-${era.name}-${index}`,\n        title: title,\n        cleanTitle: cleanTitle,\n        artist: {\n            name: artistName,\n        },\n        artists: [\n            {\n                name: artistName,\n            },\n        ],\n        album: {\n            title: era.name,\n            cover: era.cover_art,\n        },\n        duration: duration,\n        trackNumber: index + 1,\n        isTracker: true,\n        audioUrl: directUrl,\n        remoteUrl: directUrl,\n        explicit: false,\n        unavailable: !directUrl,\n        // Additional tracker-specific data for context menu\n        trackerInfo: {\n            sheetId: sheetId,\n            timeline: eraSubtitle(era),\n            description: song.notes || '',\n            sourceUrl: rawUrl,\n            category: category,\n        },\n    };\n}\n\n// Create track item HTML for tracker songs - EXACTLY like normal tracks\nfunction createTrackerTrackItemHTML(track, index) {\n    const isUnavailable = track.unavailable;\n    const trackNumberHTML = `<div class="track-number">${index + 1}</div>`;\n\n    const actionsHTML = isUnavailable\n        ? ''\n        : `\n        <button class="track-menu-btn" type="button" title="More options">\n            ${SVG_MENU(20)}\n        </button>\n    `;\n\n    return `\n        <div class="track-item ${isUnavailable ? 'unavailable' : ''}" \n             data-track-id="${track.id}"\n             ${isUnavailable ? 'title="This track is currently unavailable"' : ''}>\n            ${trackNumberHTML}\n            <div class="track-item-info">\n                <div class="track-item-details">\n                    <div class="title">${escapeHtml(track.title)}</div>\n                    <div class="artist">${escapeHtml(track.artist.name)}</div>\n                </div>\n            </div>\n            <div class="track-item-duration">${isUnavailable ? '--:--' : formatTime(track.duration)}</div>\n            <div class="track-item-actions">\n                ${actionsHTML}\n            </div>\n        </div>\n    `;\n}\n\n// Render tracks for a tracker era - EXACTLY like normal album track list\nfunction renderTrackerTracks(container, tracks) {\n    const fragment = document.createDocumentFragment();\n    const tempDiv = document.createElement('div');\n\n    // Add header like normal albums\n    tempDiv.innerHTML = `\n        <div class="track-list-header">\n            <span style="width: 40px; text-align: center;">#</span>\n            <span>Title</span>\n            <span class="duration-header">Duration</span>\n            <span style="display: flex; justify-content: flex-end; opacity: 0.8;">Menu</span>\n        </div>\n    `;\n\n    // Add tracks\n    const tracksHTML = tracks.map((track, i) => createTrackerTrackItemHTML(track, i)).join('');\n\n    tempDiv.insertAdjacentHTML('beforeend', tracksHTML);\n\n    // Bind data to elements\n    Array.from(tempDiv.children).forEach((element, index) => {\n        if (index === 0) return; // Skip header\n        const track = tracks[index - 1];\n        if (element && track) {\n            trackDataStore.set(element, track);\n        }\n    });\n\n    while (tempDiv.firstChild) {\n        fragment.appendChild(tempDiv.firstChild);\n    }\n\n    container.innerHTML = '';\n    container.appendChild(fragment);\n}\n\n// Create project card HTML - EXACTLY like album cards\nexport function createProjectCardHTML(era, _artist, sheetId, trackCount) {\n    const playBtnHTML = `\n        <button class="play-btn card-play-btn" data-action="play-card" data-type="tracker-project" data-id="${encodeURIComponent(era.name)}" title="Play">\n            ${SVG_PLAY(20)}\n        </button>\n        <button class="card-menu-btn" data-action="card-menu" data-type="tracker-project" data-id="${encodeURIComponent(era.name)}" title="Menu">\n            ${SVG_MENU(20)}\n        </button>\n    `;\n\n    return `\n        <div class="card" data-tracker-project-id="${encodeURIComponent(era.name)}" data-sheet-id="${sheetId}" style="cursor: pointer;">\n            <div class="card-image-wrapper">\n                <img crossorigin="anonymous" referrerpolicy="no-referrer" src="${era.cover_art || 'assets/logo.svg'}"\n                     alt="${escapeHtml(era.name)}"\n                     class="card-image"\n                     loading="lazy"\n                     onerror="this.src='assets/logo.svg'">\n                <button class="like-btn card-like-btn" data-action="toggle-like" data-type="tracker-project" title="Add to Liked">\n                    ${SVG_HEART(20)}\n                </button>\n                ${playBtnHTML}\n            </div>\n            <div class="card-info">\n                <h3 class="card-title">${escapeHtml(era.name)}</h3>\n                <p class="card-subtitle">${escapeHtml(eraSubtitle(era))} • ${trackCount} tracks</p>\n            </div>\n        </div>\n    `;\n}\n\n// Render tracker artist page (grid of projects)\nexport async function renderTrackerArtistPage(sheetId, container, tabSlug = null) {\n    if (!artistsData.length) {\n        await loadArtistsData();\n    }\n\n    // Find artist by sheetId\n    const artist = artistBySheetId.get(sheetId);\n    if (!artist) {\n        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Artist not found.</p>';\n        return;\n    }\n\n    // Fetch tracker data\n    const trackerData = await fetchTrackerData(sheetId, tabSlug);\n    if (!trackerData || !trackerData.eras) {\n        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Failed to load tracker data.</p>';\n        return;\n    }\n\n    // Cache songs for search\n    allSongsCache.set(sheetId, { artist, eras: trackerData.eras });\n\n    const eras = trackerData.eras;\n\n    // Set up header\n    const imageEl = document.getElementById('tracker-artist-detail-image');\n    const nameEl = document.getElementById('tracker-artist-detail-name');\n    const metaEl = document.getElementById('tracker-artist-detail-meta');\n    const projectsContainer = document.getElementById('tracker-artist-projects-container');\n    const playBtn = document.getElementById('play-tracker-artist-btn');\n    const downloadBtn = document.getElementById('download-tracker-artist-btn');\n\n    setArtistHeaderImage(imageEl, artist.name);\n    nameEl.textContent = artist.name;\n    const tabName = trackerData.tab ? trackerData.tab.name : 'projects';\n    metaEl.innerHTML = `<span>${eras.length} ${tabName.toLowerCase()}</span>`;\n\n    // Add Tab selector if multiple tabs exist\n    let tabContainer = document.getElementById('unreleased-tab-container');\n    if (trackerData.tabs && trackerData.tabs.length > 1) {\n        if (!tabContainer) {\n            tabContainer = document.createElement('div');\n            tabContainer.id = 'unreleased-tab-container';\n            tabContainer.style.cssText = 'margin: 1rem 0; padding: 0 1rem;';\n            projectsContainer.parentNode.insertBefore(tabContainer, projectsContainer);\n        }\n        \n        const currentTabSlug = trackerData.tab ? trackerData.tab.slug : (tabSlug || 'main');\n        \n        tabContainer.innerHTML = `\n            <select id="tracker-tab-select" style="\n                width: 100%;\n                padding: 0.75rem 1rem;\n                border-radius: var(--radius);\n                border: 1px solid var(--border);\n                background: var(--background);\n                color: var(--foreground);\n                font-size: 1rem;\n                outline: none;\n                cursor: pointer;\n            ">\n                ${trackerData.tabs.map(t => \n                    `<option value="${t.slug}" ${t.slug === currentTabSlug ? 'selected' : ''}>${escapeHtml(t.name)}</option>`\n                ).join('')}\n            </select>\n        `;\n\n        document.getElementById('tracker-tab-select').addEventListener('change', (e) => {\n            const newTabSlug = e.target.value;\n            projectsContainer.innerHTML = '<p style="text-align: center; padding: 2rem; width: 100%; color: var(--muted-foreground);">Loading...</p>';\n            renderTrackerArtistPage(sheetId, container, newTabSlug);\n        });\n    } else if (tabContainer) {\n        tabContainer.remove();\n    }\n\n    // Set up shuffle play button\n    if (playBtn) {\n        playBtn.onclick = async () => {\n            let allTracks = [];\n            eras.forEach((era) => {\n                if (era.tracks && era.tracks.length) {\n                    era.tracks.forEach((song) => {\n                        const track = createTrackFromSong(song, era, artist.name, allTracks.length, sheetId);\n                        allTracks.push(track);\n                    });\n                }\n            });\n\n            const availableTracks = allTracks.filter((t) => !t.unavailable);\n            if (availableTracks.length > 0) {\n                const shuffled = [...availableTracks].sort(() => Math.random() - 0.5);\n                Player.instance.setQueue(shuffled, 0);\n                Player.instance.playTrackFromQueue();\n            }\n        };\n    }\n\n    // Set up download button\n    if (downloadBtn) {\n        downloadBtn.onclick = () => {\n            showNotification('Bulk download coming soon! You can download individual tracks from project pages.');\n        };\n    }\n\n    // Add search bar (only if not already present)\n    let searchContainer = document.getElementById('unreleased-search-container');\n    if (!searchContainer) {\n        searchContainer = document.createElement('div');\n        searchContainer.id = 'unreleased-search-container';\n        searchContainer.style.cssText = 'margin: 1rem 0; padding: 0 1rem;';\n        searchContainer.innerHTML = `\n            <input type="text" \n                   id="unreleased-search-input" \n                   placeholder="Search all unreleased songs..." \n                   style="width: 100%; \n                          padding: 0.75rem 1rem; \n                          border-radius: var(--radius); \n                          border: 1px solid var(--border); \n                          background: var(--background); \n                          color: var(--foreground);\n                          font-size: 1rem;\n                          outline: none;\n                          transition: border-color 0.2s;"\n                   onfocus="this.style.borderColor='var(--primary)'" \n                   onblur="this.style.borderColor='var(--border)'">\n        `;\n        projectsContainer.parentNode.insertBefore(searchContainer, projectsContainer);\n    }\n\n    // Render projects as cards\n    projectsContainer.innerHTML = '';\n    projectsContainer.className = 'card-grid';\n\n    eras.forEach((era) => {\n        const trackCount = era.tracks ? era.tracks.length : 0;\n\n        if (trackCount === 0) return;\n\n        const cardHTML = createProjectCardHTML(era, artist, sheetId, trackCount);\n        projectsContainer.insertAdjacentHTML('beforeend', cardHTML);\n\n        const card = projectsContainer.lastElementChild;\n        card._eraData = era;\n        card._artistName = artist.name;\n        card._sheetId = sheetId;\n\n        card.onclick = (e) => {\n            if (e.target.closest('.card-play-btn')) {\n                e.stopPropagation();\n                let eraTracks = [];\n                if (era.tracks && era.tracks.length) {\n                    era.tracks.forEach((song) => {\n                        const track = createTrackFromSong(song, era, artist.name, eraTracks.length, sheetId);\n                        eraTracks.push(track);\n                    });\n                }\n                const availableTracks = eraTracks.filter((t) => !t.unavailable);\n                if (availableTracks.length > 0) {\n                    Player.instance.setQueue(availableTracks, 0);\n                    Player.instance.playTrackFromQueue();\n                }\n            } else if (e.target.closest('.card-menu-btn')) {\n                e.stopPropagation();\n            } else {\n                navigate(`/unreleased/${sheetId}/${encodeURIComponent(era.name)}`);\n            }\n        };\n    });\n\n    // Add search functionality\n    let searchInput = document.getElementById('unreleased-search-input');\n    const newSearchInput = searchInput.cloneNode(true);\n    searchInput.parentNode.replaceChild(newSearchInput, searchInput);\n    searchInput = newSearchInput;\n\n    searchInput.addEventListener('input', (e) => {\n        const query = e.target.value.toLowerCase().trim();\n        if (!query) {\n            // Reset view\n            projectsContainer.style.display = '';\n            document.getElementById('unreleased-search-results')?.remove();\n            return;\n        }\n\n        // Search through all songs\n        let matches = [];\n        eras.forEach((era) => {\n            if (era.tracks && era.tracks.length) {\n                era.tracks.forEach((song, index) => {\n                    const title = song.name && (song.name.title || song.name.raw);\n                    if (title?.toLowerCase().includes(query)) {\n                        matches.push({ song, era, index });\n                    }\n                });\n            }\n        });\n\n        // Show results\n        projectsContainer.style.display = 'none';\n        let resultsContainer = document.getElementById('unreleased-search-results');\n        if (!resultsContainer) {\n            resultsContainer = document.createElement('div');\n            resultsContainer.id = 'unreleased-search-results';\n            projectsContainer.parentNode.insertBefore(resultsContainer, projectsContainer.nextSibling);\n        }\n\n        if (matches.length === 0) {\n            resultsContainer.innerHTML =\n                '<p style="text-align: center; padding: 2rem; color: var(--muted-foreground);">No songs found.</p>';\n        } else {\n            resultsContainer.innerHTML = `\n                <h3 style="padding: 0 1rem; margin-bottom: 1rem;">Search Results (${matches.length} songs)</h3>\n                <div class="track-list" id="unreleased-search-tracklist"></div>\n            `;\n\n            const tracklist = document.getElementById('unreleased-search-tracklist');\n            const searchTracks = matches.map((m, i) => createTrackFromSong(m.song, m.era, artist.name, i, sheetId));\n            renderTrackerTracks(tracklist, searchTracks);\n\n            // Add click handlers\n            tracklist.querySelectorAll('.track-item').forEach((item) => {\n                const track = trackDataStore.get(item);\n                if (!track || track.unavailable) return;\n\n                item.onclick = (e) => {\n                    if (e.target.closest('.track-menu-btn')) return;\n\n                    const availableTracks = searchTracks.filter((t) => !t.unavailable);\n                    const trackIndex = availableTracks.findIndex((t) => t.id === track.id);\n                    if (trackIndex >= 0 && availableTracks.length > 0) {\n                        Player.instance.setQueue(availableTracks, trackIndex);\n                        Player.instance.playTrackFromQueue();\n                    }\n                };\n            });\n        }\n    });\n\n    document.title = `${artist.name} - Unreleased`;\n}\n\n// Render individual tracker project page\nexport async function renderTrackerProjectPage(sheetId, projectName, container, _ui) {\n    if (!artistsData.length) {\n        await loadArtistsData();\n    }\n\n    const artist = artistBySheetId.get(sheetId);\n    if (!artist) {\n        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Project not found.</p>';\n        return;\n    }\n\n    const trackerData = await fetchTrackerData(sheetId);\n    if (!trackerData || !trackerData.eras) {\n        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Failed to load project data.</p>';\n        return;\n    }\n\n    const era = trackerData.eras.find((e) => e.name === projectName);\n    if (!era) {\n        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Project not found.</p>';\n        return;\n    }\n\n    // Collect all tracks for this era\n    let eraTracks = [];\n    if (era.tracks && era.tracks.length) {\n        era.tracks.forEach((song) => {\n            const track = createTrackFromSong(song, era, artist.name, eraTracks.length, sheetId);\n            eraTracks.push(track);\n        });\n    }\n\n    const availableCount = eraTracks.filter((t) => !t.unavailable).length;\n\n    // Use the album page template structure\n    const imageEl = document.getElementById('album-detail-image');\n    const titleEl = document.getElementById('album-detail-title');\n    const metaEl = document.getElementById('album-detail-meta');\n    const prodEl = document.getElementById('album-detail-producer');\n    const tracklistContainer = document.getElementById('album-detail-tracklist');\n    const playBtn = document.getElementById('play-album-btn');\n    const shuffleBtn = document.getElementById('shuffle-album-btn');\n    const downloadBtn = document.getElementById('download-album-btn');\n    const likeBtn = document.getElementById('like-album-btn');\n    const mixBtn = document.getElementById('album-mix-btn');\n    const addToPlaylistBtn = document.getElementById('add-album-to-playlist-btn');\n\n    // Set album page content\n    imageEl.src = era.cover_art || 'assets/logo.svg';\n    imageEl.style.backgroundColor = '';\n    imageEl.onerror = function () {\n        this.src = 'assets/logo.svg';\n    };\n\n    titleEl.textContent = era.name;\n    metaEl.innerHTML = `${escapeHtml(eraSubtitle(era))} • ${eraTracks.length} tracks • ${availableCount} available`;\n    prodEl.innerHTML = `By <a href="/unreleased/${sheetId}">${artist.name}</a>`;\n\n    // Setup buttons\n    if (playBtn) {\n        playBtn.innerHTML = `${SVG_PLAY(20)}<span>Play Project</span>`;\n        playBtn.onclick = () => {\n            const availableTracks = eraTracks.filter((t) => !t.unavailable);\n            if (availableTracks.length > 0) {\n                Player.instance.setQueue(availableTracks, 0);\n                Player.instance.playTrackFromQueue();\n            }\n        };\n    }\n\n    if (shuffleBtn) {\n        shuffleBtn.onclick = () => {\n            const availableTracks = eraTracks.filter((t) => !t.unavailable);\n            if (availableTracks.length > 0) {\n                const shuffled = [...availableTracks].sort(() => Math.random() - 0.5);\n                Player.instance.setQueue(shuffled, 0);\n                Player.instance.playTrackFromQueue();\n            }\n        };\n    }\n\n    if (downloadBtn) {\n        downloadBtn.innerHTML = `<span>Download</span>`;\n        downloadBtn.onclick = () => {\n            showNotification('Project download coming soon! You can download individual tracks from the menu.');\n        };\n    }\n\n    if (likeBtn) likeBtn.style.display = 'none';\n    if (mixBtn) mixBtn.style.display = 'none';\n    if (addToPlaylistBtn) addToPlaylistBtn.style.display = 'none';\n\n    // Render tracks\n    renderTrackerTracks(tracklistContainer, eraTracks);\n\n    // Add click handlers for tracks\n    tracklistContainer.querySelectorAll('.track-item').forEach((item) => {\n        const track = trackDataStore.get(item);\n        if (!track || track.unavailable) return;\n\n        item.onclick = (e) => {\n            if (e.target.closest('.track-menu-btn')) return;\n\n            const availableTracks = eraTracks.filter((t) => !t.unavailable);\n            const trackIndex = availableTracks.findIndex((t) => t.id === track.id);\n            if (trackIndex >= 0 && availableTracks.length > 0) {\n                Player.instance.setQueue(availableTracks, trackIndex);\n                Player.instance.playTrackFromQueue();\n            }\n        };\n    });\n\n    // Show other projects as recommendations\n    const moreAlbumsSection = document.getElementById('album-section-more-albums');\n    const moreAlbumsContainer = document.getElementById('album-detail-more-albums');\n    const moreAlbumsTitle = document.getElementById('album-title-more-albums');\n\n    if (moreAlbumsSection && moreAlbumsContainer) {\n        const otherEras = trackerData.eras.filter((e) => e.name !== projectName);\n        if (otherEras.length > 0) {\n            moreAlbumsContainer.innerHTML = otherEras\n                .map((e) => createProjectCardHTML(e, artist, sheetId, e.tracks ? e.tracks.length : 0))\n                .join('');\n\n            if (moreAlbumsTitle) {\n                moreAlbumsTitle.textContent = `More unreleased from ${artist.name}`;\n            }\n            moreAlbumsSection.style.display = 'block';\n\n            // Add click handlers for recommendation cards\n            moreAlbumsContainer.querySelectorAll('.card').forEach((card) => {\n                const eraName = decodeURIComponent(card.dataset.trackerProjectId);\n                const era = trackerData.eras.find((e) => e.name === eraName);\n                if (!era) return;\n\n                card.onclick = (e) => {\n                    if (e.target.closest('.card-play-btn')) {\n                        e.stopPropagation();\n                        let otherEraTracks = [];\n                        if (era.tracks && era.tracks.length) {\n                            era.tracks.forEach((song) => {\n                                const track = createTrackFromSong(\n                                    song,\n                                    era,\n                                    artist.name,\n                                    otherEraTracks.length,\n                                    sheetId\n                                );\n                                otherEraTracks.push(track);\n                            });\n                        }\n                        const availableTracks = otherEraTracks.filter((t) => !t.unavailable);\n                        if (availableTracks.length > 0) {\n                            Player.instance.setQueue(availableTracks, 0);\n                            Player.instance.playTrackFromQueue();\n                        }\n                    } else if (e.target.closest('.card-menu-btn')) {\n                        e.stopPropagation();\n                    } else {\n                        navigate(`/unreleased/${sheetId}/${encodeURIComponent(era.name)}`);\n                    }\n                };\n            });\n        } else {\n            moreAlbumsSection.style.display = 'none';\n        }\n    }\n\n    // Hide other sections that don't apply\n    const epsSection = document.getElementById('album-section-eps');\n    const similarArtistsSection = document.getElementById('album-section-similar-artists');\n    const similarAlbumsSection = document.getElementById('album-section-similar-albums');\n\n    if (epsSection) epsSection.style.display = 'none';\n    if (similarArtistsSection) similarArtistsSection.style.display = 'none';\n    if (similarAlbumsSection) similarAlbumsSection.style.display = 'none';\n\n    document.title = `${era.name} - ${artist.name}`;\n}\n\n// Render the unreleased page with all artists\nexport async function renderUnreleasedPage(container) {\n    container.innerHTML = `\n        <h2 class="section-title">Unreleased Music</h2>\n        <p style="color: var(--muted-foreground); margin-bottom: 1.5rem; font-size: 0.9rem;">\n            Unreleased Songs & Info Provided By <a href="https://artistgrid.cx" target="_blank" style="text-decoration: underline;">ArtistGrid</a>. Consider Donating to Them.\n        </p>\n        <div style="margin-bottom: 1.5rem;">\n            <input \n                type="text" \n                id="unreleased-search-input" \n                placeholder="Search artists..." \n                style="width: 100%; max-width: 400px; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid var(--border); background: var(--background); color: var(--foreground); font-size: 0.95rem;"\n            />\n        </div>\n        <div id="unreleased-artists-grid" class="card-grid"></div>\n        <div id="unreleased-no-results" style="display: none; text-align: center; padding: 2rem; color: var(--muted-foreground);">\n            No artists found matching your search.\n        </div>\n    `;\n\n    const gridContainer = document.getElementById('unreleased-artists-grid');\n    const searchInput = document.getElementById('unreleased-search-input');\n    const noResults = document.getElementById('unreleased-no-results');\n\n    // Store all artist cards for filtering\n    let allArtistCards = [];\n\n    if (artistsData.length === 0) {\n        await loadArtistsPopularity();\n        await loadArtistsData();\n    }\n\n    gridContainer.innerHTML = '';\n    allArtistCards = [];\n\n    artistsData.forEach((artist) => {\n        const sheetId = getSheetId(artist.url);\n        if (!sheetId) return;\n\n        if (!artist.name) return;\n\n        const artistCard = document.createElement('div');\n        artistCard.className = 'card';\n        artistCard.style.cursor = 'pointer';\n        artistCard.dataset.artistName = artist.name.toLowerCase();\n\n        artistCard.innerHTML = `\n            <div class="card-image-wrapper">\n                ${artistPictureHTML(artist.name, 'class="card-image" loading="lazy"')}\n            </div>\n            <div class="card-info">\n                <h3 class="card-title">${artist.name}</h3>\n                <p class="card-subtitle">Unreleased Music</p>\n            </div>\n        `;\n\n        artistCard.onclick = () => {\n            navigate(`/unreleased/${sheetId}`);\n        };\n\n        gridContainer.appendChild(artistCard);\n        allArtistCards.push(artistCard);\n    });\n\n    if (artistsData.length === 0) {\n        gridContainer.innerHTML =\n            '<p style="text-align: center; color: var(--muted-foreground);">No unreleased music data available.</p>';\n    }\n\n    // Setup search functionality\n    if (searchInput) {\n        searchInput.addEventListener('input', (e) => {\n            const query = e.target.value.toLowerCase().trim();\n            let visibleCount = 0;\n\n            allArtistCards.forEach((card) => {\n                const artistName = card.dataset.artistName;\n                if (artistName.includes(query)) {\n                    card.style.display = '';\n                    visibleCount++;\n                } else {\n                    card.style.display = 'none';\n                }\n            });\n\n            // Show/hide no results message\n            if (noResults) {\n                noResults.style.display = visibleCount === 0 && query ? 'block' : 'none';\n            }\n        });\n    }\n}\n\n// Render track page for unreleased songs\nexport async function renderTrackerTrackPage(trackId, container, _ui) {\n    // Parse track ID: tracker-{sheetId}-{eraName}-{index}\n    const parts = trackId.split('-');\n    if (parts.length < 4) {\n        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Invalid track ID.</p>';\n        return;\n    }\n\n    // Reconstruct sheetId (might contain hyphens)\n    const sheetId = parts[1];\n    const eraName = decodeURIComponent(parts.slice(2, -1).join('-'));\n    const trackIndex = parseInt(parts[parts.length - 1]);\n\n    if (!artistsData.length) {\n        await loadArtistsData();\n    }\n\n    const artist = artistBySheetId.get(sheetId);\n    if (!artist) {\n        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Artist not found.</p>';\n        return;\n    }\n\n    const trackerData = await fetchTrackerData(sheetId);\n    if (!trackerData || !trackerData.eras) {\n        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Failed to load track data.</p>';\n        return;\n    }\n\n    const era = trackerData.eras.find((e) => e.name === eraName);\n    if (!era || !era.tracks) {\n        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Track not found.</p>';\n        return;\n    }\n\n    // Find the specific track\n    let currentTrack = null;\n    let allTracks = [];\n\n    era.tracks.forEach((song) => {\n        const track = createTrackFromSong(song, era, artist.name, allTracks.length, sheetId);\n        allTracks.push(track);\n        if (allTracks.length - 1 === trackIndex) {\n            currentTrack = track;\n        }\n    });\n\n    if (!currentTrack) {\n        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Track not found.</p>';\n        return;\n    }\n\n    // Show track page using album template\n    const imageEl = document.getElementById('album-detail-image');\n    const titleEl = document.getElementById('album-detail-title');\n    const metaEl = document.getElementById('album-detail-meta');\n    const prodEl = document.getElementById('album-detail-producer');\n    const tracklistContainer = document.getElementById('album-detail-tracklist');\n    const playBtn = document.getElementById('play-album-btn');\n\n    imageEl.src = era.cover_art || 'assets/logo.svg';\n    imageEl.style.backgroundColor = '';\n    imageEl.onerror = function () {\n        this.src = 'assets/logo.svg';\n    };\n\n    titleEl.textContent = currentTrack.title;\n    metaEl.innerHTML = `${escapeHtml(eraSubtitle(era))} • ${formatTime(currentTrack.duration)}`;\n    prodEl.innerHTML = `By <a href="/unreleased/${sheetId}">${artist.name}</a> • From <a href="/unreleased/${sheetId}/${encodeURIComponent(era.name)}">${era.name}</a>`;\n\n    if (playBtn) {\n        playBtn.innerHTML = `${SVG_PLAY(20)}<span>Play Track</span>`;\n        playBtn.onclick = () => {\n            const availableTracks = allTracks.filter((t) => !t.unavailable);\n            const trackPos = availableTracks.findIndex((t) => t.id === currentTrack.id);\n            if (trackPos >= 0 && availableTracks.length > 0) {\n                Player.instance.setQueue(availableTracks, trackPos);\n                Player.instance.playTrackFromQueue();\n            }\n        };\n    }\n\n    // Hide unnecessary buttons\n    const shuffleBtn = document.getElementById('shuffle-album-btn');\n    const downloadBtn = document.getElementById('download-album-btn');\n    const likeBtn = document.getElementById('like-album-btn');\n    const mixBtn = document.getElementById('album-mix-btn');\n    const addToPlaylistBtn = document.getElementById('add-album-to-playlist-btn');\n\n    if (shuffleBtn) shuffleBtn.style.display = 'none';\n    if (downloadBtn) downloadBtn.style.display = 'none';\n    if (likeBtn) likeBtn.style.display = 'none';\n    if (mixBtn) mixBtn.style.display = 'none';\n    if (addToPlaylistBtn) addToPlaylistBtn.style.display = 'none';\n\n    // Render just this track\n    renderTrackerTracks(tracklistContainer, [currentTrack]);\n\n    // Add click handler\n    const trackItem = tracklistContainer.querySelector('.track-item');\n    if (trackItem && !currentTrack.unavailable) {\n        trackItem.onclick = (e) => {\n            if (e.target.closest('.track-menu-btn')) return;\n\n            const availableTracks = allTracks.filter((t) => !t.unavailable);\n            const trackPos = availableTracks.findIndex((t) => t.id === currentTrack.id);\n            if (trackPos >= 0 && availableTracks.length > 0) {\n                Player.instance.setQueue(availableTracks, trackPos);\n                Player.instance.playTrackFromQueue();\n            }\n        };\n    }\n\n    // Show other projects\n    const moreAlbumsSection = document.getElementById('album-section-more-albums');\n    const moreAlbumsContainer = document.getElementById('album-detail-more-albums');\n    const moreAlbumsTitle = document.getElementById('album-title-more-albums');\n\n    if (moreAlbumsSection && moreAlbumsContainer) {\n        const otherEras = trackerData.eras.filter((e) => e.name !== eraName);\n        if (otherEras.length > 0) {\n            moreAlbumsContainer.innerHTML = otherEras\n                .map((e) => createProjectCardHTML(e, artist, sheetId, e.tracks ? e.tracks.length : 0))\n                .join('');\n\n            if (moreAlbumsTitle) moreAlbumsTitle.textContent = `More unreleased from ${artist.name}`;\n            moreAlbumsSection.style.display = 'block';\n        } else {\n            moreAlbumsSection.style.display = 'none';\n        }\n    }\n\n    const epsSection = document.getElementById('album-section-eps');\n    const similarArtistsSection = document.getElementById('album-section-similar-artists');\n    const similarAlbumsSection = document.getElementById('album-section-similar-albums');\n\n    if (epsSection) epsSection.style.display = 'none';\n    if (similarArtistsSection) similarArtistsSection.style.display = 'none';\n    if (similarAlbumsSection) similarAlbumsSection.style.display = 'none';\n\n    document.title = `${currentTrack.title} - ${artist.name}`;\n}\n\nexport async function initTracker() {\n    await Promise.all([loadArtistsPopularity(), loadArtistsData()]);\n}\n\n// Helper function to find a tracker artist by name (for use in normal artist pages)\nexport function findTrackerArtistByName(artistName) {\n    // First try exact match\n    if (!artistName) return null;\n\n    let match = artistsData.find((a) => a.name?.toLowerCase() === artistName.toLowerCase());\n    if (match) return match;\n\n    // Try fuzzy match (remove special chars and spaces)\n    const normalized = artistName.toLowerCase().replace(/[^a-z0-9]/g, '');\n    match = artistsData.find((a) => {\n        if (!a.name) return false;\n        const aNormalized = a.name.toLowerCase().replace(/[^a-z0-9]/g, '');\n        return aNormalized === normalized || aNormalized.includes(normalized) || normalized.includes(aNormalized);\n    });\n\n    return match || null;\n}\n\n// Helper function to get artist's unreleased projects (for use in normal artist pages)\nexport async function getArtistUnreleasedProjects(artistName) {\n    const artist = findTrackerArtistByName(artistName);\n    if (!artist) return null;\n\n    const sheetId = getSheetId(artist.url);\n    if (!sheetId) return null;\n\n    const trackerData = await fetchTrackerData(sheetId);\n    if (!trackerData || !trackerData.eras) return null;\n\n    return {\n        artist,\n        sheetId,\n        eras: trackerData.eras,\n    };\n}\n
+//js/tracker.js
+import { escapeHtml, trackDataStore, formatTime } from './utils.js';
+import { navigate } from './router.js';
+import { SVG_MENU, SVG_PLAY, SVG_HEART } from './icons.js';
+import { Player } from './player.js';
+
+let artistsData = [];
+let artistsPopularity = new Map(); // name -> popularity score
+
+// Map to store artist info keyed by sheetId for quick lookup
+const artistBySheetId = new Map();
+
+// Store all songs for search functionality
+let allSongsCache = new Map(); // sheetId -> {era, songs}
+
+// Normalize artist name for image URL (no spaces, no special chars, all lowercase)
+function normalizeArtistName(name) {
+    return name.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+// Clean song title for scrobbling (remove producer credits)
+function cleanSongTitle(title) {
+    if (!title) return '';
+    // Remove (prod. ...), (produced by ...), [prod. ...], etc.
+    return title
+        .replace(/\s*[([]\s*prod\.?\s+[^)\]]+[)\]]/gi, '')
+        .replace(/\s*[([]\s*produced\s+by\s+[^)\]]+[)\]]/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+async function loadArtistsPopularity() {
+    try {
+        const response = await fetch('https://trends.artistgrid.cx');
+        if (!response.ok) return;
+        const data = await response.json();
+        if (data.results) {
+            data.results.forEach((artist, index) => {
+                // Store popularity score based on visitors and position
+                const score = artist.visitors * (1 - index / data.results.length);
+                artistsPopularity.set(artist.name, score);
+            });
+        }
+    } catch (e) {
+        console.log('Could not load popularity data:', e);
+    }
+}
+
+// Parse RFC4180-style CSV (quoted fields, escaped "" quotes, commas/newlines inside quotes)
+function parseCSVRows(text) {
+    const rows = [];
+    let row = [];
+    let field = '';
+    let inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i];
+        if (inQuotes) {
+            if (char === '"') {
+                if (text[i + 1] === '"') {
+                    field += '"';
+                    i++;
+                } else {
+                    inQuotes = false;
+                }
+            } else {
+                field += char;
+            }
+        } else if (char === '"') {
+            inQuotes = true;
+        } else if (char === ',') {
+            row.push(field);
+            field = '';
+        } else if (char === '\n' || char === '\r') {
+            if (char === '\r' && text[i + 1] === '\n') i++;
+            row.push(field);
+            rows.push(row);
+            row = [];
+            field = '';
+        } else {
+            field += char;
+        }
+    }
+    if (field.length > 0 || row.length > 0) {
+        row.push(field);
+        rows.push(row);
+    }
+    return rows;
+}
+
+function parseArtistsCSV(text) {
+    const rows = parseCSVRows(text).filter((r) => r.length > 1 || r[0]);
+    if (rows.length < 2) return [];
+    const headers = rows[0];
+    return rows.slice(1).map((row) => {
+        const obj = {};
+        headers.forEach((header, i) => {
+            obj[header] = row[i] ?? '';
+        });
+        return obj;
+    });
+}
+
+async function loadArtistsData() {
+    try {
+        const response = await fetch('https://artists.artistgrid.cx/artists.csv');
+        if (!response.ok) throw new Error('Network response was not ok');
+        const text = await response.text();
+        artistsData = parseArtistsCSV(text);
+
+        // Sort by popularity if available
+        artistsData.sort((a, b) => {
+            const popA = artistsPopularity.get(a.name) || 0;
+            const popB = artistsPopularity.get(b.name) || 0;
+            return popB - popA;
+        });
+
+        // Build sheetId lookup map
+        artistBySheetId.clear();
+        artistsData.forEach((artist) => {
+            const sheetId = getSheetId(artist.url);
+            if (sheetId) {
+                artistBySheetId.set(sheetId, artist);
+            }
+        });
+    } catch (e) {
+        console.error('Failed to load Artists List:', e);
+    }
+}
+
+// The artists CSV provides the tracker id directly: either a bare Google Sheets
+// id or a tracker domain (yetracker.net, franktracker.net, deftonestracker, ...).
+// Whatever it is, it's used as-is on the tracker API.
+function getSheetId(url) {
+    if (!url) return null;
+    const match = url.match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+    if (match) return match[1];
+    return url.trim() || null;
+}
+
+const TRACKER_API_BASE = 'https://trackerapi.artistgrid.cx/sh/';
+const ASSETS_BASE_URL = 'https://assets.artistgrid.cx';
+
+// Artist images live at assets.artistgrid.cx/{format}/{normalizedname}.{format}
+function artistImageUrl(name, format) {
+    return `${ASSETS_BASE_URL}/${format}/${normalizeArtistName(name)}.${format}`;
+}
+
+function artistPictureHTML(name, imgAttrs = '') {
+    return `
+        <picture style="display: contents;">
+            <source srcset="${artistImageUrl(name, 'jxl')}" type="image/jxl">
+            <source srcset="${artistImageUrl(name, 'webp')}" type="image/webp">
+            <img crossorigin="anonymous" referrerpolicy="no-referrer" src="${artistImageUrl(name, 'jpg')}" alt="${escapeHtml(name)}" ${imgAttrs} onerror="this.src='assets/logo.svg'">
+        </picture>
+    `;
+}
+
+// Wrap an existing <img> element in a <picture> with jxl/webp sources
+function setArtistHeaderImage(imgEl, name) {
+    let picture = imgEl.parentElement;
+    if (!picture || picture.tagName !== 'PICTURE') {
+        picture = document.createElement('picture');
+        picture.style.display = 'contents';
+        imgEl.replaceWith(picture);
+        picture.appendChild(imgEl);
+    }
+    picture.querySelectorAll('source').forEach((s) => s.remove());
+    const jxlSource = document.createElement('source');
+    jxlSource.srcset = artistImageUrl(name, 'jxl');
+    jxlSource.type = 'image/jxl';
+    const webpSource = document.createElement('source');
+    webpSource.srcset = artistImageUrl(name, 'webp');
+    webpSource.type = 'image/webp';
+    picture.insertBefore(webpSource, imgEl);
+    picture.insertBefore(jxlSource, webpSource);
+    imgEl.onerror = function () {
+        picture.querySelectorAll('source').forEach((s) => s.remove());
+        this.onerror = null;
+        this.src = 'assets/logo.svg';
+    };
+    imgEl.src = artistImageUrl(name, 'jpg');
+}
+
+// Short label for a project card/header (the full `timeline` field is a long historical blurb)
+function eraSubtitle(era) {
+    return (era.aka && era.aka[0]) || 'Unreleased';
+}
+
+async function fetchTrackerData(sheetId) {
+    try {
+        const response = await fetch(`${TRACKER_API_BASE}${sheetId}/`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await response.json();
+    } catch (e) {
+        console.error('Failed to fetch tracker data', e);
+        return null;
+    }
+}
+
+function parseDuration(durationStr) {
+    if (!durationStr || durationStr === 'N/A') return 0;
+    const parts = durationStr.replace(/[^0-9:]/g, '').split(':');
+    if (parts.length === 2) {
+        return (parseInt(parts[0]) || 0) * 60 + (parseInt(parts[1]) || 0);
+    }
+    return 0;
+}
+
+function getDirectUrl(rawUrl) {
+    if (!rawUrl) return null;
+
+    // Only return URLs that are known to be direct audio links
+    if (rawUrl.includes('pillows.su/f/')) {
+        const match = rawUrl.match(/pillows\.su\/f\/([a-f0-9]+)/);
+        if (match) return `https://api.pillows.su/api/download/${match[1]}`;
+    } else if (rawUrl.includes('music.froste.lol/song/')) {
+        const match = rawUrl.match(/music\.froste\.lol\/song\/([a-f0-9]+)/);
+        if (match) return `https://music.froste.lol/song/${match[1]}/download`;
+    }
+
+    // For other URLs, check if they look like direct audio files
+    const audioExtensions = ['.mp3', '.m4a', '.flac', '.wav', '.ogg', '.aac'];
+    const hasAudioExt = audioExtensions.some((ext) => rawUrl.toLowerCase().includes(ext));
+
+    if (hasAudioExt) {
+        return rawUrl;
+    }
+
+    // Return null for URLs that don't look like direct audio files
+    return null;
+}
+
+// Convert tracker song to standard track format
+export function createTrackFromSong(song, era, artistName, index, sheetId = '') {
+    const isValidUrl = (u) => u && typeof u === 'string' && u.trim().length > 0;
+    const rawUrl = song.links && song.links.length ? song.links.find(isValidUrl) : null;
+    const directUrl = getDirectUrl(rawUrl);
+    const duration = parseDuration(song.track_length);
+    const title = (song.name && (song.name.title || song.name.raw)) || 'Unknown';
+    const cleanTitle = cleanSongTitle(title);
+    const category = song.quality && song.quality !== 'Not Available' ? song.quality : song.available_length || '';
+
+    return {
+        id: `tracker-${sheetId}-${era.name}-${index}`,
+        title: title,
+        cleanTitle: cleanTitle,
+        artist: {
+            name: artistName,
+        },
+        artists: [
+            {
+                name: artistName,
+            },
+        ],
+        album: {
+            title: era.name,
+            cover: era.cover_art,
+        },
+        duration: duration,
+        trackNumber: index + 1,
+        isTracker: true,
+        audioUrl: directUrl,
+        remoteUrl: directUrl,
+        explicit: false,
+        unavailable: !directUrl,
+        // Additional tracker-specific data for context menu
+        trackerInfo: {
+            sheetId: sheetId,
+            timeline: eraSubtitle(era),
+            description: song.notes || '',
+            sourceUrl: rawUrl,
+            category: category,
+        },
+    };
+}
+
+// Create track item HTML for tracker songs - EXACTLY like normal tracks
+function createTrackerTrackItemHTML(track, index) {
+    const isUnavailable = track.unavailable;
+    const trackNumberHTML = `<div class="track-number">${index + 1}</div>`;
+
+    const actionsHTML = isUnavailable
+        ? ''
+        : `
+        <button class="track-menu-btn" type="button" title="More options">
+            ${SVG_MENU(20)}
+        </button>
+    `;
+
+    return `
+        <div class="track-item ${isUnavailable ? 'unavailable' : ''}" 
+             data-track-id="${track.id}"
+             ${isUnavailable ? 'title="This track is currently unavailable"' : ''}>
+            ${trackNumberHTML}
+            <div class="track-item-info">
+                <div class="track-item-details">
+                    <div class="title">${escapeHtml(track.title)}</div>
+                    <div class="artist">${escapeHtml(track.artist.name)}</div>
+                </div>
+            </div>
+            <div class="track-item-duration">${isUnavailable ? '--:--' : formatTime(track.duration)}</div>
+            <div class="track-item-actions">
+                ${actionsHTML}
+            </div>
+        </div>
+    `;
+}
+
+// Render tracks for a tracker era - EXACTLY like normal album track list
+function renderTrackerTracks(container, tracks) {
+    const fragment = document.createDocumentFragment();
+    const tempDiv = document.createElement('div');
+
+    // Add header like normal albums
+    tempDiv.innerHTML = `
+        <div class="track-list-header">
+            <span style="width: 40px; text-align: center;">#</span>
+            <span>Title</span>
+            <span class="duration-header">Duration</span>
+            <span style="display: flex; justify-content: flex-end; opacity: 0.8;">Menu</span>
+        </div>
+    `;
+
+    // Add tracks
+    const tracksHTML = tracks.map((track, i) => createTrackerTrackItemHTML(track, i)).join('');
+
+    tempDiv.insertAdjacentHTML('beforeend', tracksHTML);
+
+    // Bind data to elements
+    Array.from(tempDiv.children).forEach((element, index) => {
+        if (index === 0) return; // Skip header
+        const track = tracks[index - 1];
+        if (element && track) {
+            trackDataStore.set(element, track);
+        }
+    });
+
+    while (tempDiv.firstChild) {
+        fragment.appendChild(tempDiv.firstChild);
+    }
+
+    container.innerHTML = '';
+    container.appendChild(fragment);
+}
+
+// Create project card HTML - EXACTLY like album cards
+export function createProjectCardHTML(era, _artist, sheetId, trackCount) {
+    const playBtnHTML = `
+        <button class="play-btn card-play-btn" data-action="play-card" data-type="tracker-project" data-id="${encodeURIComponent(era.name)}" title="Play">
+            ${SVG_PLAY(20)}
+        </button>
+        <button class="card-menu-btn" data-action="card-menu" data-type="tracker-project" data-id="${encodeURIComponent(era.name)}" title="Menu">
+            ${SVG_MENU(20)}
+        </button>
+    `;
+
+    return `
+        <div class="card" data-tracker-project-id="${encodeURIComponent(era.name)}" data-sheet-id="${sheetId}" style="cursor: pointer;">
+            <div class="card-image-wrapper">
+                <img crossorigin="anonymous" referrerpolicy="no-referrer" src="${era.cover_art || 'assets/logo.svg'}"
+                     alt="${escapeHtml(era.name)}"
+                     class="card-image"
+                     loading="lazy"
+                     onerror="this.src='assets/logo.svg'">
+                <button class="like-btn card-like-btn" data-action="toggle-like" data-type="tracker-project" title="Add to Liked">
+                    ${SVG_HEART(20)}
+                </button>
+                ${playBtnHTML}
+            </div>
+            <div class="card-info">
+                <h3 class="card-title">${escapeHtml(era.name)}</h3>
+                <p class="card-subtitle">${escapeHtml(eraSubtitle(era))} • ${trackCount} tracks</p>
+            </div>
+        </div>
+    `;
+}
+
+// Render tracker artist page (grid of projects)
+export async function renderTrackerArtistPage(sheetId, container) {
+    if (!artistsData.length) {
+        await loadArtistsData();
+    }
+
+    // Find artist by sheetId
+    const artist = artistBySheetId.get(sheetId);
+    if (!artist) {
+        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Artist not found.</p>';
+        return;
+    }
+
+    // Fetch tracker data
+    const trackerData = await fetchTrackerData(sheetId);
+    if (!trackerData || !trackerData.eras) {
+        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Failed to load tracker data.</p>';
+        return;
+    }
+
+    // Cache songs for search
+    allSongsCache.set(sheetId, { artist, eras: trackerData.eras });
+
+    const eras = trackerData.eras;
+
+    // Set up header
+    const imageEl = document.getElementById('tracker-artist-detail-image');
+    const nameEl = document.getElementById('tracker-artist-detail-name');
+    const metaEl = document.getElementById('tracker-artist-detail-meta');
+    const projectsContainer = document.getElementById('tracker-artist-projects-container');
+    const playBtn = document.getElementById('play-tracker-artist-btn');
+    const downloadBtn = document.getElementById('download-tracker-artist-btn');
+
+    setArtistHeaderImage(imageEl, artist.name);
+    nameEl.textContent = artist.name;
+    metaEl.innerHTML = `<span>${eras.length} unreleased projects</span>`;
+
+    // Set up shuffle play button
+    if (playBtn) {
+        playBtn.onclick = async () => {
+            let allTracks = [];
+            eras.forEach((era) => {
+                if (era.tracks && era.tracks.length) {
+                    era.tracks.forEach((song) => {
+                        const track = createTrackFromSong(song, era, artist.name, allTracks.length, sheetId);
+                        allTracks.push(track);
+                    });
+                }
+            });
+
+            const availableTracks = allTracks.filter((t) => !t.unavailable);
+            if (availableTracks.length > 0) {
+                const shuffled = [...availableTracks].sort(() => Math.random() - 0.5);
+                Player.instance.setQueue(shuffled, 0);
+                Player.instance.playTrackFromQueue();
+            }
+        };
+    }
+
+    // Set up download button
+    if (downloadBtn) {
+        downloadBtn.onclick = () => {
+            alert('Bulk download coming soon! You can download individual tracks from the project pages.');
+        };
+    }
+
+    // Add search bar (only if not already present)
+    let searchContainer = document.getElementById('unreleased-search-container');
+    if (!searchContainer) {
+        searchContainer = document.createElement('div');
+        searchContainer.id = 'unreleased-search-container';
+        searchContainer.style.cssText = 'margin: 1rem 0; padding: 0 1rem;';
+        searchContainer.innerHTML = `
+            <input type="text" 
+                   id="unreleased-search-input" 
+                   placeholder="Search all unreleased songs..." 
+                   style="width: 100%; 
+                          padding: 0.75rem 1rem; 
+                          border-radius: var(--radius); 
+                          border: 1px solid var(--border); 
+                          background: var(--background); 
+                          color: var(--foreground);
+                          font-size: 1rem;
+                          outline: none;
+                          transition: border-color 0.2s;"
+                   onfocus="this.style.borderColor='var(--primary)'" 
+                   onblur="this.style.borderColor='var(--border)'">
+        `;
+        projectsContainer.parentNode.insertBefore(searchContainer, projectsContainer);
+    }
+
+    // Render projects as cards
+    projectsContainer.innerHTML = '';
+    projectsContainer.className = 'card-grid';
+
+    eras.forEach((era) => {
+        const trackCount = era.tracks ? era.tracks.length : 0;
+
+        if (trackCount === 0) return;
+
+        const cardHTML = createProjectCardHTML(era, artist, sheetId, trackCount);
+        projectsContainer.insertAdjacentHTML('beforeend', cardHTML);
+
+        const card = projectsContainer.lastElementChild;
+        card._eraData = era;
+        card._artistName = artist.name;
+        card._sheetId = sheetId;
+
+        card.onclick = (e) => {
+            if (e.target.closest('.card-play-btn')) {
+                e.stopPropagation();
+                let eraTracks = [];
+                if (era.tracks && era.tracks.length) {
+                    era.tracks.forEach((song) => {
+                        const track = createTrackFromSong(song, era, artist.name, eraTracks.length, sheetId);
+                        eraTracks.push(track);
+                    });
+                }
+                const availableTracks = eraTracks.filter((t) => !t.unavailable);
+                if (availableTracks.length > 0) {
+                    Player.instance.setQueue(availableTracks, 0);
+                    Player.instance.playTrackFromQueue();
+                }
+            } else if (e.target.closest('.card-menu-btn')) {
+                e.stopPropagation();
+            } else {
+                navigate(`/unreleased/${sheetId}/${encodeURIComponent(era.name)}`);
+            }
+        };
+    });
+
+    // Add search functionality
+    const searchInput = document.getElementById('unreleased-search-input');
+    searchInput.addEventListener('input', (e) => {
+        const query = e.target.value.toLowerCase().trim();
+        if (!query) {
+            // Reset view
+            projectsContainer.style.display = '';
+            document.getElementById('unreleased-search-results')?.remove();
+            return;
+        }
+
+        // Search through all songs
+        let matches = [];
+        eras.forEach((era) => {
+            if (era.tracks && era.tracks.length) {
+                era.tracks.forEach((song, index) => {
+                    const title = song.name && (song.name.title || song.name.raw);
+                    if (title?.toLowerCase().includes(query)) {
+                        matches.push({ song, era, index });
+                    }
+                });
+            }
+        });
+
+        // Show results
+        projectsContainer.style.display = 'none';
+        let resultsContainer = document.getElementById('unreleased-search-results');
+        if (!resultsContainer) {
+            resultsContainer = document.createElement('div');
+            resultsContainer.id = 'unreleased-search-results';
+            projectsContainer.parentNode.insertBefore(resultsContainer, projectsContainer.nextSibling);
+        }
+
+        if (matches.length === 0) {
+            resultsContainer.innerHTML =
+                '<p style="text-align: center; padding: 2rem; color: var(--muted-foreground);">No songs found.</p>';
+        } else {
+            resultsContainer.innerHTML = `
+                <h3 style="padding: 0 1rem; margin-bottom: 1rem;">Search Results (${matches.length} songs)</h3>
+                <div class="track-list" id="unreleased-search-tracklist"></div>
+            `;
+
+            const tracklist = document.getElementById('unreleased-search-tracklist');
+            const searchTracks = matches.map((m, i) => createTrackFromSong(m.song, m.era, artist.name, i, sheetId));
+            renderTrackerTracks(tracklist, searchTracks);
+
+            // Add click handlers
+            tracklist.querySelectorAll('.track-item').forEach((item) => {
+                const track = trackDataStore.get(item);
+                if (!track || track.unavailable) return;
+
+                item.onclick = (e) => {
+                    if (e.target.closest('.track-menu-btn')) return;
+
+                    const availableTracks = searchTracks.filter((t) => !t.unavailable);
+                    const trackIndex = availableTracks.findIndex((t) => t.id === track.id);
+                    if (trackIndex >= 0 && availableTracks.length > 0) {
+                        Player.instance.setQueue(availableTracks, trackIndex);
+                        Player.instance.playTrackFromQueue();
+                    }
+                };
+            });
+        }
+    });
+
+    document.title = `${artist.name} - Unreleased`;
+}
+
+// Render individual tracker project page
+export async function renderTrackerProjectPage(sheetId, projectName, container, _ui) {
+    if (!artistsData.length) {
+        await loadArtistsData();
+    }
+
+    const artist = artistBySheetId.get(sheetId);
+    if (!artist) {
+        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Project not found.</p>';
+        return;
+    }
+
+    const trackerData = await fetchTrackerData(sheetId);
+    if (!trackerData || !trackerData.eras) {
+        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Failed to load project data.</p>';
+        return;
+    }
+
+    const era = trackerData.eras.find((e) => e.name === projectName);
+    if (!era) {
+        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Project not found.</p>';
+        return;
+    }
+
+    // Collect all tracks for this era
+    let eraTracks = [];
+    if (era.tracks && era.tracks.length) {
+        era.tracks.forEach((song) => {
+            const track = createTrackFromSong(song, era, artist.name, eraTracks.length, sheetId);
+            eraTracks.push(track);
+        });
+    }
+
+    const availableCount = eraTracks.filter((t) => !t.unavailable).length;
+
+    // Use the album page template structure
+    const imageEl = document.getElementById('album-detail-image');
+    const titleEl = document.getElementById('album-detail-title');
+    const metaEl = document.getElementById('album-detail-meta');
+    const prodEl = document.getElementById('album-detail-producer');
+    const tracklistContainer = document.getElementById('album-detail-tracklist');
+    const playBtn = document.getElementById('play-album-btn');
+    const shuffleBtn = document.getElementById('shuffle-album-btn');
+    const downloadBtn = document.getElementById('download-album-btn');
+    const likeBtn = document.getElementById('like-album-btn');
+    const mixBtn = document.getElementById('album-mix-btn');
+    const addToPlaylistBtn = document.getElementById('add-album-to-playlist-btn');
+
+    // Set album page content
+    imageEl.src = era.cover_art || 'assets/logo.svg';
+    imageEl.style.backgroundColor = '';
+    imageEl.onerror = function () {
+        this.src = 'assets/logo.svg';
+    };
+
+    titleEl.textContent = era.name;
+    metaEl.innerHTML = `${escapeHtml(eraSubtitle(era))} • ${eraTracks.length} tracks • ${availableCount} available`;
+    prodEl.innerHTML = `By <a href="/unreleased/${sheetId}">${artist.name}</a>`;
+
+    // Setup buttons
+    if (playBtn) {
+        playBtn.innerHTML = `${SVG_PLAY(20)}<span>Play Project</span>`;
+        playBtn.onclick = () => {
+            const availableTracks = eraTracks.filter((t) => !t.unavailable);
+            if (availableTracks.length > 0) {
+                Player.instance.setQueue(availableTracks, 0);
+                Player.instance.playTrackFromQueue();
+            }
+        };
+    }
+
+    if (shuffleBtn) {
+        shuffleBtn.onclick = () => {
+            const availableTracks = eraTracks.filter((t) => !t.unavailable);
+            if (availableTracks.length > 0) {
+                const shuffled = [...availableTracks].sort(() => Math.random() - 0.5);
+                Player.instance.setQueue(shuffled, 0);
+                Player.instance.playTrackFromQueue();
+            }
+        };
+    }
+
+    if (downloadBtn) {
+        downloadBtn.innerHTML = `<span>Download</span>`;
+        downloadBtn.onclick = () => {
+            alert('Project download coming soon! You can download individual tracks from the menu.');
+        };
+    }
+
+    if (likeBtn) likeBtn.style.display = 'none';
+    if (mixBtn) mixBtn.style.display = 'none';
+    if (addToPlaylistBtn) addToPlaylistBtn.style.display = 'none';
+
+    // Render tracks
+    renderTrackerTracks(tracklistContainer, eraTracks);
+
+    // Add click handlers for tracks
+    tracklistContainer.querySelectorAll('.track-item').forEach((item) => {
+        const track = trackDataStore.get(item);
+        if (!track || track.unavailable) return;
+
+        item.onclick = (e) => {
+            if (e.target.closest('.track-menu-btn')) return;
+
+            const availableTracks = eraTracks.filter((t) => !t.unavailable);
+            const trackIndex = availableTracks.findIndex((t) => t.id === track.id);
+            if (trackIndex >= 0 && availableTracks.length > 0) {
+                Player.instance.setQueue(availableTracks, trackIndex);
+                Player.instance.playTrackFromQueue();
+            }
+        };
+    });
+
+    // Show other projects as recommendations
+    const moreAlbumsSection = document.getElementById('album-section-more-albums');
+    const moreAlbumsContainer = document.getElementById('album-detail-more-albums');
+    const moreAlbumsTitle = document.getElementById('album-title-more-albums');
+
+    if (moreAlbumsSection && moreAlbumsContainer) {
+        const otherEras = trackerData.eras.filter((e) => e.name !== projectName);
+        if (otherEras.length > 0) {
+            moreAlbumsContainer.innerHTML = otherEras
+                .map((e) => createProjectCardHTML(e, artist, sheetId, e.tracks ? e.tracks.length : 0))
+                .join('');
+
+            if (moreAlbumsTitle) {
+                moreAlbumsTitle.textContent = `More unreleased from ${artist.name}`;
+            }
+            moreAlbumsSection.style.display = 'block';
+
+            // Add click handlers for recommendation cards
+            moreAlbumsContainer.querySelectorAll('.card').forEach((card) => {
+                const eraName = decodeURIComponent(card.dataset.trackerProjectId);
+                const era = trackerData.eras.find((e) => e.name === eraName);
+                if (!era) return;
+
+                card.onclick = (e) => {
+                    if (e.target.closest('.card-play-btn')) {
+                        e.stopPropagation();
+                        let otherEraTracks = [];
+                        if (era.tracks && era.tracks.length) {
+                            era.tracks.forEach((song) => {
+                                const track = createTrackFromSong(
+                                    song,
+                                    era,
+                                    artist.name,
+                                    otherEraTracks.length,
+                                    sheetId
+                                );
+                                otherEraTracks.push(track);
+                            });
+                        }
+                        const availableTracks = otherEraTracks.filter((t) => !t.unavailable);
+                        if (availableTracks.length > 0) {
+                            Player.instance.setQueue(availableTracks, 0);
+                            Player.instance.playTrackFromQueue();
+                        }
+                    } else if (e.target.closest('.card-menu-btn')) {
+                        e.stopPropagation();
+                    } else {
+                        navigate(`/unreleased/${sheetId}/${encodeURIComponent(era.name)}`);
+                    }
+                };
+            });
+        } else {
+            moreAlbumsSection.style.display = 'none';
+        }
+    }
+
+    // Hide other sections that don't apply
+    const epsSection = document.getElementById('album-section-eps');
+    const similarArtistsSection = document.getElementById('album-section-similar-artists');
+    const similarAlbumsSection = document.getElementById('album-section-similar-albums');
+
+    if (epsSection) epsSection.style.display = 'none';
+    if (similarArtistsSection) similarArtistsSection.style.display = 'none';
+    if (similarAlbumsSection) similarAlbumsSection.style.display = 'none';
+
+    document.title = `${era.name} - ${artist.name}`;
+}
+
+// Render the unreleased page with all artists
+export async function renderUnreleasedPage(container) {
+    container.innerHTML = `
+        <h2 class="section-title">Unreleased Music</h2>
+        <p style="color: var(--muted-foreground); margin-bottom: 1.5rem; font-size: 0.9rem;">
+            Unreleased Songs & Info Provided By <a href="https://artistgrid.cx" target="_blank" style="text-decoration: underline;">ArtistGrid</a>. Consider Donating to Them.
+        </p>
+        <div style="margin-bottom: 1.5rem;">
+            <input 
+                type="text" 
+                id="unreleased-search-input" 
+                placeholder="Search artists..." 
+                style="width: 100%; max-width: 400px; padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid var(--border); background: var(--background); color: var(--foreground); font-size: 0.95rem;"
+            />
+        </div>
+        <div id="unreleased-artists-grid" class="card-grid"></div>
+        <div id="unreleased-no-results" style="display: none; text-align: center; padding: 2rem; color: var(--muted-foreground);">
+            No artists found matching your search.
+        </div>
+    `;
+
+    const gridContainer = document.getElementById('unreleased-artists-grid');
+    const searchInput = document.getElementById('unreleased-search-input');
+    const noResults = document.getElementById('unreleased-no-results');
+
+    // Store all artist cards for filtering
+    let allArtistCards = [];
+
+    if (artistsData.length === 0) {
+        await loadArtistsPopularity();
+        await loadArtistsData();
+    }
+
+    gridContainer.innerHTML = '';
+    allArtistCards = [];
+
+    artistsData.forEach((artist) => {
+        const sheetId = getSheetId(artist.url);
+        if (!sheetId) return;
+
+        if (!artist.name) return;
+
+        const artistCard = document.createElement('div');
+        artistCard.className = 'card';
+        artistCard.style.cursor = 'pointer';
+        artistCard.dataset.artistName = artist.name.toLowerCase();
+
+        artistCard.innerHTML = `
+            <div class="card-image-wrapper">
+                ${artistPictureHTML(artist.name, 'class="card-image" loading="lazy"')}
+            </div>
+            <div class="card-info">
+                <h3 class="card-title">${artist.name}</h3>
+                <p class="card-subtitle">Unreleased Music</p>
+            </div>
+        `;
+
+        artistCard.onclick = () => {
+            navigate(`/unreleased/${sheetId}`);
+        };
+
+        gridContainer.appendChild(artistCard);
+        allArtistCards.push(artistCard);
+    });
+
+    if (artistsData.length === 0) {
+        gridContainer.innerHTML =
+            '<p style="text-align: center; color: var(--muted-foreground);">No unreleased music data available.</p>';
+    }
+
+    // Setup search functionality
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase().trim();
+            let visibleCount = 0;
+
+            allArtistCards.forEach((card) => {
+                const artistName = card.dataset.artistName;
+                if (artistName.includes(query)) {
+                    card.style.display = '';
+                    visibleCount++;
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+
+            // Show/hide no results message
+            if (noResults) {
+                noResults.style.display = visibleCount === 0 && query ? 'block' : 'none';
+            }
+        });
+    }
+}
+
+// Render track page for unreleased songs
+export async function renderTrackerTrackPage(trackId, container, _ui) {
+    // Parse track ID: tracker-{sheetId}-{eraName}-{index}
+    const parts = trackId.split('-');
+    if (parts.length < 4) {
+        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Invalid track ID.</p>';
+        return;
+    }
+
+    // Reconstruct sheetId (might contain hyphens)
+    const sheetId = parts[1];
+    const eraName = decodeURIComponent(parts.slice(2, -1).join('-'));
+    const trackIndex = parseInt(parts[parts.length - 1]);
+
+    if (!artistsData.length) {
+        await loadArtistsData();
+    }
+
+    const artist = artistBySheetId.get(sheetId);
+    if (!artist) {
+        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Artist not found.</p>';
+        return;
+    }
+
+    const trackerData = await fetchTrackerData(sheetId);
+    if (!trackerData || !trackerData.eras) {
+        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Failed to load track data.</p>';
+        return;
+    }
+
+    const era = trackerData.eras.find((e) => e.name === eraName);
+    if (!era || !era.tracks) {
+        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Track not found.</p>';
+        return;
+    }
+
+    // Find the specific track
+    let currentTrack = null;
+    let allTracks = [];
+
+    era.tracks.forEach((song) => {
+        const track = createTrackFromSong(song, era, artist.name, allTracks.length, sheetId);
+        allTracks.push(track);
+        if (allTracks.length - 1 === trackIndex) {
+            currentTrack = track;
+        }
+    });
+
+    if (!currentTrack) {
+        container.innerHTML = '<p style="text-align: center; padding: 2rem;">Track not found.</p>';
+        return;
+    }
+
+    // Show track page using album template
+    const imageEl = document.getElementById('album-detail-image');
+    const titleEl = document.getElementById('album-detail-title');
+    const metaEl = document.getElementById('album-detail-meta');
+    const prodEl = document.getElementById('album-detail-producer');
+    const tracklistContainer = document.getElementById('album-detail-tracklist');
+    const playBtn = document.getElementById('play-album-btn');
+
+    imageEl.src = era.cover_art || 'assets/logo.svg';
+    imageEl.style.backgroundColor = '';
+    imageEl.onerror = function () {
+        this.src = 'assets/logo.svg';
+    };
+
+    titleEl.textContent = currentTrack.title;
+    metaEl.innerHTML = `${escapeHtml(eraSubtitle(era))} • ${formatTime(currentTrack.duration)}`;
+    prodEl.innerHTML = `By <a href="/unreleased/${sheetId}">${artist.name}</a> • From <a href="/unreleased/${sheetId}/${encodeURIComponent(era.name)}">${era.name}</a>`;
+
+    if (playBtn) {
+        playBtn.innerHTML = `${SVG_PLAY(20)}<span>Play Track</span>`;
+        playBtn.onclick = () => {
+            const availableTracks = allTracks.filter((t) => !t.unavailable);
+            const trackPos = availableTracks.findIndex((t) => t.id === currentTrack.id);
+            if (trackPos >= 0 && availableTracks.length > 0) {
+                Player.instance.setQueue(availableTracks, trackPos);
+                Player.instance.playTrackFromQueue();
+            }
+        };
+    }
+
+    // Hide unnecessary buttons
+    const shuffleBtn = document.getElementById('shuffle-album-btn');
+    const downloadBtn = document.getElementById('download-album-btn');
+    const likeBtn = document.getElementById('like-album-btn');
+    const mixBtn = document.getElementById('album-mix-btn');
+    const addToPlaylistBtn = document.getElementById('add-album-to-playlist-btn');
+
+    if (shuffleBtn) shuffleBtn.style.display = 'none';
+    if (downloadBtn) downloadBtn.style.display = 'none';
+    if (likeBtn) likeBtn.style.display = 'none';
+    if (mixBtn) mixBtn.style.display = 'none';
+    if (addToPlaylistBtn) addToPlaylistBtn.style.display = 'none';
+
+    // Render just this track
+    renderTrackerTracks(tracklistContainer, [currentTrack]);
+
+    // Add click handler
+    const trackItem = tracklistContainer.querySelector('.track-item');
+    if (trackItem && !currentTrack.unavailable) {
+        trackItem.onclick = (e) => {
+            if (e.target.closest('.track-menu-btn')) return;
+
+            const availableTracks = allTracks.filter((t) => !t.unavailable);
+            const trackPos = availableTracks.findIndex((t) => t.id === currentTrack.id);
+            if (trackPos >= 0 && availableTracks.length > 0) {
+                Player.instance.setQueue(availableTracks, trackPos);
+                Player.instance.playTrackFromQueue();
+            }
+        };
+    }
+
+    // Show other projects
+    const moreAlbumsSection = document.getElementById('album-section-more-albums');
+    const moreAlbumsContainer = document.getElementById('album-detail-more-albums');
+    const moreAlbumsTitle = document.getElementById('album-title-more-albums');
+
+    if (moreAlbumsSection && moreAlbumsContainer) {
+        const otherEras = trackerData.eras.filter((e) => e.name !== eraName);
+        if (otherEras.length > 0) {
+            moreAlbumsContainer.innerHTML = otherEras
+                .map((e) => createProjectCardHTML(e, artist, sheetId, e.tracks ? e.tracks.length : 0))
+                .join('');
+
+            if (moreAlbumsTitle) moreAlbumsTitle.textContent = `More unreleased from ${artist.name}`;
+            moreAlbumsSection.style.display = 'block';
+        } else {
+            moreAlbumsSection.style.display = 'none';
+        }
+    }
+
+    const epsSection = document.getElementById('album-section-eps');
+    const similarArtistsSection = document.getElementById('album-section-similar-artists');
+    const similarAlbumsSection = document.getElementById('album-section-similar-albums');
+
+    if (epsSection) epsSection.style.display = 'none';
+    if (similarArtistsSection) similarArtistsSection.style.display = 'none';
+    if (similarAlbumsSection) similarAlbumsSection.style.display = 'none';
+
+    document.title = `${currentTrack.title} - ${artist.name}`;
+}
+
+export async function initTracker() {
+    await Promise.all([loadArtistsPopularity(), loadArtistsData()]);
+}
+
+// Helper function to find a tracker artist by name (for use in normal artist pages)
+export function findTrackerArtistByName(artistName) {
+    // First try exact match
+    if (!artistName) return null;
+
+    let match = artistsData.find((a) => a.name?.toLowerCase() === artistName.toLowerCase());
+    if (match) return match;
+
+    // Try fuzzy match (remove special chars and spaces)
+    const normalized = artistName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    match = artistsData.find((a) => {
+        if (!a.name) return false;
+        const aNormalized = a.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return aNormalized === normalized || aNormalized.includes(normalized) || normalized.includes(aNormalized);
+    });
+
+    return match || null;
+}
+
+// Helper function to get artist's unreleased projects (for use in normal artist pages)
+export async function getArtistUnreleasedProjects(artistName) {
+    const artist = findTrackerArtistByName(artistName);
+    if (!artist) return null;
+
+    const sheetId = getSheetId(artist.url);
+    if (!sheetId) return null;
+
+    const trackerData = await fetchTrackerData(sheetId);
+    if (!trackerData || !trackerData.eras) return null;
+
+    return {
+        artist,
+        sheetId,
+        eras: trackerData.eras,
+    };
+}

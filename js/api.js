@@ -1,1 +1,4015 @@
-//js/api.js\nimport {\n    RATE_LIMIT_ERROR_MESSAGE,\n    deriveTrackQuality,\n    delay,\n    isTrackUnavailable,\n    getExtensionFromBlob,\n    getTrackDiscNumber,\n    normalizeQualityToken,\n    getTrackCoverId,\n    getCoverBlob,\n} from './utils.js';\nimport {\n    preferDolbyAtmosSettings,\n    trackDateSettings,\n    devModeSettings,\n    monochromePlaybackSettings,\n    amazonMusicSettings,\n    deezerFallbackSettings,\n} from './storage.js';\nimport { APICache } from './cache.js';\nimport { DashDownloader } from './dash-downloader.ts';\nimport { HlsDownloader } from './hls-downloader.js';\nimport { getProxyUrl, wrapTidalUrl } from './proxy-utils.js';\nimport { loadFfmpeg, FfmpegError, ffmpeg } from './ffmpeg.js';\nimport { triggerDownload, applyAudioPostProcessing } from './download-utils.ts';\nimport { isCustomFormat } from './ffmpegFormats.ts';\nimport { DownloadProgress } from './progressEvents.js';\nimport { resolveDownloadTotalBytes } from './downloadProgressUtils.js';\nimport { readableStreamIterator } from './readableStreamIterator.js';\nimport { HiFiClient, TidalResponse } from './HiFi.ts';\nimport { QobuzClient, QobuzProvider, TidalProvider, FallbackProvider } from './services/index.js';\nimport { isIos, isSafari, isChrome, canUseNativeAmazonCenc, getAmazonDecrypterCodec } from './platform-detection.js';\nimport {\n    TrackAlbum,\n    EnrichedAlbum,\n    EnrichedTrack,\n    ReplayGain,\n    PlaybackInfo,\n    Track,\n    Album,\n    PreparedVideo,\n    PreparedTrack,\n} from './container-classes.js';\n\nexport const DASH_MANIFEST_UNAVAILABLE_CODE = 'DASH_MANIFEST_UNAVAILABLE';\nexport { resolveDownloadTotalBytes };\nlet lastAudioSourceMissingNotifyAt = 0;\nconst AMAZON_RATE_LIMITED_UNTIL_KEY = 'amazon-music-rate-limited-until';\nconst AMAZON_RATE_LIMIT_DURATION_MS = 30 * 60 * 1000;\nconst MONOCHROME_PLAYBACK_SESSION_KEY = 'monochromePlaybackSession';\nconst MONOCHROME_SESSION_EXPIRY_LEEWAY_SECONDS = 15;\nconst MONOCHROME_PLAYBACK_TURNSTILE_SITE_KEY = '0x4AAAAAADgxqF6QVMm0GLHH';\nfunction notifyAudioSourceMissing() {\n    const now = Date.now();\n    if (now - lastAudioSourceMissingNotifyAt < 3000) return;\n    lastAudioSourceMissingNotifyAt = now;\n    import('./downloads.js').then((m) => m.showNotification('Could not find Audio Source')).catch(() => {});\n}\n\nexport class LosslessAPI {\n    constructor(settings) {\n        this.settings = settings;\n        this.cache = new APICache({\n            maxSize: 200,\n            ttl: 1000 * 60 * 30,\n        });\n        this.streamCache = new Map();\n        this.turnstileLoadPromise = null;\n        this.monochromeRateLimitedUntil = 0;\n\n        setInterval(\n            async () => {\n                await this.cache.clearExpired();\n                this.pruneStreamCache();\n            },\n            1000 * 60 * 5\n        );\n    }\n\n    pruneStreamCache() {\n        if (this.streamCache.size > 50) {\n            const entries = Array.from(this.streamCache.entries());\n            const toDelete = entries.slice(0, entries.length - 50);\n            toDelete.forEach(([key]) => this.streamCache.delete(key));\n        }\n    }\n\n    getFallbackProvider(isStreaming = false) {\n        const qobuzUrl = devModeSettings.getQobuzUrl();\n        const qobuzToken = devModeSettings.getQobuzToken();\n        const qobuzUserId = devModeSettings.getQobuzUserId();\n        const tidalUrl = devModeSettings.getUrl();\n\n        if (\n            !this._metadataProvider ||\n            !this._streamingProvider ||\n            this._lastQobuzUrl !== qobuzUrl ||\n            this._lastQobuzToken !== qobuzToken ||\n            this._lastQobuzUserId !== qobuzUserId ||\n            this._lastTidalUrl !== tidalUrl\n        ) {\n            this._lastQobuzUrl = qobuzUrl;\n            this._lastQobuzToken = qobuzToken;\n            this._lastQobuzUserId = qobuzUserId;\n            this._lastTidalUrl = tidalUrl;\n\n            const qobuzProvider = qobuzUrl && qobuzUrl.trim() ? new QobuzProvider(new QobuzClient()) : null;\n            const tidalProvider = new TidalProvider(this);\n\n            const metadataProviders = [tidalProvider];\n            if (qobuzProvider) metadataProviders.push(qobuzProvider);\n\n            const streamingProviders = [];\n            if (qobuzProvider) streamingProviders.push(qobuzProvider);\n            streamingProviders.push(tidalProvider);\n\n            this._metadataProvider = new FallbackProvider(metadataProviders);\n            this._streamingProvider = new FallbackProvider(streamingProviders);\n        }\n        return isStreaming ? this._streamingProvider : this._metadataProvider;\n    usesSingleUsePlaybackUrls() {\n        return monochromePlaybackSettings?.isEnabled() === true;\n    }\n\n    async fetchWithRetry(relativePath, options = {}) {\n        const type = options.type || 'api';\n        const isSearchRequest = relativePath.startsWith('/search/');\n        const getInstances = async (forceRefresh = false) => {\n            if (forceRefresh && this.settings && typeof this.settings.refreshInstances === 'function') {\n                try {\n                    await this.settings.refreshInstances();\n                } catch (refreshError) {\n                    console.warn('Failed to refresh API instances from uptime workers:', refreshError);\n                }\n            }\n\n            let instances = await this.settings.getInstances(type);\n            if (options.userInstancesOnly) {\n                instances = instances.filter((i) => i.isUser);\n                if (instances.length === 0) {\n                    throw new Error(`No user API instances configured for type: ${type}`);\n                }\n            } else if (instances.length === 0) {\n                throw new Error(`No API instances configured for type: ${type}`);\n            }\n\n            if (options.minVersion) {\n                instances = instances.filter((instance) => {\n                    if (!instance.version) return false;\n                    return parseFloat(instance.version) >= parseFloat(options.minVersion);\n                });\n                if (instances.length === 0) {\n                    throw new Error(\n                        `No API instances configured for type: ${type} with minVersion: ${options.minVersion}`\n                    );\n                }\n            }\n\n            if (options.allowedDomains) {\n                instances = instances.filter((instance) => {\n                    const url = typeof instance === 'string' ? instance : instance.url;\n                    return options.allowedDomains.some((domain) => url.includes(domain));\n                });\n                if (instances.length === 0) {\n                    throw new Error(\n                        `No API instances configured for type: ${type} matching allowedDomains: ${options.allowedDomains.join(', ')}`\n                    );\n                }\n            }\n\n            return instances;\n        };\n\n        const tryInstances = async (instances) => {\n            const maxTotalAttempts = instances.length * 2; // Allow some retries across instances\n            let lastError = null;\n            let instanceIndex = Math.floor(Math.random() * instances.length);\n\n            for (let attempt = 1; attempt <= maxTotalAttempts; attempt++) {\n                const instance = instances[instanceIndex % instances.length];\n                const baseUrl = typeof instance === 'string' ? instance : instance.url;\n\n                const isTidal = baseUrl.includes('api.tidal.com') || baseUrl.includes('openapi.tidal.com');\n                const targetUrl = baseUrl.endsWith('/')\n                    ? `${baseUrl}${relativePath.substring(1)}`\n                    : `${baseUrl}${relativePath}`;\n\n                const url = isTidal ? wrapTidalUrl(targetUrl) : targetUrl;\n\n                try {\n                    const response = await fetch(url, { signal: options.signal });\n\n                    if (response.status === 429) {\n                        console.warn(`Rate limit hit on ${baseUrl}. Trying next instance...`);\n                        instanceIndex++;\n                        await delay(500);\n                        continue;\n                    }\n\n                    if (response.ok) {\n                        return response;\n                    }\n\n                    if (response.status === 401) {\n                        const errorData = await response\n                            .clone()\n                            .json()\n                            .catch(() => null);\n                        if (errorData?.subStatus === 11002) {\n                            console.warn(`Auth failed on ${baseUrl}. Trying next instance...`);\n                            instanceIndex++;\n                            continue;\n                        }\n                    }\n\n                    if (response.status >= 500) {\n                        console.warn(`Server error ${response.status} on ${baseUrl}. Trying next instance...`);\n                        instanceIndex++;\n                        continue;\n                    }\n\n                    lastError = new Error(`Request failed with status ${response.status}`);\n                    instanceIndex++;\n                } catch (error) {\n                    if (error.name === 'AbortError') throw error;\n                    lastError = error;\n                    console.warn(`Network error on ${baseUrl}: ${error.message}. Trying next instance...`);\n                    instanceIndex++;\n                    await delay(200);\n                }\n            }\n\n            throw lastError || new Error(`All API instances failed for: ${relativePath}`);\n        };\n\n        if (devModeSettings.isEnabled()) {\n            const devBaseUrl = devModeSettings.getUrl().replace(/\/+$/, '');\n            const url = devBaseUrl + (relativePath.startsWith('/') ? relativePath : '/' + relativePath);\n\n            if (import.meta.env.DEV) {\n                console.log('[dev-mode]', url);\n            }\n\n            const response = await fetch(url, { signal: options.signal });\n            if (!response.ok) {\n                throw new Error(`Dev mode request failed: ${response.status} ${response.statusText}`);\n            }\n            return response;\n        }\n\n        const shouldTryNative = type !== 'streaming';\n\n        if (shouldTryNative) {\n            try {\n                if (import.meta.env.DEV) {\n                    console.log(relativePath);\n                }\n\n                // HiFiClient.query fans out across the native TIDAL endpoints used by the route\n                // implementation, including api.tidal.com and openapi.tidal.com where applicable.\n                return await HiFiClient.instance.query(relativePath);\n            } catch (err) {\n                if (options.directOnly) {\n                    throw err;\n                }\n\n                if (import.meta.env.DEV && isSearchRequest) {\n                    console.warn(\n                        `[search] native TIDAL query failed for ${relativePath}, trying HiFi worker instances`,\n                        err\n                    );\n                } else {\n                    console.warn(\n                        `Native TIDAL query failed for ${relativePath}. Falling back to configured HiFi API instances...`,\n                        err\n                    );\n                }\n            }\n        }\n\n        try {\n            return await tryInstances(await getInstances(false));\n        } catch (error) {\n            if (type === 'streaming' || options.userInstancesOnly) {\n                throw error;\n            }\n        }\n\n        return await tryInstances(await getInstances(true));\n    }\n\n    findSearchSection(source, key, visited) {\n        if (!source || typeof source !== 'object') return;\n\n        if (Array.isArray(source)) {\n            for (const e of source) {\n                const f = this.findSearchSection(e, key, visited);\n                if (f) return f;\n            }\n            return;\n        }\n\n        if (visited.has(source)) return;\n        visited.add(source);\n\n        if ('items' in source && Array.isArray(source.items)) return source;\n\n        if (key in source) {\n            const f = this.findSearchSection(source[key], key, visited);\n            if (f) return f;\n        }\n\n        for (const v of Object.values(source)) {\n            const f = this.findSearchSection(v, key, visited);\n            if (f) return f;\n        }\n    }\n\n    buildSearchResponse(section) {\n        const items = section?.items ?? [];\n        return {\n            items,\n            limit: section?.limit ?? items.length,\n            offset: section?.offset ?? 0,\n            totalNumberOfItems: section?.totalNumberOfItems ?? items.length,\n        };\n    }\n\n    normalizeSearchResponse(data, key) {\n        const section = this.findSearchSection(data, key, new Set());\n        return this.buildSearchResponse(section);\n    }\n\n    prepareTrack(track) {\n        let normalized = { ...track };\n\n        if (track.type && typeof track.type === 'string') {\n            const lowType = track.type.toLowerCase();\n            if (lowType.includes('video')) {\n                normalized.type = 'video';\n            } else if (lowType.includes('track')) {\n                normalized.type = 'track';\n            } else {\n                normalized.type = lowType;\n            }\n        }\n\n        if (!normalized.artist && Array.isArray(normalized.artists) && normalized.artists.length > 0) {\n            normalized.artist = normalized.artists[0];\n        } else if (normalized.artist && !normalized.artists) {\n            normalized.artists = [normalized.artist];\n        }\n\n        if (track.album) {\n            normalized.album = { ...track.album };\n            if (track.album.releaseDate) {\n                normalized.album.releaseDate = track.album.releaseDate;\n            }\n        }\n\n        const derivedQuality = deriveTrackQuality(normalized);\n        if (derivedQuality && normalized.audioQuality !== derivedQuality) {\n            normalized.audioQuality = derivedQuality;\n        }\n\n        normalized.isUnavailable = isTrackUnavailable(normalized);\n\n        return normalized.type == 'video' ? new PreparedVideo(normalized) : new PreparedTrack(normalized);\n    }\n\n    prepareAlbum(album) {\n        if (!album.artist && Array.isArray(album.artists) && album.artists.length > 0) {\n            return { ...album, artist: album.artists[0] };\n        }\n        return album;\n    }\n\n    preparePlaylist(playlist) {\n        return playlist;\n    }\n\n    prepareVideo(video) {\n        let normalized = { ...video, type: 'video' };\n\n        if (!video.artist && Array.isArray(video.artists) && video.artists.length > 0) {\n            normalized.artist = video.artists[0];\n        }\n\n        return normalized;\n    }\n\n    prepareArtist(artist) {\n        if (!artist.type && Array.isArray(artist.artistTypes) && artist.artistTypes.length > 0) {\n            return { ...artist, type: artist.artistTypes[0] };\n        }\n        return artist;\n    }\n\n    async enrichTracksWithAlbumDates(tracks, maxRequests = 20) {\n        if (!trackDateSettings.useAlbumYear()) return tracks;\n\n        const albumIdsToFetch = [];\n        for (const track of tracks) {\n            if (!track.album?.releaseDate && track.album?.id && !albumIdsToFetch.includes(track.album.id)) {\n                albumIdsToFetch.push(track.album.id);\n            }\n        }\n\n        if (albumIdsToFetch.length === 0) return tracks;\n\n        // Limit the number of albums to fetch to prevent spamming\n        const limitedIds = albumIdsToFetch.slice(0, maxRequests);\n        if (albumIdsToFetch.length > maxRequests) {\n            console.warn(`[Enrich] Too many albums to fetch (${albumIdsToFetch.length}). limiting to ${maxRequests}.`);\n        }\n\n        const albumDateMap = new Map();\n\n        // Chunk requests to avoid spamming\n        const chunkSize = 5;\n        for (let i = 0; i < limitedIds.length; i += chunkSize) {\n            const chunk = limitedIds.slice(i, i + chunkSize);\n            const results = await Promise.allSettled(chunk.map((id) => this.getAlbum(id)));\n\n            for (let j = 0; j < results.length; j++) {\n                const result = results[j];\n                const id = chunk[j];\n                if (result.status === 'fulfilled' && result.value.album?.releaseDate) {\n                    albumDateMap.set(id, result.value.album.releaseDate);\n                }\n            }\n        }\n\n        return tracks.map((track) => {\n            if (!track.album?.releaseDate && track.album?.id && albumDateMap.has(track.album.id)) {\n                return { ...track, album: { ...track.album, releaseDate: albumDateMap.get(track.album.id) } };\n            }\n            return track;\n        });\n    }\n\n    async enrichTracksWithAlbumCover(tracks, maxRequests = 20) {\n        if (!Array.isArray(tracks) || tracks.length === 0) return tracks;\n\n        const albumIdsToFetch = [];\n        for (const track of tracks) {\n            if (!track?.album?.cover && track?.album?.id && !albumIdsToFetch.includes(track.album.id)) {\n                albumIdsToFetch.push(track.album.id);\n            }\n        }\n\n        if (albumIdsToFetch.length === 0) return tracks;\n\n        const limitedIds = albumIdsToFetch.slice(0, maxRequests);\n\n        const coverMap = new Map();\n        const chunkSize = 5;\n        for (let i = 0; i < limitedIds.length; i += chunkSize) {\n            const chunk = limitedIds.slice(i, i + chunkSize);\n            const results = await Promise.allSettled(chunk.map((id) => this.getAlbum(id)));\n            for (let j = 0; j < results.length; j++) {\n                const r = results[j];\n                if (r.status === 'fulfilled' && r.value?.album?.cover) {\n                    coverMap.set(chunk[j], r.value.album.cover);\n                }\n            }\n        }\n\n        if (coverMap.size === 0) return tracks;\n\n        return tracks.map((track) => {\n            if (!track?.album?.cover && track?.album?.id && coverMap.has(track.album.id)) {\n                return { ...track, album: { ...track.album, cover: coverMap.get(track.album.id) } };\n            }\n            return track;\n        });\n    }\n\n    async enrichArtistsWithPicture(artists, maxRequests = 10) {\n        if (!Array.isArray(artists) || artists.length === 0) return artists;\n\n        const idsToFetch = [];\n        for (const artist of artists) {\n            if (!artist?.picture && artist?.id && !idsToFetch.includes(artist.id)) {\n                idsToFetch.push(artist.id);\n            }\n        }\n\n        if (idsToFetch.length === 0) return artists;\n\n        const limitedIds = idsToFetch.slice(0, maxRequests);\n\n        const pictureMap = new Map();\n        const chunkSize = 5;\n        for (let i = 0; i < limitedIds.length; i += chunkSize) {\n            const chunk = limitedIds.slice(i, i + chunkSize);\n            const results = await Promise.allSettled(chunk.map((id) => this.getArtist(id, { lightweight: true })));\n            for (let j = 0; j < results.length; j++) {\n                const r = results[j];\n                if (r.status === 'fulfilled' && r.value?.picture) {\n                    pictureMap.set(chunk[j], r.value.picture);\n                }\n            }\n        }\n\n        if (pictureMap.size === 0) return artists;\n\n        return artists.map((artist) => {\n            if (!artist?.picture && artist?.id && pictureMap.has(artist.id)) {\n                return { ...artist, picture: pictureMap.get(artist.id) };\n            }\n            return artist;\n        });\n    }\n\n    parseTrackLookup(data) {\n        const entries = Array.isArray(data) ? data : [data];\n        let track, info, originalTrackUrl;\n\n        for (const entry of entries) {\n            if (!entry || typeof entry !== 'object') continue;\n\n            if (!track && 'duration' in entry) {\n                track = entry;\n                continue;\n            }\n\n            if (!info && 'manifest' in entry) {\n                info = entry;\n                continue;\n            }\n\n            if (!originalTrackUrl && 'OriginalTrackUrl' in entry) {\n                const candidate = entry.OriginalTrackUrl;\n                if (typeof candidate === 'string') {\n                    originalTrackUrl = candidate;\n                }\n            }\n        }\n\n        if (!track || !info) {\n            throw new Error('Malformed track response');\n        }\n\n        return { track, info, originalTrackUrl };\n    }\n\n    extractStreamUrlFromManifest(manifest) {\n        if (!manifest) return null;\n\n        try {\n            let decoded;\n            if (typeof manifest === 'string') {\n                try {\n                    decoded = atob(manifest);\n                } catch {\n                    decoded = manifest;\n                }\n            } else if (typeof manifest === 'object') {\n                if (manifest.urls && Array.isArray(manifest.urls)) {\n                    const priorityKeywords = ['flac', 'lossless', 'hi-res', 'high'];\n                    const sortedUrls = [...manifest.urls].sort((a, b) => {\n                        const aLow = a.toLowerCase();\n                        const bLow = b.toLowerCase();\n                        const aScore = priorityKeywords.findIndex((k) => aLow.includes(k));\n                        const bScore = priorityKeywords.findIndex((k) => bLow.includes(k));\n\n                        const finalAScore = aScore === -1 ? 999 : aScore;\n                        const finalBScore = bScore === -1 ? 999 : bScore;\n\n                        return finalAScore - finalBScore;\n                    });\n                    return sortedUrls[0];\n                }\n                if (manifest.urls?.[0]) return manifest.urls[0];\n                return null;\n            } else {\n                return null;\n            }\n\n            // Check if it's a DASH manifest (XML)\n            if (decoded.includes('<MPD')) {\n                const blob = new Blob([decoded], { type: 'application/dash+xml' });\n                return URL.createObjectURL(blob);\n            }\n\n            try {\n                const parsed = JSON.parse(decoded);\n                if (parsed?.urls && Array.isArray(parsed.urls)) {\n                    const priorityKeywords = ['flac', 'lossless', 'hi-res', 'high'];\n                    const sortedUrls = [...parsed.urls].sort((a, b) => {\n                        const aLow = a.toLowerCase();\n                        const bLow = b.toLowerCase();\n                        const aScore = priorityKeywords.findIndex((k) => aLow.includes(k));\n                        const bScore = priorityKeywords.findIndex((k) => bLow.includes(k));\n                        const finalAScore = aScore === -1 ? 999 : aScore;\n                        const finalBScore = bScore === -1 ? 999 : bScore;\n                        return finalAScore - finalBScore;\n                    });\n                    return sortedUrls[0];\n                }\n                if (parsed?.urls?.[0]) {\n                    return parsed.urls[0];\n                }\n            } catch {\n                const match = decoded.match(/https?:\/\/[\w\-.~:?#[@!$&'()*+,;=%/]+/);\n                return match ? match[0] : null;\n            }\n        } catch (error) {\n            console.error('Failed to decode manifest:', error);\n            return null;\n        }\n    }\n\n    deduplicateAlbums(albums) {\n        const unique = new Map();\n\n        for (const album of albums) {\n            // Key based on title and numberOfTracks (excluding duration and explicit)\n            const key = JSON.stringify([album.title, album.numberOfTracks || 0]);\n\n            if (unique.has(key)) {\n                const existing = unique.get(key);\n\n                // Priority 1: Explicit\n                if (album.explicit && !existing.explicit) {\n                    unique.set(key, album);\n                    continue;\n                }\n                if (!album.explicit && existing.explicit) {\n                    continue;\n                }\n\n                // Priority 2: More Metadata Tags (if explicit status is same)\n                const existingTags = existing.mediaMetadata?.tags?.length || 0;\n                const newTags = album.mediaMetadata?.tags?.length || 0;\n\n                if (newTags > existingTags) {\n                    unique.set(key, album);\n                }\n            } else {\n                unique.set(key, album);\n            }\n        }\n\n        return Array.from(unique.values());\n    }\n\n    async search(query, options = {}) {\n        if (devModeSettings.isEnabled() && !options._fromProvider) {\n            return await this.getFallbackProvider().search(query, options);\n        }\n        const cached = await this.cache.get('search_all', query);\n        if (cached) return cached;\n\n        try {\n            const response = await this.fetchWithRetry(`/search/?q=${encodeURIComponent(query)}`, options);\n            const data = await response.json();\n\n            const extractSection = (key) => this.normalizeSearchResponse(data, key);\n\n            const tracksData = extractSection('tracks');\n            const artistsData = extractSection('artists');\n            const albumsData = extractSection('albums');\n            const playlistsData = extractSection('playlists');\n            const videosData = extractSection('videos');\n\n            const preparedTracks = tracksData.items.map((t) => this.prepareTrack(t));\n            const preparedArtists = artistsData.items.map((a) => this.prepareArtist(a));\n\n            const [enrichedTracks, enrichedArtists] = await Promise.all([\n                this.enrichTracksWithAlbumCover(preparedTracks),\n                options.enrichArtists === false\n                    ? Promise.resolve(preparedArtists)\n                    : this.enrichArtistsWithPicture(preparedArtists),\n            ]);\n\n            const results = {\n                tracks: {\n                    ...tracksData,\n                    items: enrichedTracks,\n                },\n                artists: {\n                    ...artistsData,\n                    items: enrichedArtists,\n                },\n                albums: {\n                    ...albumsData,\n                    items: albumsData.items.map((a) => this.prepareAlbum(a)),\n                },\n                playlists: playlistsData\n                    ? {\n                          ...playlistsData,\n                          items: playlistsData.items.map((p) => this.preparePlaylist(p)),\n                      }\n                    : { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 },\n                videos: {\n                    ...videosData,\n                    items: videosData.items.map((v) => this.prepareTrack(v)),\n                },\n            };\n\n            await this.cache.set('search_all', query, results);\n\n            return results;\n        } catch (error) {\n            if (import.meta.env.DEV) {\n                console.warn('[search] combined search failed, using HiFi scoped fallback', error);\n            }\n\n            // Final fallback: hifi-api-compatible scoped searches (?s, ?a, ?al, ?v, ?p)\n            const [tracks, videos, artists, albums, playlists] = await Promise.all([\n                this.searchTracks(query, options).catch(() => ({ items: [] })),\n                this.searchVideos(query, options).catch(() => ({ items: [] })),\n                this.searchArtists(query, options).catch(() => ({ items: [] })),\n                this.searchAlbums(query, options).catch(() => ({ items: [] })),\n                this.searchPlaylists(query, options).catch(() => ({ items: [] })),\n            ]);\n\n            return {\n                tracks,\n                videos,\n                artists,\n                albums,\n                playlists,\n            };\n        }\n    }\n\n    async searchTracks(query, options = {}) {\n        if (devModeSettings.isEnabled() && !options._fromProvider) {\n            return await this.getFallbackProvider().searchTracks(query, options);\n        }\n        const cached = await this.cache.get('search_tracks', query);\n        if (cached) return cached;\n\n        try {\n            const response = await this.fetchWithRetry(`/search/?s=${encodeURIComponent(query)}`, options);\n            const data = await response.json();\n            const normalized = this.normalizeSearchResponse(data, 'tracks');\n            const preparedTracks = normalized.items.map((t) => this.prepareTrack(t));\n            const dateEnriched = await this.enrichTracksWithAlbumDates(preparedTracks);\n            const enrichedTracks = await this.enrichTracksWithAlbumCover(dateEnriched);\n            const result = {\n                ...normalized,\n                items: enrichedTracks,\n            };\n\n            if (!(response instanceof TidalResponse)) {\n                await this.cache.set('search_tracks', query, result);\n            }\n            return result;\n        } catch (error) {\n            if (error.name === 'AbortError') throw error;\n            console.error('Track search failed:', error);\n            return { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 };\n        }\n    }\n\n    async searchTracksByIsrc(isrc, options = {}) {\n        const normalizedIsrc = String(isrc || '').trim();\n        if (!normalizedIsrc) return { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 };\n\n        const cacheKey = `isrc:${normalizedIsrc}`;\n        const cached = await this.cache.get('search_tracks', cacheKey);\n        if (cached) return cached;\n\n        try {\n            const response = await this.fetchWithRetry(\n                `/search/?i=${encodeURIComponent(normalizedIsrc)}`,\n                options\n            );\n            const data = await response.json();\n            const normalized = this.normalizeSearchResponse(data, 'tracks');\n            const preparedTracks = normalized.items.map((t) => this.prepareTrack(t));\n            const dateEnriched = await this.enrichTracksWithAlbumDates(preparedTracks);\n            const enrichedTracks = await this.enrichTracksWithAlbumCover(dateEnriched);\n            const result = {\n                ...normalized,\n                items: enrichedTracks,\n            };\n\n            if (!(response instanceof TidalResponse)) {\n                await this.cache.set('search_tracks', cacheKey, result);\n            }\n            return result;\n        } catch (error) {\n            if (error.name === 'AbortError') throw error;\n            console.error('ISRC track search failed:', error);\n            return { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 };\n        }\n    }\n\n    async searchArtists(query, options = {}) {\n        if (devModeSettings.isEnabled() && !options._fromProvider) {\n            return await this.getFallbackProvider().searchArtists(query, options);\n        }\n        const cached = await this.cache.get('search_artists', query);\n        if (cached) return cached;\n\n        try {\n            const response = await this.fetchWithRetry(`/search/?a=${encodeURIComponent(query)}`, options);\n            const data = await response.json();\n            const normalized = this.normalizeSearchResponse(data, 'artists');\n            const preparedArtists = normalized.items.map((a) => this.prepareArtist(a));\n            const enrichedArtists = await this.enrichArtistsWithPicture(preparedArtists);\n            const result = {\n                ...normalized,\n                items: enrichedArtists,\n            };\n\n            if (!(response instanceof TidalResponse)) {\n                await this.cache.set('search_artists', query, result);\n            }\n            return result;\n        } catch (error) {\n            if (error.name === 'AbortError') throw error;\n            console.error('Artist search failed:', error);\n            return { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 };\n        }\n    }\n\n    async searchAlbums(query, options = {}) {\n        if (devModeSettings.isEnabled() && !options._fromProvider) {\n            return await this.getFallbackProvider().searchAlbums(query, options);\n        }\n        const cached = await this.cache.get('search_albums', query);\n        if (cached) return cached;\n\n        try {\n            const response = await this.fetchWithRetry(`/search/?al=${encodeURIComponent(query)}`, options);\n            const data = await response.json();\n            const normalized = this.normalizeSearchResponse(data, 'albums');\n            const preparedItems = normalized.items.map((a) => this.prepareAlbum(a));\n            const result = {\n                ...normalized,\n                items: this.deduplicateAlbums(preparedItems),\n            };\n\n            if (!(response instanceof TidalResponse)) {\n                await this.cache.set('search_albums', query, result);\n            }\n            return result;\n        } catch (error) {\n            if (error.name === 'AbortError') throw error;\n            console.error('Album search failed:', error);\n            return { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 };\n        }\n    }\n\n    async searchPlaylists(query, options = {}) {\n        if (devModeSettings.isEnabled() && !options._fromProvider) {\n            return await this.getFallbackProvider().searchPlaylists(query, options);\n        }\n        const cached = await this.cache.get('search_playlists', query);\n        if (cached) return cached;\n\n        try {\n            const response = await this.fetchWithRetry(`/search/?p=${encodeURIComponent(query)}`, options);\n            const data = await response.json();\n            const normalized = this.normalizeSearchResponse(data, 'playlists');\n            const result = {\n                ...normalized,\n                items: normalized.items.map((p) => this.preparePlaylist(p)),\n            };\n\n            if (!(response instanceof TidalResponse)) {\n                await this.cache.set('search_playlists', query, result);\n            }\n            return result;\n        } catch (error) {\n            if (error.name === 'AbortError') throw error;\n            console.error('Playlist search failed:', error);\n            return { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 };\n        }\n    }\n\n    async searchVideos(query, options = {}) {\n        if (devModeSettings.isEnabled() && !options._fromProvider) {\n            return await this.getFallbackProvider().searchVideos(query, options);\n        }\n        const cached = await this.cache.get('search_videos', query);\n        if (cached) return cached;\n\n        try {\n            const response = await this.fetchWithRetry(`/search/?v=${encodeURIComponent(query)}`, {\n                ...options,\n            });\n            const data = await response.json();\n            const normalized = this.normalizeSearchResponse(data, 'videos');\n            const result = {\n                ...normalized,\n                items: normalized.items.map((v) => this.prepareVideo(v)),\n            };\n\n            if (!(response instanceof TidalResponse)) {\n                await this.cache.set('search_videos', query, result);\n            }\n            return result;\n        } catch (error) {\n            if (error.name === 'AbortError') throw error;\n            console.error('Video search failed:', error);\n            return { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 };\n        }\n    }\n\n    async getVideo(id) {\n        if (String(id).startsWith('sc_')) return null;\n        const cached = await this.cache.get('video', id);\n        if (cached) return cached;\n\n        const response = await this.fetchWithRetry(`/video/?id=${id}`, {\n            type: 'streaming',\n        });\n        const jsonResponse = await response.json();\n\n        const data = jsonResponse.data || jsonResponse;\n\n        const result = {\n            track: data,\n            info: data,\n            originalTrackUrl: data.OriginalTrackUrl || null,\n        };\n\n        if (!(response instanceof TidalResponse)) {\n            await this.cache.set('video', id, result);\n        }\n        return result;\n    }\n\n    async getAlbum(id, options = {}) {\n        if (String(id).startsWith('sc_')) return null;\n        if (devModeSettings.isEnabled() && !options._fromProvider) {\n            return await this.getFallbackProvider().getAlbum(id);\n        }\n        const cached = await this.cache.get('album', id);\n        if (cached) return cached;\n\n        const response = await this.fetchWithRetry(`/album/?id=${id}`);\n        const jsonData = await response.json();\n\n        // Unwrap the data property if it exists\n        const data = jsonData.data || jsonData;\n\n        let album, tracksSection;\n\n        if (data && typeof data === 'object' && !Array.isArray(data)) {\n            // Check for album metadata at root level\n            if ('numberOfTracks' in data || 'title' in data) {\n                album = this.prepareAlbum(data);\n            }\n\n            // Set tracksSection if items exist\n            if ('items' in data) {\n                tracksSection = data;\n\n                // If we still don't have album but have items with tracks, try to extract album from first track\n                if (!album && data.items && data.items.length > 0) {\n                    const firstItem = data.items[0];\n                    const track = firstItem.item || firstItem;\n\n                    // Check if track has album property\n                    if (track && track.album) {\n                        album = this.prepareAlbum(track.album);\n                    }\n                }\n            }\n        }\n\n        if (!album) throw new Error('Album not found');\n\n        // If album exists but has no artist, try to extract from tracks\n        if (!album.artist && tracksSection?.items && tracksSection.items.length > 0) {\n            const firstTrack = tracksSection.items[0];\n            const track = firstTrack.item || firstTrack;\n            if (track && track.artist) {\n                album = { ...album, artist: track.artist };\n            }\n        }\n\n        // If album exists but has no releaseDate, try to extract from tracks\n        if (!album.releaseDate && tracksSection?.items && tracksSection.items.length > 0) {\n            const firstTrack = tracksSection.items[0];\n            const track = firstTrack.item || firstTrack;\n\n            if (track) {\n                if (track.album && track.album.releaseDate) {\n                    album = { ...album, releaseDate: track.album.releaseDate };\n                } else if (track.streamStartDate) {\n                    album = { ...album, releaseDate: track.streamStartDate.split('T')[0] };\n                }\n            }\n        }\n\n        let tracks = (tracksSection?.items || []).map((i) => this.prepareTrack(i.item || i));\n\n        // Handle pagination if there are more tracks\n        if (album && album.numberOfTracks > tracks.length) {\n            let offset = tracks.length;\n            const SAFE_MAX_TRACKS = 10000;\n\n            while (tracks.length < album.numberOfTracks && tracks.length < SAFE_MAX_TRACKS) {\n                try {\n                    const nextResponse = await this.fetchWithRetry(`/album/?id=${id}&offset=${offset}&limit=500`);\n                    const nextJson = await nextResponse.json();\n                    const nextData = nextJson.data || nextJson;\n\n                    let nextItems = [];\n\n                    if (nextData.items) {\n                        nextItems = nextData.items;\n                    } else if (Array.isArray(nextData)) {\n                        for (const entry of nextData) {\n                            if (entry && typeof entry === 'object' && 'items' in entry && Array.isArray(entry.items)) {\n                                nextItems = entry.items;\n                                break;\n                            }\n                        }\n                    }\n\n                    if (!nextItems || nextItems.length === 0) break;\n\n                    const preparedItems = nextItems.map((i) => this.prepareTrack(i.item || i));\n                    if (preparedItems.length === 0) break;\n\n                    // Safeguard: If API ignores offset, it returns the first page again.\n                    // Check if the first new item matches the very first track we have.\n                    if (tracks.length > 0 && preparedItems[0].id === tracks[0].id) {\n                        break;\n                    }\n\n                    // Also check if the first new item matches the last track we have (overlap check)\n                    if (tracks.length > 0 && preparedItems[0].id === tracks[tracks.length - 1].id) {\n                        // If it's just one overlap, maybe we should skip it?\n                        // But usually offset should be precise.\n                        // If we see exact same id as first track, it's definitely a loop.\n                    }\n\n                    tracks = tracks.concat(preparedItems);\n                    offset += preparedItems.length;\n                } catch (error) {\n                    console.error(`Error fetching album tracks at offset ${offset}:`, error);\n                    break;\n                }\n            }\n        }\n\n        // Enrich tracks with album releaseDate if available\n        if (album?.releaseDate) {\n            tracks = tracks.map((track) => {\n                if (track.album && !track.album.releaseDate) {\n                    return { ...track, album: { ...track.album, releaseDate: album.releaseDate } };\n                }\n                return track;\n            });\n        }\n\n        tracks = tracks.map((t) => {\n            if (t.album) {\n                // Propagate the parent album's cover to each track's album sub-object when\n                // the API omits it in the per-track album object (common for album endpoints).\n                t.album = new TrackAlbum({\n                    ...t.album,\n                    cover: t.album.cover || album.cover,\n                });\n            }\n\n            return new Track(t);\n        });\n\n        album = new Album(album);\n\n        const result = { album, tracks };\n\n        if (!(response instanceof TidalResponse)) {\n            await this.cache.set('album', id, result);\n        }\n        return result;\n    }\n\n    async getPlaylist(id, options = {}) {\n        if (String(id).startsWith('sc_')) return null;\n        if (devModeSettings.isEnabled() && !options._fromProvider) {\n            return await this.getFallbackProvider().getPlaylist(id);\n        }\n        const cached = await this.cache.get('playlist', id);\n        if (cached) return cached;\n\n        const response = await this.fetchWithRetry(`/playlist/?id=${id}`);\n        const jsonData = await response.json();\n\n        // Unwrap the data property if it exists\n        const data = jsonData.data || jsonData;\n\n        let playlist = null;\n        let tracksSection = null;\n\n        // Check for direct playlist property (common in v2 responses)\n        if (data.playlist) {\n            playlist = data.playlist;\n        }\n\n        // Check for direct items property\n        if (data.items) {\n            tracksSection = { items: data.items };\n        }\n\n        // Fallback: iterate if we still missed something or if structure is flat array\n        if (!playlist || !tracksSection) {\n            const entries = Array.isArray(data) ? data : [data];\n            for (const entry of entries) {\n                if (!entry || typeof entry !== 'object') continue;\n\n                if (\n                    !playlist &&\n                    ('uuid' in entry || 'numberOfTracks' in entry || ('title' in entry && 'id' in entry))\n                ) {\n                    playlist = entry;\n                }\n\n                if (!tracksSection && 'items' in entry) {\n                    tracksSection = entry;\n                }\n            }\n        }\n\n        // Fallback 2: If we have a list of entries but no explicit playlist object, try to find one that looks like a playlist\n        if (!playlist && Array.isArray(data)) {\n            for (const entry of data) {\n                if (entry && typeof entry === 'object' && ('uuid' in entry || 'numberOfTracks' in entry)) {\n                    playlist = entry;\n                    break;\n                }\n            }\n        }\n\n        if (!playlist) throw new Error('Playlist not found');\n\n        let tracks = (tracksSection?.items || []).map((i) => this.prepareTrack(i.item || i));\n\n        // Handle pagination if there are more tracks\n        if (playlist.numberOfTracks > tracks.length) {\n            let offset = tracks.length;\n            const SAFE_MAX_TRACKS = 10000;\n\n            while (tracks.length < playlist.numberOfTracks && tracks.length < SAFE_MAX_TRACKS) {\n                try {\n                    const nextResponse = await this.fetchWithRetry(`/playlist/?id=${id}&offset=${offset}`);\n                    const nextJson = await nextResponse.json();\n                    const nextData = nextJson.data || nextJson;\n\n                    let nextItems = [];\n\n                    if (nextData.items) {\n                        nextItems = nextData.items;\n                    } else if (Array.isArray(nextData)) {\n                        for (const entry of nextData) {\n                            if (entry && typeof entry === 'object' && 'items' in entry && Array.isArray(entry.items)) {\n                                nextItems = entry.items;\n                                break;\n                            }\n                        }\n                    }\n\n                    if (!nextItems || nextItems.length === 0) break;\n\n                    const preparedItems = nextItems.map((i) => this.prepareTrack(i.item || i));\n                    if (preparedItems.length === 0) break;\n\n                    // Safeguard: If API ignores offset, it returns the first page again.\n                    // Check if the first new item matches the very first track we have.\n                    if (tracks.length > 0 && preparedItems[0].id === tracks[0].id) {\n                        break;\n                    }\n\n                    tracks = tracks.concat(preparedItems);\n                    offset += preparedItems.length;\n                } catch (error) {\n                    console.error(`Error fetching playlist tracks at offset ${offset}:`, error);\n                    break;\n                }\n            }\n        }\n\n        // Enrich tracks with album release dates\n        // Removed to reduce API load. Playlists can be very large.\n        // tracks = await this.enrichTracksWithAlbumDates(tracks);\n\n        tracks = tracks.map((t) => {\n            if (t.album) {\n                t.album = new TrackAlbum(t.album);\n            }\n\n            return new Track(t);\n        });\n\n        const result = { playlist, tracks };\n\n        if (!(response instanceof TidalResponse)) {\n            await this.cache.set('playlist', id, result);\n        }\n        return result;\n    }\n\n    async getMix(id) {\n        if (String(id).startsWith('sc_')) return null;\n        const cached = await this.cache.get('mix', id);\n        if (cached) return cached;\n\n        const response = await this.fetchWithRetry(`/mix/?id=${id}`, { type: 'api', minVersion: '2.3' });\n        const data = await response.json();\n\n        const mixData = data.mix;\n        const items = data.items || [];\n\n        if (!mixData) {\n            throw new Error('Mix metadata not found');\n        }\n\n        let tracks = items.map((i) => this.prepareTrack(i.item || i));\n\n        // Enrich tracks with album release dates\n        // Limited to reduce API load\n        tracks = await this.enrichTracksWithAlbumDates(tracks, 10);\n\n        tracks = tracks.map((t) => {\n            if (t.album) {\n                t.album = new TrackAlbum(t.album);\n            }\n\n            return new Track(t);\n        });\n\n        const mix = {\n            id: mixData.id,\n            title: mixData.title,\n            subTitle: mixData.subTitle,\n            description: mixData.description,\n            mixType: mixData.mixType,\n            cover: mixData.images?.LARGE?.url || mixData.images?.MEDIUM?.url || mixData.images?.SMALL?.url || null,\n        };\n\n        const result = { mix, tracks };\n        if (!(response instanceof TidalResponse)) {\n            await this.cache.set('mix', id, result);\n        }\n        return result;\n    }\n\n    async getArtistSocials(artistName) {\n        const cacheKey = `artist_socials_${artistName}`;\n        const cached = await this.cache.get('artist', cacheKey);\n        if (cached) return cached;\n\n        try {\n            const searchUrl = `https://musicbrainz.org/ws/2/artist/?query=artist:${encodeURIComponent(artistName)}&fmt=json`;\n            const searchRes = await fetch(searchUrl, {\n                headers: { 'User-Agent': 'Monochrome/2.0.0 ( https://github.com/monochrome-music/monochrome )' },\n            });\n            const searchData = await searchRes.json();\n\n            if (!searchData.artists || searchData.artists.length === 0) return [];\n\n            const artist = searchData.artists[0];\n            const mbid = artist.id;\n\n            const detailsUrl = `https://musicbrainz.org/ws/2/artist/${mbid}?inc=url-rels&fmt=json`;\n            const detailsRes = await fetch(detailsUrl, {\n                headers: { 'User-Agent': 'Monochrome/2.0.0 ( https://github.com/monochrome-music/monochrome )' },\n            });\n            const detailsData = await detailsRes.json();\n\n            const links = [];\n            if (detailsData.relations) {\n                for (const rel of detailsData.relations) {\n                    if (\n                        [\n                            'social network',\n                            'streaming',\n                            'official homepage',\n                            'youtube',\n                            'soundcloud',\n                            'bandcamp',\n                        ].includes(rel.type)\n                    ) {\n                        links.push({ type: rel.type, url: rel.url.resource });\n                    }\n                }\n            }\n\n            await this.cache.set('artist', cacheKey, links);\n            return links;\n        } catch (e) {\n            console.warn('Failed to fetch artist socials:', e);\n            return [];\n        }\n    }\n\n    async getArtist(artistId, options = {}) {\n        if (String(artistId).startsWith('sc_')) {\n            const { soundCloudAPI } = await import('./soundcloud-api.js');\n            return await soundCloudAPI.getArtistById(artistId, options);\n        }\n        if (devModeSettings.isEnabled() && !options._fromProvider) {\n            return await this.getFallbackProvider().getArtist(artistId);\n        }\n        const cacheKey = options.lightweight ? `artist_${artistId}_light` : `artist_${artistId}`;\n        if (!options.skipCache) {\n            const cached = await this.cache.get('artist', cacheKey);\n            if (cached) return cached;\n        }\n\n        const primaryResponse = await this.fetchWithRetry(`/artist/?id=${artistId}`);\n        const primaryJsonData = await primaryResponse.json();\n\n        // Unwrap data property if it exists, then unwrap artist property if it exists\n        let primaryData = primaryJsonData.data || primaryJsonData;\n        const rawArtist = primaryData.artist || (Array.isArray(primaryData) ? primaryData[0] : primaryData);\n\n        if (!rawArtist) throw new Error('Primary artist details not found.');\n\n        const artist = {\n            ...this.prepareArtist(rawArtist),\n            picture: rawArtist.picture || null,\n            name: rawArtist.name || 'Unknown Artist',\n        };\n\n        const albumMap = new Map();\n        const trackMap = new Map();\n        const videoMap = new Map();\n\n        const isTrack = (v) => v?.id && (v.duration || v.trackNumber != null || v.type === 'track');\n        const isAlbum = (v) =>\n            v?.id && ('numberOfTracks' in v || 'numberOfItems' in v || v.type === 'album' || v.type === 'ALBUM');\n        const isVideo = (v) => v?.id && (!!v.type?.toLowerCase().includes('video') || v.type === 'VIDEO');\n\n        const scan = (value, visited) => {\n            if (!value || typeof value !== 'object' || visited.has(value)) return;\n            visited.add(value);\n\n            if (Array.isArray(value)) {\n                value.forEach((item) => scan(item, visited));\n                return;\n            }\n\n            const item = value.item || value;\n            const type = (item.type || '').toLowerCase();\n\n            if (isAlbum(item) || type === 'album') albumMap.set(item.id, this.prepareAlbum(item));\n            if ((isTrack(item) || type === 'track') && !isAlbum(item) && !isVideo(item)) {\n                trackMap.set(item.id, this.prepareTrack(item));\n            }\n            if (isVideo(item) || type === 'video') videoMap.set(item.id, this.prepareVideo(item));\n\n            Object.values(value).forEach((nested) => scan(nested, visited));\n        };\n\n        const visited = new Set();\n        scan(primaryData, visited);\n\n        if (albumMap.size === 0) {\n            try {\n                if (import.meta.env.DEV) {\n                    console.log('No albums in primary response, trying fallback fetch');\n                }\n                const albumsResponse = await this.fetchWithRetry(`/artist/?f=${artistId}&skip_tracks=true`);\n                const albumsData = await albumsResponse.json();\n                scan(albumsData, visited);\n            } catch (e) {\n                console.warn('Fallback album fetch failed:', e);\n            }\n        }\n\n        const matchesArtistId = (item) => {\n            const candidateIds = [\n                item.artistId,\n                item.artist_id,\n                item.artist?.id,\n                ...(Array.isArray(item.artists) ? item.artists.map((a) => a.id) : []),\n                ...(Array.isArray(item.artistRoles) ? item.artistRoles.map((r) => r.artist?.id) : []),\n            ].filter((id) => id != null);\n\n            if (item.artist && (typeof item.artist === 'number' || typeof item.artist === 'string')) {\n                candidateIds.push(item.artist);\n            }\n\n            return candidateIds.some((id) => Number(id) === Number(artist.id) || Number(id) === Number(artistId));\n        };\n\n        if (!options.lightweight) {\n            try {\n                const videoSearch = await this.searchVideos(artist.name);\n                if (videoSearch && videoSearch.items) {\n                    for (const item of videoSearch.items) {\n                        if (matchesArtistId(item) && !videoMap.has(item.id)) {\n                            videoMap.set(item.id, item);\n                        }\n                    }\n                }\n            } catch (e) {\n                console.warn('Failed to fetch additional videos via search:', e);\n            }\n        }\n\n        const rawReleases = Array.from(albumMap.values()).filter(matchesArtistId);\n        const allReleases = this.deduplicateAlbums(rawReleases).sort(\n            (a, b) => new Date(b.releaseDate || 0) - new Date(a.releaseDate || 0)\n        );\n\n        const eps = allReleases.filter((a) => a.type === 'EP' || a.type === 'SINGLE');\n        const albums = allReleases.filter((a) => !eps.includes(a));\n\n        const topTracks = Array.from(trackMap.values())\n            .filter(matchesArtistId)\n            .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))\n            .slice(0, 15);\n\n        const videos = Array.from(videoMap.values()).sort(\n            (a, b) => new Date(b.releaseDate || 0) - new Date(a.releaseDate || 0)\n        );\n\n        // Enrich tracks with album release dates\n        const tracks = options.lightweight ? topTracks : await this.enrichTracksWithAlbumDates(topTracks);\n\n        const result = { ...artist, albums, eps, tracks, videos };\n\n        if (!(primaryResponse instanceof TidalResponse)) {\n            await this.cache.set('artist', cacheKey, result);\n        }\n        return result;\n    }\n\n    async getArtistTopTracks(artistId, options = {}) {\n        if (String(artistId).startsWith('sc_')) {\n            const { soundCloudAPI } = await import('./soundcloud-api.js');\n            const tracks = await soundCloudAPI.getArtistTopTracks(artistId, options);\n            return {\n                tracks: tracks || [],\n                total: (tracks || []).length,\n                hasMore: false,\n            };\n        }\n        const offset = options.offset || 0;\n        const limit = options.limit || 15;\n        console.log('[getArtistTopTracks] Called:', { artistId, offset, limit, options });\n\n        const cacheKey = `artist_tracks_${artistId}_${offset}_${limit}`;\n        if (!options.skipCache) {\n            const cached = await this.cache.get('artist', cacheKey);\n            if (cached) return cached;\n        }\n\n        try {\n            // Use f parameter with skip_tracks=true to get toptracks from the dedicated endpoint\n            const response = await this.fetchWithRetry(\n                `/artist/?f=${artistId}&skip_tracks=true&offset=${offset}&limit=${limit}`\n            );\n            const jsonData = await response.json();\n\n            let data = jsonData.data || jsonData;\n            console.log(\n                '[getArtistTopTracks] Raw response data keys:',\n                Object.keys(data),\n                'tracks:',\n                data.tracks?.length\n            );\n\n            // Extract tracks from the response\n            let tracks = [];\n\n            // Check for tracks array directly (from toptracks endpoint)\n            if (Array.isArray(data.tracks)) {\n                tracks = data.tracks;\n            }\n\n            // Also scan for tracks in the data structure\n            if (tracks.length === 0) {\n                const trackMap = new Map();\n                const isTrack = (v) => v?.id && v.duration;\n\n                const scan = (value, visited) => {\n                    if (!value || typeof value !== 'object' || visited.has(value)) return;\n                    visited.add(value);\n\n                    if (Array.isArray(value)) {\n                        value.forEach((item) => scan(item, visited));\n                        return;\n                    }\n\n                    const item = value.item || value;\n                    if (isTrack(item)) {\n                        trackMap.set(item.id, this.prepareTrack(item));\n                    }\n\n                    Object.values(value).forEach((nested) => scan(nested, visited));\n                };\n\n                const visited = new Set();\n                scan(data, visited);\n                tracks = Array.from(trackMap.values());\n            }\n\n            tracks = tracks.map((t) => this.prepareTrack(t)).sort((a, b) => (b.popularity || 0) - (a.popularity || 0));\n            tracks = await this.enrichTracksWithAlbumDates(tracks);\n\n            // Safeguard: If API ignores offset, it returns the same first tracks\n            const hasMore = tracks.length === limit && (offset === 0 || tracks[0]?.id !== options.firstTrackId);\n            const result = {\n                tracks,\n                offset,\n                limit,\n                hasMore,\n            };\n\n            if (!(response instanceof TidalResponse)) {\n                await this.cache.set('artist', cacheKey, result);\n            }\n            return result;\n        } catch (e) {\n            console.warn('Failed to fetch artist top tracks:', e);\n            return { tracks: [], offset, limit, hasMore: false };\n        }\n    }\n\n    async getSimilarArtists(artistId) {\n        if (String(artistId).startsWith('sc_')) return [];\n        const cached = await this.cache.get('similar_artists', artistId);\n        if (cached) return cached;\n\n        try {\n            const response = await this.fetchWithRetry(`/artist/similar/?id=${artistId}`, {\n                type: 'api',\n                minVersion: '2.3',\n            });\n            const data = await response.json();\n\n            // Handle various response structures\n            const items = data.artists || data.items || data.data || (Array.isArray(data) ? data : []);\n\n            const result = items.map((artist) => this.prepareArtist(artist));\n\n            if (!(response instanceof TidalResponse)) {\n                await this.cache.set('similar_artists', artistId, result);\n            }\n            return result;\n        } catch (e) {\n            console.warn('Failed to fetch similar artists:', e);\n            return [];\n        }\n    }\n\n    async getArtistBiography(artistId, options = {}) {\n        if (String(artistId).startsWith('sc_')) return null;\n        if (devModeSettings.isEnabled() && !options._fromProvider) {\n            return await this.getFallbackProvider().getArtistBiography(artistId);\n        }\n        const cacheKey = `artist_bio_v1_${artistId}`;\n        const cached = await this.cache.get('artist', cacheKey);\n        if (cached) return cached;\n\n        try {\n            const response = await this.fetchWithRetry(`/artist/bio/?id=${artistId}`, { type: 'api' });\n\n            if (response.ok) {\n                const { data } = await response.json();\n                if (data && data.text) {\n                    const bio = {\n                        text: data.text,\n                        source: data.source || 'Tidal',\n                    };\n                    if (!(response instanceof TidalResponse)) {\n                        await this.cache.set('artist', cacheKey, bio);\n                    }\n                    return bio;\n                }\n            }\n        } catch (e) {\n            console.warn('Failed to fetch Tidal biography:', e);\n        }\n        return null;\n    }\n\n    async getSimilarAlbums(albumId) {\n        if (String(albumId).startsWith('sc_')) return [];\n        const cached = await this.cache.get('similar_albums', albumId);\n        if (cached) return cached;\n\n        try {\n            const response = await this.fetchWithRetry(`/album/similar/?id=${albumId}`, {\n                type: 'api',\n                minVersion: '2.3',\n            });\n            const data = await response.json();\n\n            const items = data.items || data.albums || data.data || (Array.isArray(data) ? data : []);\n\n            const result = items.map((album) => this.prepareAlbum(album));\n\n            if (!(response instanceof TidalResponse)) {\n                await this.cache.set('similar_albums', albumId, result);\n            }\n            return result;\n        } catch (e) {\n            console.warn('Failed to fetch similar albums:', e);\n            return [];\n        }\n    }\n\n    async getRecommendedTracksForPlaylist(tracks, limit = 20, options = {}) {\n        const artistMap = new Map();\n\n        // Check if tracks already have artist info (some might)\n        for (const track of tracks) {\n            const artists = track.artists || (track.artist ? [track.artist] : []);\n            for (const artist of artists) {\n                if (artist.id) {\n                    artistMap.set(artist.id, artist);\n                }\n            }\n        }\n\n        if (artistMap.size < 3) {\n            console.log('Not enough artists from stored data, trying search approach...');\n\n            for (const track of tracks.slice(0, 5)) {\n                try {\n                    // Search for the track to get full metadata\n                    const searchQuery =\n                        `"${track.title}" ${track.artist?.name || track.artists?.[0]?.name || ''}`.trim();\n                    const searchResult = await this.searchTracks(searchQuery, { signal: AbortSignal.timeout(5000) });\n\n                    if (searchResult.items && searchResult.items.length > 0) {\n                        const foundTrack = searchResult.items[0];\n                        const foundArtists = foundTrack.artists || (foundTrack.artist ? [foundTrack.artist] : []);\n                        for (const artist of foundArtists) {\n                            if (artist.id) {\n                                artistMap.set(artist.id, artist);\n                            }\n                        }\n                    }\n                } catch (e) {\n                    console.warn(`Search failed for track "${track.title}":`, e);\n                }\n            }\n        }\n\n        const artists = Array.from(artistMap.values());\n        console.log(`Found ${artists.length} unique artists from ${tracks.length} tracks`);\n\n        if (artists.length === 0) {\n            console.log('No artists found, cannot generate recommendations');\n            return [];\n        }\n\n        const recommendedTracks = [];\n        const seenTrackIds = new Set(tracks.map((t) => t.id));\n\n        const shuffledArtists = [...artists].sort(() => Math.random() - 0.5);\n        const artistsToProcess = shuffledArtists.slice(0, Math.min(15, shuffledArtists.length));\n\n        const artistPromises = artistsToProcess.map(async (artist) => {\n            try {\n                const artistData = await this.getArtist(artist.id, { lightweight: true, skipCache: options.refresh });\n                if (artistData && artistData.tracks && artistData.tracks.length > 0) {\n                    const availableTracks = artistData.tracks.filter((track) => !seenTrackIds.has(track.id));\n\n                    const newTracks = options.knownTrackIds\n                        ? availableTracks.filter((t) => !options.knownTrackIds.has(t.id))\n                        : availableTracks;\n                    const knownTracks = options.knownTrackIds\n                        ? availableTracks.filter((t) => options.knownTrackIds.has(t.id))\n                        : [];\n\n                    const shuffledNew = [...newTracks].sort(() => Math.random() - 0.5);\n                    const shuffledKnown = [...knownTracks].sort(() => Math.random() - 0.5);\n\n                    const combined = [...shuffledNew, ...shuffledKnown];\n                    return combined.slice(0, 2);\n                } else {\n                    console.warn(`No tracks found for artist ${artist.name}`);\n                    return [];\n                }\n            } catch (e) {\n                console.warn(`Failed to get tracks for artist ${artist.name}:`, e);\n                return [];\n            }\n        });\n\n        const results = await Promise.all(artistPromises);\n        results.forEach((tracks) => {\n            for (const t of tracks) {\n                if (!seenTrackIds.has(t.id)) {\n                    seenTrackIds.add(t.id);\n                    recommendedTracks.push(this.prepareTrack(t));\n                }\n            }\n        });\n\n        const shuffled = recommendedTracks.sort(() => 0.5 - Math.random());\n        const sliced = shuffled.slice(0, limit);\n        return this.enrichTracksWithAlbumCover(sliced);\n    }\n\n    normalizeTrackResponse(apiResponse) {\n        if (!apiResponse || typeof apiResponse !== 'object') {\n            return apiResponse;\n        }\n\n        // unwrap { version, data } if present\n        const raw = apiResponse.data ?? apiResponse;\n\n        // fabricate the track object expected by parseTrackLookup\n        const trackStub = {\n            duration: raw.duration ?? 0,\n            id: raw.trackId ?? null,\n        };\n\n        // return exactly what parseTrackLookup expects\n        return [trackStub, raw];\n    }\n\n    getTrackManifestFormats(quality) {\n        switch (normalizeQualityToken(quality) || quality) {\n            case 'DOLBY_ATMOS':\n                return ['EAC3_JOC'];\n            case 'HI_RES_LOSSLESS':\n                return ['FLAC_HIRES'];\n            case 'LOSSLESS':\n                return ['FLAC'];\n            case 'HIGH':\n                return ['AACLC'];\n            case 'LOW':\n                return ['HEAACV1'];\n            default:\n                return ['FLAC'];\n        }\n    }\n\n    getAdaptiveTrackManifestFormats() {\n        return ['FLAC_HIRES', 'FLAC', 'AACLC', 'HEAACV1', 'EAC3_JOC'];\n    }\n\n    shouldUseAdaptiveTrackManifest(download = false) {\n        if (download || typeof localStorage === 'undefined') {\n            return false;\n        }\n\n        try {\n            return (localStorage.getItem('adaptive-playback-quality') || '').toLowerCase() === 'auto';\n        } catch {\n            return false;\n        }\n    }\n\n    getAudioQualityFromManifestFormats(formats = []) {\n        if (formats.includes('EAC3_JOC')) return 'DOLBY_ATMOS';\n        if (formats.includes('FLAC_HIRES')) return 'HI_RES_LOSSLESS';\n        if (formats.includes('FLAC')) return 'LOSSLESS';\n        if (formats.includes('AACLC')) return 'HIGH';\n        if (formats.includes('HEAACV1')) return 'LOW';\n        return null;\n    }\n\n    async normalizeTrackManifestResponse(apiResponse, quality) {\n        if (!apiResponse || typeof apiResponse !== 'object') {\n            return apiResponse;\n        }\n\n        const raw = apiResponse.data?.data ?? apiResponse.data ?? apiResponse;\n        const attributes = raw?.attributes ?? {};\n        const manifestUrl = attributes.uri;\n\n        if (!manifestUrl) {\n            throw new Error('Malformed track manifests response');\n        }\n\n        const manifestResponse = await fetch(manifestUrl);\n        if (!manifestResponse.ok) {\n            throw new Error(`Failed to fetch signed track manifest: HTTP ${manifestResponse.status}`);\n        }\n\n        const manifestText = await manifestResponse.text();\n        const manifestMimeType =\n            manifestResponse.headers.get('content-type') ||\n            (manifestText.includes('<MPD') ? 'application/dash+xml' : 'application/octet-stream');\n        const normalizedQuality =\n            this.getAudioQualityFromManifestFormats(attributes.formats) || normalizeQualityToken(quality) || 'HIGH';\n\n        const isHiRes = normalizedQuality === 'HI_RES_LOSSLESS';\n        const isLossless = normalizedQuality === 'LOSSLESS' || isHiRes;\n        const trackNorm = attributes.trackAudioNormalizationData || {};\n        const albumNorm = attributes.albumAudioNormalizationData || {};\n\n        const info = {\n            trackId: Number(raw.id) || null,\n            assetPresentation: attributes.trackPresentation || 'FULL',\n            audioQuality: normalizedQuality,\n            manifestMimeType,\n            manifestHash: attributes.hash || '',\n            manifest: btoa(manifestText),\n            bitDepth: isHiRes ? 24 : isLossless ? 16 : undefined,\n            sampleRate: isHiRes ? 96000 : isLossless ? 44100 : undefined,\n            replayGain: trackNorm.replayGain,\n            trackReplayGain: trackNorm.replayGain,\n            trackPeakAmplitude: trackNorm.peakAmplitude,\n            albumReplayGain: albumNorm.replayGain,\n            albumPeakAmplitude: albumNorm.peakAmplitude,\n            drmData: attributes.drmData || null,\n            formats: attributes.formats || [],\n        };\n\n        const trackStub = {\n            duration: raw.duration ?? 0,\n            id: Number(raw.id) || null,\n        };\n\n        return [trackStub, info];\n    }\n\n    async getTrackMetadata(id) {\n        if (String(id).startsWith('sc_')) {\n            const { soundCloudAPI } = await import('./soundcloud-api.js');\n            return await soundCloudAPI.getTrackById(id);\n        }\n        const cacheKey = `meta_${id}`;\n        const cached = await this.cache.get('track', cacheKey);\n        if (cached) return cached;\n\n        const response = await this.fetchWithRetry(`/info/?id=${id}`, { type: 'api' });\n        const json = await response.json();\n        const data = json.data || json;\n\n        let track;\n        const items = Array.isArray(data) ? data : [data];\n        const found = items.find((i) => i.id == id || (i.item && i.item.id == id));\n\n        if (found) {\n            track = this.prepareTrack(found.item || found);\n            await this.cache.set('track', cacheKey, track);\n            return track;\n        }\n\n        throw new Error('Track metadata not found');\n    }\n\n    async getTrackRecommendations(id) {\n        if (String(id).startsWith('sc_')) {\n            const { soundCloudAPI } = await import('./soundcloud-api.js');\n            return await soundCloudAPI.getTrackRecommendations(id);\n        }\n        const cached = await this.cache.get('recommendations', id);\n        if (cached) return cached;\n\n        try {\n            const response = await this.fetchWithRetry(`/recommendations/?id=${id}`, {\n                type: 'api',\n                minVersion: '2.4',\n            });\n            const json = await response.json();\n            const data = json.data || json;\n\n            const items = data.items || [];\n            const tracks = items.map((item) => this.prepareTrack(item.track || item));\n\n            if (!(response instanceof TidalResponse)) {\n                await this.cache.set('recommendations', id, tracks);\n            }\n            return tracks;\n        } catch (error) {\n            console.error('Failed to fetch recommendations:', error);\n            return [];\n        }\n    }\n\n    async getTrackFromDevMode(id, quality = 'LOSSLESS') {\n        const devBaseUrl = devModeSettings.getUrl().replace(/\/+$/, '');\n        const requestedQuality = normalizeQualityToken(quality) || quality || 'LOSSLESS';\n        \n        const qualitiesToTry = [requestedQuality];\n        if (requestedQuality === 'HI_RES_LOSSLESS') {\n            qualitiesToTry.push('LOSSLESS', 'HIGH');\n        } else if (requestedQuality === 'LOSSLESS') {\n            qualitiesToTry.push('HIGH');\n        }\n\n        let lastError = null;\n\n        for (const currentQuality of qualitiesToTry) {\n            const params = new URLSearchParams({\n                id: String(id),\n                quality: currentQuality,\n                adaptive: 'false',\n            });\n            for (const format of this.getTrackManifestFormats(currentQuality)) {\n                params.append('formats', format);\n            }\n\n            const url = `${devBaseUrl}/trackManifests/?${params.toString()}`;\n            if (import.meta.env.DEV) {\n                console.log('[dev-mode]', url);\n            }\n            const response = await fetch(url);\n            \n            if (response.ok) {\n                const jsonResponse = await response.json();\n                return this.parseTrackLookup(await this.normalizeTrackManifestResponse(jsonResponse, currentQuality));\n            }\n            \n            lastError = new Error(`Dev mode request failed for quality ${currentQuality}: ${response.status} ${response.statusText}`);\n            \n            // If it's not a 403/404, or we're on the lowest quality already, don't keep trying\n            if (response.status !== 403 && response.status !== 404) {\n                break;\n            }\n        }\n        \n        throw lastError;\n    }\n\n    async getTrack(id, quality = 'LOSSLESS', { adaptive = false, _fromProvider = false } = {}) {\n        if (String(id).startsWith('sc_')) {\n            const { soundCloudAPI } = await import('./soundcloud-api.js');\n            return await soundCloudAPI.getTrackById(id);\n        }\n        if (devModeSettings.isEnabled() && !_fromProvider) {\n            return await this.getFallbackProvider().getTrack(id, quality);\n        }\n        const cacheKey = `${id}_${quality}_${adaptive ? 'adaptive' : 'fixed'}`;\n        const cached = await this.cache.get('track', cacheKey);\n        if (cached) return cached;\n\n        const requestedQuality = normalizeQualityToken(quality) || quality || 'LOSSLESS';\n        \n        const qualitiesToTry = [requestedQuality];\n        if (requestedQuality === 'HI_RES_LOSSLESS') {\n            qualitiesToTry.push('LOSSLESS', 'HIGH');\n        } else if (requestedQuality === 'LOSSLESS') {\n            qualitiesToTry.push('HIGH');\n        }\n\n        let lastError = null;\n        let response = null;\n        let currentQuality = requestedQuality;\n\n        for (const q of qualitiesToTry) {\n            currentQuality = q;\n            const params = new URLSearchParams({\n                id: String(id),\n                quality: currentQuality,\n                adaptive: String(adaptive),\n            });\n            const formats = adaptive ? this.getAdaptiveTrackManifestFormats() : this.getTrackManifestFormats(q);\n            for (const format of formats) {\n                params.append('formats', format);\n            }\n\n            try {\n                response = await this.fetchWithRetry(`/trackManifests/?${params.toString()}`, { type: 'streaming' });\n                lastError = null;\n                break;\n            } catch (err) {\n                lastError = err;\n                if (err.message && (err.message.includes('403') || err.message.includes('404'))) {\n                    continue;\n                }\n                break;\n            }\n        }\n\n        if (lastError) throw lastError;\n\n        const jsonResponse = await response.json();\n        const result = this.parseTrackLookup(await this.normalizeTrackManifestResponse(jsonResponse, currentQuality));\n\n        if (!(response instanceof TidalResponse)) {\n            await this.cache.set('track', cacheKey, result);\n        }\n        return result;\n    }\n\n    async getQobuzStreamUrl(isrc, quality = 'LOSSLESS', expectedTitle = null) {\n        let qobuzInstances = [];\n        try {\n            qobuzInstances = await this.settings.getInstances('qobuz');\n        } catch {\n            // ignore\n        }\n\n        if (!qobuzInstances || qobuzInstances.length === 0) {\n            return null;\n        }\n\n        for (const instance of qobuzInstances) {\n            const rawUrl = typeof instance === 'string' ? instance : instance?.url;\n            if (!rawUrl || typeof rawUrl !== 'string') continue;\n            const baseUrl = rawUrl.replace(/\/+$/, '');\n            try {\n                const controller = new AbortController();\n                const timeoutId = setTimeout(() => controller.abort(), 8000);\n\n                const trackRes = await fetch(\n                    getProxyUrl(`${baseUrl}/api/get-music?q=${encodeURIComponent(isrc)}&offset=0`),\n                    {\n                        signal: controller.signal,\n                    }\n                );\n                clearTimeout(timeoutId);\n                if (!trackRes.ok) continue;\n                const trackJson = await trackRes.json();\n\n                const tracks = trackJson.data?.tracks?.items || [];\n                let match = tracks.find((t) => t.isrc?.toLowerCase() === isrc.toLowerCase()) || tracks[0];\n\n                if (match && expectedTitle) {\n                    const mTitle = expectedTitle.toLowerCase().trim();\n                    const tTitle = (match.title || match.name || '').toLowerCase().trim();\n                    const isTitleSimilar = tTitle === mTitle || tTitle.includes(mTitle) || mTitle.includes(tTitle);\n                    if (!isTitleSimilar) {\n                        console.warn(`[api.js] ISRC match rejected for ${isrc}! Expected title "${expectedTitle}", but Qobuz returned "${match.title || match.name}" (ID: ${match.id}).`);\n                        match = null;\n                    }\n                }\n\n                if (match && match.id) {\n                    const qobuzTrackId = match.id;\n                    const qobuzQualityMap = {\n                        HI_RES_LOSSLESS: '27',\n                        LOSSLESS: '6',\n                        HIGH: '5',\n                        LOW: '5',\n                    };\n                    const qobuzQuality = qobuzQualityMap[quality] || '6';\n\n                    const streamController = new AbortController();\n                    const streamTimeoutId = setTimeout(() => streamController.abort(), 8000);\n\n                    const streamRes = await fetch(\n                        `${baseUrl}/api/download-music?track_id=${qobuzTrackId}&quality=${qobuzQuality}`,\n                        { signal: streamController.signal }\n                    );\n                    clearTimeout(streamTimeoutId);\n                    if (!streamRes.ok) continue;\n                    const streamJson = await streamRes.json();\n\n                    if (streamJson.success && streamJson.data && streamJson.data.url) {\n                        let rgInfo = null;\n                        if (match.audio_info) {\n                            rgInfo = {\n                                trackReplayGain: match.audio_info.replaygain_track_gain,\n                                trackPeakAmplitude: match.audio_info.replaygain_track_peak,\n                                albumReplayGain: match.audio_info.replaygain_album_gain,\n                                albumPeakAmplitude: match.audio_info.replaygain_album_peak,\n                            };\n                        }\n                        return { url: streamJson.data.url, rgInfo };\n                    }\n                }\n            } catch (e) {\n                console.warn(`Qobuz instance ${baseUrl} failed for ISRC ${isrc}:`, e);\n                continue;\n            }\n        }\n        return null;\n    }\n\n    getDeezerStreamFormat(quality = 'LOSSLESS') {\n        const map = {\n            HI_RES_LOSSLESS: 'FLAC',\n            LOSSLESS: 'FLAC',\n            DOLBY_ATMOS: 'FLAC',\n            HIGH: 'MP3_320',\n            LOW: 'MP3_128',\n            NORMAL: 'MP3_128',\n        };\n        return map[quality] || map[normalizeQualityToken(quality)] || 'FLAC';\n    }\n\n    async getDeezerStreamUrl(isrc, quality = 'LOSSLESS') {\n        if (!isrc || !deezerFallbackSettings.isEnabled()) return null;\n        const baseUrl = deezerFallbackSettings.getApiBaseUrl().replace(/\/+$/, '');\n        if (!baseUrl) return null;\n        const format = this.getDeezerStreamFormat(quality);\n        const url = `${baseUrl}/stream/?isrc=${encodeURIComponent(isrc)}&format=${encodeURIComponent(format)}`;\n        try {\n            const controller = new AbortController();\n            const timeoutId = setTimeout(() => controller.abort(), 12000);\n            const res = await fetch(getProxyUrl(url), { method: 'HEAD', signal: controller.signal });\n            clearTimeout(timeoutId);\n            if (!res.ok && res.status !== 405 && res.status !== 501) return null;\n        } catch (e) {\n            console.warn(`Deezer fallback failed for ISRC ${isrc}:`, e);\n            return null;\n        }\n        return { url, format, provider: 'deezer', rgInfo: null };\n    }\n\n    getAmazonMusicQuality(quality = 'LOSSLESS', { preferAdaptiveAuto = false } = {}) {\n        let adaptiveQuality = null;\n        try {\n            adaptiveQuality =\n                typeof localStorage !== 'undefined'\n                    ? localStorage.getItem('adaptive-playback-quality') || 'auto'\n                    : null;\n        } catch {}\n        if (preferAdaptiveAuto && String(adaptiveQuality || '').toLowerCase() === 'auto') {\n            return 'UHD';\n        }\n\n        const qualityMap = {\n            auto: 'UHD',\n            AUTO: 'UHD',\n            ADAPTIVE: 'UHD',\n            HI_RES_LOSSLESS: 'UHD',\n            LOSSLESS: 'HD',\n            HIGH: 'SD_HIGH',\n            LOW: 'SD_LOW',\n            NORMAL: 'SD_MEDIUM',\n            DOLBY_ATMOS: 'UHD',\n        };\n        return qualityMap[quality] || qualityMap[normalizeQualityToken(quality)] || 'HD';\n    }\n\n    getAmazonRateLimitedUntil() {\n        try {\n            return Number(localStorage.getItem(AMAZON_RATE_LIMITED_UNTIL_KEY) || 0);\n        } catch {\n            return this.amazonRateLimitedUntil || 0;\n        }\n    }\n\n    isAmazonRateLimited() {\n        return Date.now() < this.getAmazonRateLimitedUntil();\n    }\n\n    setAmazonRateLimited() {\n        const until = Date.now() + AMAZON_RATE_LIMIT_DURATION_MS;\n        this.amazonRateLimitedUntil = until;\n        try {\n            localStorage.setItem(AMAZON_RATE_LIMITED_UNTIL_KEY, String(until));\n        } catch {}\n\n        for (const [key, value] of this.streamCache.entries()) {\n            if (value?.provider === 'amazon') {\n                this.streamCache.delete(key);\n            }\n        }\n\n        console.warn('Amazon Music API returned 403; falling back to Qobuz for 30 minutes');\n    }\n\n    clearAmazonTurnstileJwt() {\n        localStorage.removeItem('amazon_turnstile_jwt');\n        localStorage.removeItem('amazon_turnstile_expiry');\n    }\n\n    handleAmazonApiStatus(status, endpointName = 'Amazon Music API') {\n        if (status === 403) {\n            this.setAmazonRateLimited();\n            throw new Error(`${endpointName} rate limited the client`);\n        }\n    }\n\n    getAmazonSelectedQualityInfo(trackInfo) {\n        if (!Array.isArray(trackInfo?.available_qualities)) return null;\n        return trackInfo.available_qualities.find((item) => item.quality === trackInfo.quality_selected) || null;\n    }\n\n    getAmazonCodecString(codec) {\n        const normalized = String(codec || '').toLowerCase();\n        if (normalized === 'flac') return 'fLaC';\n        if (normalized === 'opus') return 'Opus';\n        if (normalized === 'aac' || normalized === 'mp4a.40.2') return 'mp4a.40.2';\n        if (normalized === 'eac3' || normalized === 'ec-3') return 'ec-3';\n        return normalized;\n    }\n\n    getAmazonDecryptionKey(data) {\n        return (\n            data?.decryption_key ||\n            data?.decryptionKey ||\n            data?.decryption?.key ||\n            data?.drm?.decryption_key ||\n            data?.drm?.decryptionKey ||\n            null\n        );\n    }\n\n    getAmazonMimeType(qualityInfo = null) {\n        const codec = this.getAmazonCodecString(qualityInfo?.codec);\n        return codec ? `audio/mp4; codecs="${codec}"` : 'audio/mp4';\n    }\n\n    getAmazonQualityDisplay(trackInfo, qualityInfo = null) {\n        const quality = String(trackInfo?.quality_selected || trackInfo?.quality_requested || '').trim();\n        if (qualityInfo?.bitDepth && qualityInfo?.sampleRate) {\n            const sampleRate =\n                qualityInfo.sampleRate === 44100 ? '44.1' : String(Math.round(qualityInfo.sampleRate / 1000));\n            if (quality.startsWith('UHD_')) {\n                return `HD ${qualityInfo.bitDepth}/${sampleRate}`;\n            }\n            if (quality.startsWith('HD_')) {\n                return `FLAC ${qualityInfo.bitDepth}/${sampleRate}`;\n            }\n        }\n        return quality.replace(/^UHD_/, 'HD ').replace(/^HD_/, 'FLAC ').replace(/_/g, ' ');\n    }\n\n    async fetchWithTimeout(url, options = {}, timeout = 10000) {\n        const controller = new AbortController();\n        const timeoutId = setTimeout(() => controller.abort(), timeout);\n        try {\n            return await fetch(url, {\n                ...options,\n                signal: options.signal || controller.signal,\n            });\n        } finally {\n            clearTimeout(timeoutId);\n        }\n    }\n\n    async loadTurnstile() {\n        if (typeof window === 'undefined' || typeof document === 'undefined') {\n            throw new Error('Turnstile is only available in the browser');\n        }\n\n        if (window.turnstile) return window.turnstile;\n        if (this.turnstileLoadPromise) return this.turnstileLoadPromise;\n\n        this.turnstileLoadPromise = new Promise((resolve, reject) => {\n            const existing = document.querySelector('script[data-monochrome-turnstile]');\n            if (existing) {\n                existing.addEventListener('load', () => resolve(window.turnstile), { once: true });\n                existing.addEventListener('error', () => reject(new Error('Failed to load Turnstile')), {\n                    once: true,\n                });\n                return;\n            }\n\n            const script = document.createElement('script');\n            script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';\n            script.async = true;\n            script.defer = true;\n            script.dataset.monochromeTurnstile = 'true';\n            script.onload = () => resolve(window.turnstile);\n            script.onerror = () => reject(new Error('Failed to load Turnstile'));\n            document.head.appendChild(script);\n        }).finally(() => {\n            this.turnstileLoadPromise = null;\n        });\n\n        return this.turnstileLoadPromise;\n    }\n\n    getTurnstileContainer({\n        panelId = 'amazon-music-turnstile-panel',\n        containerId = 'amazon-music-turnstile-container',\n        message = 'Amazon Music playback needs a quick browser check.',\n    } = {}) {\n        let panel = document.getElementById(panelId);\n        if (!panel) {\n            panel = document.createElement('div');\n            panel.id = panelId;\n            panel.style.position = 'fixed';\n            panel.style.right = '16px';\n            panel.style.bottom = '84px';\n            panel.style.zIndex = '9999';\n            panel.style.width = '320px';\n            panel.style.padding = '12px';\n            panel.style.border = '1px solid var(--border)';\n            panel.style.borderRadius = 'var(--radius-md)';\n            panel.style.background = 'var(--card)';\n            panel.style.color = 'var(--foreground)';\n            panel.style.boxShadow = '0 12px 32px rgba(0, 0, 0, 0.28)';\n            panel.style.fontSize = '0.8rem';\n            panel.style.display = 'none';\n            panel.innerHTML = `\n                <div style="font-weight: 600; margin-bottom: 0.25rem;">Cloudflare verification</div>\n                <div style="color: var(--muted-foreground); margin-bottom: 0.75rem; line-height: 1.35;">\n                    ${message}\n                </div>\n                <div id="${containerId}"></div>\n            `;\n            document.body.appendChild(panel);\n        }\n        return panel.querySelector(`#${containerId}`);\n    }\n\n    async getTurnstileResponse({\n        siteKey = amazonMusicSettings.getTurnstileSiteKey().trim(),\n        action = null,\n        panelId = 'amazon-music-turnstile-panel',\n        containerId = 'amazon-music-turnstile-container',\n        message = 'Amazon Music playback needs a quick browser check.',\n    } = {}) {\n        if (!siteKey) {\n            return null;\n        }\n\n        const container = this.getTurnstileContainer({ panelId, containerId, message });\n        container.innerHTML = '';\n        const turnstile = await this.loadTurnstile();\n\n        const playBtns = document.querySelectorAll('.play-pause-btn, #fs-play-pause-btn');\n        const oldHtmls = new Map();\n        playBtns.forEach((btn) => {\n            oldHtmls.set(btn, btn.innerHTML);\n            btn.innerHTML = `<svg class="animate-spin" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>`;\n        });\n\n        const attemptTurnstile = (isRetry = false) => {\n            return new Promise((resolve, reject) => {\n                let timeoutId;\n                let widgetId;\n                const cleanup = () => {\n                    playBtns.forEach((btn) => {\n                        if (oldHtmls.has(btn)) {\n                            btn.innerHTML = oldHtmls.get(btn);\n                        }\n                    });\n                    clearTimeout(timeoutId);\n                    if (widgetId && turnstile.remove) {\n                        try {\n                            turnstile.remove(widgetId);\n                        } catch {}\n                    }\n                    document.getElementById(panelId)?.remove();\n                };\n\n                timeoutId = setTimeout(() => {\n                    cleanup();\n                    reject(new Error('Turnstile timed out'));\n                }, 30000);\n\n                const config = {\n                    sitekey: siteKey,\n                    size: 'invisible',\n                    execution: isRetry ? 'render' : 'execute',\n                    appearance: isRetry ? 'always' : 'interaction-only',\n                    theme: 'auto',\n                    'before-interactive-callback': () => {\n                        const p = document.getElementById(panelId);\n                        if (p) p.style.display = 'block';\n                    },\n                    callback: (token) => {\n                        cleanup();\n                        resolve(token);\n                    },\n                    'error-callback': () => {\n                        if (!isRetry) {\n                            if (widgetId && turnstile.remove) {\n                                try {\n                                    turnstile.remove(widgetId);\n                                } catch {}\n                            }\n                            clearTimeout(timeoutId);\n                            container.innerHTML = '';\n                            attemptTurnstile(true).then(resolve, reject);\n                        } else {\n                            cleanup();\n                            reject(new Error('Turnstile failed'));\n                        }\n                    },\n                    'expired-callback': () => {\n                        cleanup();\n                        reject(new Error('Turnstile expired'));\n                    },\n                };\n\n                widgetId = turnstile.render(container, config);\n                if (!isRetry) {\n                    turnstile.execute(widgetId);\n                }\n            });\n        };\n\n        return await attemptTurnstile(false);\n    }\n\n    async getTurnstileJwt({ forceRefresh = false } = {}) {\n        if (!forceRefresh) {\n            const cachedJwt = localStorage.getItem('amazon_turnstile_jwt');\n            const cachedExpiry = localStorage.getItem('amazon_turnstile_expiry');\n            if (cachedJwt && cachedExpiry && Date.now() < parseInt(cachedExpiry, 10)) {\n                return cachedJwt;\n            }\n        }\n        if (this._turnstileJwtPromise && !forceRefresh) {\n            return this._turnstileJwtPromise;\n        }\n\n        this._turnstileJwtPromise = (async () => {\n            if (forceRefresh) {\n                this.clearAmazonTurnstileJwt();\n            }\n\n            const apiBaseUrl = amazonMusicSettings.getApiBaseUrl().replace(/\/+$/, '');\n            let response = null;\n\n            for (let attempt = 0; attempt < 2; attempt++) {\n                const turnstileResponse = await this.getTurnstileResponse();\n                if (!turnstileResponse) return null;\n\n                response = await fetch(`${apiBaseUrl}/api/auth/turnstile`, {\n                    method: 'POST',\n                    headers: {\n                        'Content-Type': 'application/json',\n                    },\n                    body: JSON.stringify({ cf_turnstile_response: turnstileResponse }),\n                });\n\n                this.handleAmazonApiStatus(response.status, 'Amazon Music Turnstile auth');\n                if ((response.status === 401 || response.status === 428) && attempt === 0) {\n                    this.clearAmazonTurnstileJwt();\n                    continue;\n                }\n                break;\n            }\n\n            if (!response.ok) {\n                throw new Error(`Failed to exchange Turnstile token: ${response.status}`);\n            }\n\n            const data = await response.json();\n            const jwt = data.access_token;\n            const expiry = Date.now() + 60 * 60 * 1000;\n\n            localStorage.setItem('amazon_turnstile_jwt', jwt);\n            localStorage.setItem('amazon_turnstile_expiry', expiry.toString());\n\n            return jwt;\n        })().finally(() => {\n            this._turnstileJwtPromise = null;\n        });\n\n        return this._turnstileJwtPromise;\n    }\n\n    async canPlayAmazonMusicStream(streamInfo) {\n        return streamInfo?.provider === 'amazon';\n    getJwtExpiry(token) {\n        try {\n            const encoded = token.split('.')[1];\n            const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/');\n            const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);\n            return Number(JSON.parse(atob(padded)).exp || 0);\n        } catch {\n            return 0;\n        }\n    }\n\n    clearMonochromePlaybackSession() {\n        try {\n            sessionStorage.removeItem(MONOCHROME_PLAYBACK_SESSION_KEY);\n        } catch {}\n    }\n\n    getCachedMonochromePlaybackSession() {\n        try {\n            const token = sessionStorage.getItem(MONOCHROME_PLAYBACK_SESSION_KEY);\n            if (!token) return null;\n            const expiry = this.getJwtExpiry(token);\n            if (expiry <= Math.floor(Date.now() / 1000) + MONOCHROME_SESSION_EXPIRY_LEEWAY_SECONDS) {\n                this.clearMonochromePlaybackSession();\n                return null;\n            }\n            return token;\n        } catch {\n            return null;\n        }\n    }\n\n    async getMonochromePlaybackSession({ forceRefresh = false } = {}) {\n        if (!forceRefresh) {\n            const cachedSession = this.getCachedMonochromePlaybackSession();\n            if (cachedSession) return cachedSession;\n            if (this._monochromeSessionPromise) return this._monochromeSessionPromise;\n        } else {\n            this.clearMonochromePlaybackSession();\n        }\n\n        this._monochromeSessionPromise = (async () => {\n            const turnstileToken = await this.getTurnstileResponse({\n                siteKey: MONOCHROME_PLAYBACK_TURNSTILE_SITE_KEY,\n                action: 'auth',\n                panelId: 'monochrome-playback-turnstile-panel',\n                containerId: 'monochrome-playback-turnstile-container',\n                message: 'Monochrome Playback needs a quick browser check.',\n            });\n            if (!turnstileToken) return null;\n\n            const apiBaseUrl = monochromePlaybackSettings.getApiBaseUrl().replace(/\/+$/, '');\n            const response = await this.fetchWithTimeout(\n                `${apiBaseUrl}/auth/turnstile`,\n                {\n                    method: 'POST',\n                    headers: { 'Content-Type': 'application/json' },\n                    body: JSON.stringify({ turnstile_token: turnstileToken }),\n                },\n                15000\n            );\n            if (!response.ok) {\n                throw new Error(`Monochrome Playback session exchange failed: ${response.status}`);\n            }\n\n            const data = await response.json();\n            const accessToken = String(data.access_token || '').trim();\n            if (!accessToken) {\n                throw new Error('Monochrome Playback session exchange returned no access token');\n            }\n            sessionStorage.setItem(MONOCHROME_PLAYBACK_SESSION_KEY, accessToken);\n            return accessToken;\n        })().finally(() => {\n            this._monochromeSessionPromise = null;\n        });\n\n        return this._monochromeSessionPromise;\n    }\n\n    setMonochromeRateLimit(response) {\n        const retryAfter = response.headers?.get?.('Retry-After');\n        const seconds = Number(retryAfter);\n        if (Number.isFinite(seconds) && seconds > 0) {\n            this.monochromeRateLimitedUntil = Date.now() + seconds * 1000;\n            return;\n        }\n        const retryAt = Date.parse(retryAfter || '');\n        this.monochromeRateLimitedUntil = Number.isFinite(retryAt) ? retryAt : Date.now() + 30 * 1000;\n    }\n\n    async getMonochromePlaybackStreamUrl(tidalTrackId, options = {}) {\n        try {\n            if (!monochromePlaybackSettings?.isEnabled() || Date.now() < this.monochromeRateLimitedUntil) {\n                return null;\n            }\n\n            const track =\n                options.track || (tidalTrackId ? await this.getTrackMetadata(tidalTrackId).catch(() => null) : null);\n            if (!track) return null;\n\n            const title = this.getAmazonTrackTitle(track);\n            const artist = this.getAmazonTrackArtist(track);\n            if (!title || !artist) return null;\n\n            const body = { song_name: title, artist };\n            const isrc = String(track.isrc || '').trim();\n            const duration = this.getAmazonTrackDuration(track);\n            if (isrc) body.isrc = isrc;\n            if (duration) body.duration = Math.round(duration);\n\n            const apiBaseUrl = monochromePlaybackSettings.getApiBaseUrl().replace(/\/+$/, '');\n\n            for (let attempt = 0; attempt < 2; attempt++) {\n                const headers = { 'Content-Type': 'application/json' };\n                const sessionToken = await this.getMonochromePlaybackSession({ forceRefresh: attempt > 0 });\n                if (!sessionToken) return null;\n                headers.Authorization = `Bearer ${sessionToken}`;\n\n                const response = await this.fetchWithTimeout(\n                    `${apiBaseUrl}/playback`,\n                    {\n                        method: 'POST',\n                        headers,\n                        body: JSON.stringify(body),\n                    },\n                    20000\n                );\n\n                if (response.status === 401 && attempt === 0) {\n                    this.clearMonochromePlaybackSession();\n                    continue;\n                }\n                if (response.status === 429) {\n                    this.setMonochromeRateLimit(response);\n                    return null;\n                }\n                if (!response.ok) {\n                    throw new Error(`Monochrome Playback request failed: ${response.status}`);\n                }\n\n                const data = await response.json();\n                if (!data?.url) {\n                    throw new Error('Monochrome Playback returned no stream URL');\n                }\n\n                return {\n                    url: data.url,\n                    sourceUrl: data.url,\n                    provider: 'monochrome',\n                    playbackType: 'direct',\n                    quality: 'LOSSLESS',\n                    qualityDisplay: 'FLAC',\n                    mimeType: 'audio/flac',\n                    mediaMimeType: 'audio/flac',\n                    trackId: data.track_id || null,\n                    recordingId: data.recording_id || null,\n                    rgInfo: {\n                        trackReplayGain: 0,\n                        trackPeakAmplitude: 1,\n                        albumReplayGain: 0,\n                        albumPeakAmplitude: 1,\n                    },\n                };\n            }\n        } catch (error) {\n            console.warn(`Monochrome Playback failed for Tidal track ${tidalTrackId}:`, error);\n        }\n        return null;\n    }\n\n    bytesToHex(bytes) {\n        return Array.from(bytes)\n            .map((byte) => byte.toString(16).padStart(2, '0'))\n            .join('');\n    }\n\n    escapeXml(value) {\n        return String(value ?? '')\n            .replace(/&/g, '&amp;')\n            .replace(/</g, '&lt;')\n            .replace(/>/g, '&gt;')\n            .replace(/"/g, '&quot;')\n            .replace(/'/g, '&apos;');\n    }\n\n    formatDurationForMpd(seconds) {\n        const duration = Number.isFinite(seconds) && seconds > 0 ? seconds : 3600;\n        return `PT${duration.toFixed(3).replace(/\.?0+$/, '')}S`;\n    }\n\n    formatKeyIdUuid(keyId) {\n        const normalized = String(keyId || '')\n            .replace(/-/g, '')\n            .toLowerCase();\n        if (normalized.length !== 32) return normalized;\n        return `${normalized.slice(0, 8)}-${normalized.slice(8, 12)}-${normalized.slice(12, 16)}-${normalized.slice(16, 20)}-${normalized.slice(20)}`;\n    }\n\n    readMp4Uint32(bytes, offset) {\n        if (offset + 4 > bytes.length) return null;\n        return ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;\n    }\n\n    readMp4Uint64(bytes, offset) {\n        const high = this.readMp4Uint32(bytes, offset);\n        const low = this.readMp4Uint32(bytes, offset + 4);\n        if (high == null || low == null) return null;\n        return high * 2 ** 32 + low;\n    }\n\n    readMp4Type(bytes, offset) {\n        if (offset + 4 > bytes.length) return null;\n        return String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);\n    }\n\n    findTopLevelMp4Boxes(buffer) {\n        const bytes = new Uint8Array(buffer);\n        const boxes = [];\n        let offset = 0;\n\n        while (offset + 8 <= bytes.length) {\n            const size32 = this.readMp4Uint32(bytes, offset);\n            const type = this.readMp4Type(bytes, offset + 4);\n            if (!size32 || !type) break;\n\n            let size = size32;\n            let headerSize = 8;\n            if (size32 === 1) {\n                size = this.readMp4Uint64(bytes, offset + 8);\n                headerSize = 16;\n            } else if (size32 === 0) {\n                size = bytes.length - offset;\n            }\n\n            if (!Number.isFinite(size) || size < headerSize || offset + size > bytes.length) break;\n            boxes.push({\n                type,\n                start: offset,\n                end: offset + size - 1,\n                size,\n                headerSize,\n            });\n            offset += size;\n        }\n\n        return boxes;\n    }\n\n    findCencDefaultKid(buffer) {\n        const bytes = new Uint8Array(buffer);\n\n        for (let i = 4; i < bytes.length - 32; i++) {\n            if (this.readMp4Type(bytes, i) !== 'tenc') continue;\n\n            const size = this.readMp4Uint32(bytes, i - 4);\n            if (size < 32 || i - 4 + size > bytes.length) continue;\n\n            const payloadOffset = i + 4;\n            const kidOffset = payloadOffset + 8;\n            return this.bytesToHex(bytes.slice(kidOffset, kidOffset + 16));\n        }\n\n        return null;\n    }\n\n    findMp4SidxInfo(buffer) {\n        const bytes = new Uint8Array(buffer);\n\n        for (let typeOffset = 4; typeOffset < bytes.length - 32; typeOffset++) {\n            if (this.readMp4Type(bytes, typeOffset) !== 'sidx') continue;\n\n            const boxStart = typeOffset - 4;\n            let size = this.readMp4Uint32(bytes, boxStart);\n            let payloadOffset = typeOffset + 4;\n            if (size === 1) {\n                size = this.readMp4Uint64(bytes, boxStart + 8);\n                payloadOffset = boxStart + 16;\n            }\n\n            if (!Number.isFinite(size) || size < 32 || boxStart + size > bytes.length) continue;\n\n            const version = bytes[payloadOffset];\n            let cursor = payloadOffset + 4;\n            cursor += 4;\n            const timescale = this.readMp4Uint32(bytes, cursor);\n            cursor += 4;\n            if (!timescale) continue;\n\n            let earliestPresentationTime;\n            let firstOffset;\n            if (version === 0) {\n                earliestPresentationTime = this.readMp4Uint32(bytes, cursor);\n                cursor += 4;\n                firstOffset = this.readMp4Uint32(bytes, cursor);\n                cursor += 4;\n            } else if (version === 1) {\n                earliestPresentationTime = this.readMp4Uint64(bytes, cursor);\n                cursor += 8;\n                firstOffset = this.readMp4Uint64(bytes, cursor);\n                cursor += 8;\n            } else {\n                continue;\n            }\n\n            cursor += 2;\n            if (cursor + 2 > boxStart + size) continue;\n            const referenceCount = (bytes[cursor] << 8) | bytes[cursor + 1];\n            cursor += 2;\n            let durationUnits = 0;\n            for (let i = 0; i < referenceCount; i++) {\n                if (cursor + 12 > boxStart + size) {\n                    throw new Error('Amazon Music MP4 has a truncated SIDX');\n                }\n                const chunk = this.readMp4Uint32(bytes, cursor);\n                cursor += 4;\n                const referenceType = (chunk & 0x80000000) >>> 31;\n                const subsegmentDuration = this.readMp4Uint32(bytes, cursor);\n                cursor += 4;\n                cursor += 4;\n                if (referenceType === 1 || subsegmentDuration == null) {\n                    throw new Error('Amazon Music MP4 uses unsupported hierarchical SIDX');\n                }\n                durationUnits += subsegmentDuration;\n            }\n\n            return {\n                start: boxStart,\n                end: boxStart + size - 1,\n                firstSegmentStart: boxStart + size + firstOffset,\n                durationSeconds: durationUnits / timescale,\n                earliestPresentationTime,\n                timescale,\n            };\n        }\n\n        return null;\n    }\n\n    async readInitialBytes(response, maxBytes) {\n        if (!response.body) {\n            const buffer = await response.arrayBuffer();\n            return buffer.slice(0, maxBytes);\n        }\n\n        const reader = response.body.getReader();\n        const chunks = [];\n        let totalBytes = 0;\n\n        try {\n            while (totalBytes < maxBytes) {\n                const { done, value } = await reader.read();\n                if (done || !value) break;\n\n                chunks.push(value);\n                totalBytes += value.byteLength;\n            }\n        } finally {\n            await reader.cancel().catch(() => {});\n        }\n\n        const output = new Uint8Array(Math.min(totalBytes, maxBytes));\n        let offset = 0;\n        for (const chunk of chunks) {\n            const slice = chunk.subarray(0, Math.min(chunk.byteLength, output.byteLength - offset));\n            output.set(slice, offset);\n            offset += slice.byteLength;\n            if (offset >= output.byteLength) break;\n        }\n\n        return output.buffer;\n    }\n\n    getAmazonInitRangeEnd(buffer, sidxInfo) {\n        const boxes = this.findTopLevelMp4Boxes(buffer);\n        const firstSegmentStart = sidxInfo?.firstSegmentStart ?? null;\n        const moov = boxes.find((box) => box.type === 'moov');\n\n        if (moov && (firstSegmentStart == null || moov.end < firstSegmentStart)) {\n            return moov.end;\n        }\n\n        if (sidxInfo?.start > 0) {\n            return sidxInfo.start - 1;\n        }\n\n        if (firstSegmentStart && firstSegmentStart > 0) {\n            return firstSegmentStart - 1;\n        }\n\n        return null;\n    }\n\n    async getAmazonCencMp4Info(streamUrl) {\n        const maxInitBytes = 2 * 1024 * 1024;\n        const response = await this.fetchWithTimeout(\n            streamUrl,\n            {\n                headers: { Range: `bytes=0-${maxInitBytes - 1}` },\n            },\n            12000\n        );\n\n        if (!response.ok && response.status !== 206) {\n            throw new Error(`Amazon init segment fetch failed: ${response.status}`);\n        }\n\n        const buffer = await this.readInitialBytes(response, maxInitBytes);\n        const keyId = this.findCencDefaultKid(buffer);\n        const sidx = this.findMp4SidxInfo(buffer);\n        if (!sidx) {\n            throw new Error('Could not find Amazon Music MP4 segment index');\n        }\n\n        return {\n            keyId,\n            sidx,\n            initRangeEnd: this.getAmazonInitRangeEnd(buffer, sidx),\n        };\n    }\n\n    createAmazonMusicDashManifest(streamUrl, trackInfo, qualityInfo, mp4Info) {\n        const codec = this.getAmazonCodecString(qualityInfo?.codec);\n        const bandwidth = Number(qualityInfo?.bandwidth) || 1000000;\n        const sampleRate = Number(qualityInfo?.sampleRate) || 48000;\n        const duration = this.formatDurationForMpd(mp4Info?.sidx?.durationSeconds);\n        const initEnd = Number.isFinite(mp4Info?.initRangeEnd) ? mp4Info.initRangeEnd : mp4Info.sidx.start - 1;\n        const segmentBaseAttrs =\n            mp4Info?.sidx?.timescale && mp4Info?.sidx?.earliestPresentationTime != null\n                ? ` timescale="${mp4Info.sidx.timescale}" presentationTimeOffset="${mp4Info.sidx.earliestPresentationTime}"`\n                : '';\n        const representationId = this.escapeXml(trackInfo?.asin || 'amazon-music');\n        const escapedStreamUrl = this.escapeXml(streamUrl);\n\n        let contentProtection = '';\n        if (mp4Info?.keyId) {\n            const keyId = this.formatKeyIdUuid(mp4Info.keyId);\n            contentProtection = `\n      <ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc" cenc:default_KID="${keyId}"/>\n      <ContentProtection schemeIdUri="urn:uuid:e2719d58-a985-b3c9-781a-b030af78d30e" cenc:default_KID="${keyId}"/>`;\n        }\n\n        return `<?xml version="1.0" encoding="UTF-8"?>\n<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:cenc="urn:mpeg:cenc:2013" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011" type="static" mediaPresentationDuration="${duration}" minBufferTime="PT1.5S">\n  <Period id="0" start="PT0S" duration="${duration}">\n    <AdaptationSet id="1" contentType="audio" mimeType="audio/mp4" codecs="${this.escapeXml(codec)}" audioSamplingRate="${sampleRate}" segmentAlignment="true" startWithSAP="1">${contentProtection}\n      <Representation id="${representationId}" bandwidth="${bandwidth}" codecs="${this.escapeXml(codec)}">\n        <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="2"/>\n        <BaseURL>${escapedStreamUrl}</BaseURL>\n        <SegmentBase indexRange="${mp4Info.sidx.start}-${mp4Info.sidx.end}"${segmentBaseAttrs}>\n          <Initialization range="0-${initEnd}"/>\n        </SegmentBase>\n      </Representation>\n    </AdaptationSet>\n  </Period>\n</MPD>`;\n    }\n\n    createAmazonMusicDashUrl(streamUrl, trackInfo, qualityInfo, mp4Info) {\n        const manifest = this.createAmazonMusicDashManifest(streamUrl, trackInfo, qualityInfo, mp4Info);\n        const blob = new Blob([manifest], { type: 'application/dash+xml' });\n        return URL.createObjectURL(blob);\n    }\n\n    getAmazonTrackTitle(track) {\n        const title = String(track?.title || track?.name || '').trim();\n        const version = String(track?.version || '').trim();\n        return title && version ? `${title} (${version})` : title;\n    }\n\n    getAmazonTrackArtist(track) {\n        if (Array.isArray(track?.artists) && track.artists.length > 0) {\n            const artists = track.artists\n                .map((artist) => (typeof artist === 'string' ? artist : artist?.name || artist?.title))\n                .map((name) => String(name || '').trim())\n                .filter(Boolean);\n            if (artists.length > 0) return artists.join(', ');\n        }\n        if (typeof track?.artist === 'string') return track.artist.trim();\n        if (track?.artist?.name) return String(track.artist.name).trim();\n        return '';\n    }\n\n    getAmazonTrackAlbum(track) {\n        if (typeof track?.album === 'string') return track.album.trim();\n        return String(track?.album?.title || track?.album?.name || '').trim();\n    }\n\n    getAmazonTrackDuration(track) {\n        const duration = Number(track?.duration);\n        if (!Number.isFinite(duration) || duration <= 0) return null;\n        return duration > 10000 ? duration / 1000 : duration;\n    }\n\n    buildAmazonTrackLookupParams(track, amazonQuality) {\n        const title = this.getAmazonTrackTitle(track);\n        const artist = this.getAmazonTrackArtist(track);\n        const album = this.getAmazonTrackAlbum(track);\n        const duration = this.getAmazonTrackDuration(track);\n\n        if (!title || !artist) {\n            throw new Error('Amazon Music lookup requires a track title and artist');\n        }\n\n        const params = new URLSearchParams({\n            track: title,\n            duration: duration ? String(Math.round(duration)) : '',\n            album,\n            artist,\n        });\n\n        if (amazonQuality) {\n            params.set('quality', amazonQuality);\n        }\n\n        return params;\n    }\n\n    getAmazonTrackApiPayload(data) {\n        if (data?.stream_url) return data;\n        if (data?.data?.stream_url) return data.data;\n        if (data?.track?.stream_url) return data.track;\n        if (data?.result?.stream_url) return data.result;\n        return data;\n    }\n\n    async fetchAmazonTrackApi(apiBaseUrl, track, amazonQuality, { forceTurnstile = false } = {}) {\n        const params = this.buildAmazonTrackLookupParams(track, amazonQuality);\n        const headers = {};\n        const bypassToken = amazonMusicSettings.getTurnstileBypassToken().trim();\n\n        if (bypassToken && !forceTurnstile) {\n            params.set('bypass_token', bypassToken);\n        } else {\n            const turnstileJwt = await this.getTurnstileJwt({ forceRefresh: forceTurnstile });\n            if (!turnstileJwt) {\n                return null;\n            }\n            headers['X-Turnstile-JWT'] = turnstileJwt;\n        }\n\n        const response = await this.fetchWithTimeout(\n            `${apiBaseUrl}/api/track/?${params.toString()}`,\n            {\n                headers,\n            },\n            15000\n        );\n        this.handleAmazonApiStatus(response.status, 'Amazon Music API');\n        return response;\n    }\n\n    async getAmazonMusicStreamUrl(tidalTrackId, quality = 'LOSSLESS', options = {}) {\n        try {\n            if (!amazonMusicSettings?.isEnabled()) {\n                return null;\n            }\n            if (this.isAmazonRateLimited()) {\n                return null;\n            }\n\n            const track =\n                options.track || (tidalTrackId ? await this.getTrackMetadata(tidalTrackId).catch(() => null) : null);\n            if (!track) {\n                return null;\n            }\n\n            let turnstileJwtPromise = null;\n            const bypassToken = amazonMusicSettings.getTurnstileBypassToken().trim();\n            if (!bypassToken) {\n                turnstileJwtPromise = this.getTurnstileJwt().catch(() => null);\n            }\n\n            if (turnstileJwtPromise) {\n                await turnstileJwtPromise;\n            }\n\n            const amazonQuality = this.getAmazonMusicQuality(quality, options);\n            const apiBaseUrl = amazonMusicSettings.getApiBaseUrl().replace(/\/+$/, '');\n\n            let response = await this.fetchAmazonTrackApi(apiBaseUrl, track, amazonQuality);\n            if (response && (response.status === 401 || response.status === 428)) {\n                this.clearAmazonTurnstileJwt();\n                response = await this.fetchAmazonTrackApi(apiBaseUrl, track, amazonQuality, { forceTurnstile: true });\n            }\n            if (!response) return null;\n\n            if (!response.ok) {\n                throw new Error(`Amazon Music API failed: ${response.status}`);\n            }\n\n            const data = this.getAmazonTrackApiPayload(await response.json());\n            if (!data?.stream_url) {\n                throw new Error('Amazon Music API returned no stream URL');\n            }\n\n            const decryptionKey = this.getAmazonDecryptionKey(data);\n            const selectedQualityInfo = this.getAmazonSelectedQualityInfo(data);\n            const mp4Info = await this.getAmazonCencMp4Info(data.stream_url).catch((e) => {\n                console.warn('Failed to get Amazon MP4 info:', e);\n                return null;\n            });\n            if (decryptionKey && !mp4Info?.keyId && !options.allowCencWithoutKeyId) {\n                throw new Error('Could not find Amazon Music CENC key ID');\n            }\n            const manifestUrl = mp4Info\n                ? this.createAmazonMusicDashUrl(data.stream_url, data, selectedQualityInfo, mp4Info)\n                : data.stream_url;\n\n            return {\n                url: manifestUrl,\n                sourceUrl: data.stream_url,\n                asin: data.asin || data.id || null,\n                provider: 'amazon',\n                playbackType: mp4Info ? (mp4Info.keyId ? 'dash-cenc' : 'dash') : 'direct',\n                quality: data.quality_selected || amazonQuality,\n                qualityDisplay: this.getAmazonQualityDisplay(data, selectedQualityInfo),\n                decryptionKey,\n                keyId: mp4Info?.keyId || null,\n                mimeType: mp4Info ? 'application/dash+xml' : this.getAmazonMimeType(selectedQualityInfo),\n                mediaMimeType: this.getAmazonMimeType(selectedQualityInfo),\n                rgInfo: {\n                    trackReplayGain:\n                        data.replay_gain?.program_loudness_lufs != null\n                            ? -14.0 - data.replay_gain.program_loudness_lufs\n                            : 0,\n                    trackPeakAmplitude: 1,\n                    albumReplayGain:\n                        data.replay_gain?.program_loudness_lufs != null\n                            ? -14.0 - data.replay_gain.program_loudness_lufs\n                            : 0,\n                    albumPeakAmplitude: 1,\n                },\n            };\n        } catch (error) {\n            console.warn(`Amazon Music stream failed for Tidal track ${tidalTrackId}:`, error);\n            return null;\n        }\n    }\n\n    async getStreamUrl(id, quality = 'LOSSLESS', options = {}) {\n        if (String(id).startsWith('sc_')) {\n            const { soundCloudAPI } = await import('./soundcloud-api.js');\n            return await soundCloudAPI.getStreamUrl(id, options);\n        }\n        if (devModeSettings.isEnabled() && !options._fromProvider) {\n            return await this.getFallbackProvider(true).getStreamUrl(id, quality);\n        }\n        const cacheKey = `stream_info_${id}_${quality}`;\n\n        if (this.streamCache.has(cacheKey)) {\n            const cached = this.streamCache.get(cacheKey);\n            if (cached?.provider === 'amazon' && this.isAmazonRateLimited()) {\n                this.streamCache.delete(cacheKey);\n            } else {\n                return cached;\n            }\n        }\n\n        if (devModeSettings.isEnabled()) {\n            const lookup = await this.getTrackFromDevMode(id, quality);\n            let streamUrl;\n            if (lookup.originalTrackUrl) {\n                streamUrl = lookup.originalTrackUrl;\n            } else if (lookup.info?.manifest) {\n                streamUrl = this.extractStreamUrlFromManifest(lookup.info.manifest);\n            }\n            if (!streamUrl) {\n                throw new Error('Could not resolve stream URL from dev mode');\n            }\n            const result = {\n                url: streamUrl,\n                rgInfo: lookup.info\n                    ? {\n                          trackReplayGain: lookup.info.trackReplayGain || lookup.info.replayGain,\n                          trackPeakAmplitude: lookup.info.trackPeakAmplitude || lookup.info.peakAmplitude,\n                          albumReplayGain: lookup.info.albumReplayGain,\n                          albumPeakAmplitude: lookup.info.albumPeakAmplitude,\n                      }\n                    : null,\n            };\n            this.streamCache.set(cacheKey, result);\n            return result;\n        }\n\n        const track = await this.getTrackMetadata(id);\n\n        const monochromeResult = await this.getMonochromePlaybackStreamUrl(id, { track });\n        if (monochromeResult?.url) {\n            // Monochrome Playback URLs may be single-use. Never place them in the reusable stream cache.\n            return monochromeResult;\n        }\n\n        if (amazonMusicSettings?.isEnabled() && !amazonMusicSettings.getTurnstileBypassToken().trim()) {\n            this.getTurnstileJwt().catch(() => null);\n        }\n\n        const canPlayAmazonCenc = canUseNativeAmazonCenc;\n        const needsProxyDecryption = !canPlayAmazonCenc;\n\n        let actualQuality = quality;\n\n        const targetCodec = getAmazonDecrypterCodec(actualQuality);\n\n        let amazonResult = null;\n        let qobuzResult = null;\n        let deezerResult = null;\n\n        const preferAmazon = Math.random() >= 0.5;\n        if (preferAmazon) {\n            amazonResult = await this.getAmazonMusicStreamUrl(id, actualQuality, {\n                preferAdaptiveAuto: true,\n                track,\n                allowCencWithoutKeyId: needsProxyDecryption,\n            });\n            if (!amazonResult?.url && track?.isrc) {\n                qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality, track.title || track.name);\n            }\n        } else {\n            if (track?.isrc) {\n                qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality, track.title || track.name);\n            }\n            if (!qobuzResult?.url) {\n                amazonResult = await this.getAmazonMusicStreamUrl(id, actualQuality, {\n                    preferAdaptiveAuto: true,\n                    track,\n                    allowCencWithoutKeyId: needsProxyDecryption,\n                });\n            }\n        }\n        if (!amazonResult?.url && !qobuzResult?.url && track?.isrc) {\n            deezerResult = await this.getDeezerStreamUrl(track.isrc, quality);\n        }\n\n        if (amazonResult?.url) {\n            let streamUrl = amazonResult.url;\n            let playbackType = amazonResult.playbackType;\n            let provider = amazonResult.provider;\n            const shouldProxyAmazon =\n                needsProxyDecryption && !!amazonResult.decryptionKey && !!(amazonResult.sourceUrl || amazonResult.url);\n\n            console.log('[Amazon SW Decrypter] stream decision', {\n                needsProxyDecryption,\n                shouldProxyAmazon,\n                hasDecryptionKey: !!amazonResult.decryptionKey,\n                hasKeyId: !!amazonResult.keyId,\n                playbackType: amazonResult.playbackType,\n                urlHost: (() => {\n                    try {\n                        return new URL(amazonResult.sourceUrl || amazonResult.url).host;\n                    } catch {\n                        return null;\n                    }\n                })(),\n            });\n\n            // Route CENC streams through our custom SW decrypter on Safari/Firefox to bypass broken EME\n            if (shouldProxyAmazon) {\n                streamUrl = `${window.location.protocol}//${window.location.host}/api/decrypt-stream?url=${encodeURIComponent(amazonResult.sourceUrl || amazonResult.url)}&key=${amazonResult.decryptionKey}&codec=${targetCodec}`;\n                playbackType = []; // Treat as normal unencrypted stream\n                console.log('Routing Amazon Music CENC stream through SW Decrypter');\n            } else if (amazonResult.playbackType?.includes('cenc') && !canPlayAmazonCenc) {\n                if (amazonResult.decryptionKey) {\n                    const params = new URLSearchParams();\n                    // Pass the original source URL (the actual MP4 file) instead of the DASH manifest\n                    params.set('url', amazonResult.sourceUrl || amazonResult.url);\n                    params.set('key', amazonResult.decryptionKey);\n                    params.set('codec', targetCodec);\n                    streamUrl = `/api/decrypt-stream?${params.toString()}`;\n                    playbackType = []; // Treat as normal unencrypted stream\n                    console.log('Routing Amazon Music CENC stream through SW Decrypter');\n                } else {\n                    console.warn('Skipping Amazon Music CENC stream: decryption key missing for SW Decrypter.');\n                    amazonResult = null;\n                }\n            }\n\n            if (amazonResult) {\n                const result = {\n                    url: streamUrl,\n                    sourceUrl: amazonResult.sourceUrl && amazonResult.sourceUrl !== streamUrl ? amazonResult.sourceUrl : undefined,\n                    rgInfo: amazonResult.rgInfo,\n                    provider: provider,\n                    playbackType: playbackType,\n                    quality: amazonResult.quality,\n                    qualityDisplay: amazonResult.qualityDisplay,\n                    decryptionKey: amazonResult.decryptionKey,\n                    keyId: amazonResult.keyId,\n                    mimeType: amazonResult.mimeType,\n                    mediaMimeType: amazonResult.mediaMimeType,\n                };\n                const cleanResult = Object.fromEntries(Object.entries(result).filter(([_, v]) => v !== undefined));\n                this.streamCache.set(cacheKey, cleanResult);\n                return cleanResult;\n            }\n        }\n\n        if (qobuzResult?.url) {\n            const result = {\n                url: qobuzResult.url,\n                rgInfo: qobuzResult.rgInfo || {\n                    trackReplayGain: 0,\n                    trackPeakAmplitude: 1,\n                    albumReplayGain: 0,\n                    albumPeakAmplitude: 1,\n                },\n                provider: 'qobuz',\n            };\n            this.streamCache.set(cacheKey, result);\n            return result;\n        }\n\n        if (deezerResult?.url) {\n            const result = {\n                url: deezerResult.url,\n                rgInfo: {\n                    trackReplayGain: 0,\n                    trackPeakAmplitude: 1,\n                    albumReplayGain: 0,\n                    albumPeakAmplitude: 1,\n                },\n                provider: 'deezer',\n                deezerFormat: deezerResult.format,\n                deezerHiRes: deriveTrackQuality(track) === 'HI_RES_LOSSLESS',\n            };\n            this.streamCache.set(cacheKey, result);\n            return result;\n        }\n\n        if (track?.isrc && !qobuzResult && !deezerResult && !amazonResult) {\n            // Fallback just in case they weren't fetched\n            deezerResult = await this.getDeezerStreamUrl(track.isrc, quality);\n            if (deezerResult?.url) {\n                const result = {\n                    url: deezerResult.url,\n                    rgInfo: {\n                        trackReplayGain: 0,\n                        trackPeakAmplitude: 1,\n                        albumReplayGain: 0,\n                        albumPeakAmplitude: 1,\n                    },\n                    provider: 'deezer',\n                    deezerFormat: deezerResult.format,\n                    deezerHiRes: deriveTrackQuality(track) === 'HI_RES_LOSSLESS',\n                };\n                this.streamCache.set(cacheKey, result);\n                return result;\n            }\n        }\n\n        const hifiInstances = await this.settings.getInstances('streaming').catch(() => []);\n        if (hifiInstances && hifiInstances.length > 0) {\n            try {\n                const hifiTrack = await this.getTrack(id, quality, { adaptive: false });\n                if (hifiTrack?.info?.manifest) {\n                    const manifest = JSON.parse(atob(hifiTrack.info.manifest));\n                    if (manifest?.urls?.[0]) {\n                        const result = {\n                            url: manifest.urls[0],\n                            rgInfo: {\n                                trackReplayGain: hifiTrack.info.trackReplayGain ?? 0,\n                                trackPeakAmplitude: hifiTrack.info.trackPeakAmplitude ?? 1,\n                                albumReplayGain: hifiTrack.info.albumReplayGain ?? 0,\n                                albumPeakAmplitude: hifiTrack.info.albumPeakAmplitude ?? 1,\n                            },\n                        };\n                        this.streamCache.set(cacheKey, result);\n                        return result;\n                    }\n                }\n            } catch {\n                // ignore fallback error\n            }\n        }\n\n        notifyAudioSourceMissing();\n        throw new Error(\n            track?.isrc\n                ? 'Could not resolve stream URL from Monochrome Playback, Amazon Music, Qobuz, Deezer, or HiFi streaming APIs'\n                : 'Could not resolve stream URL: Monochrome Playback and Amazon Music failed and the track has no ISRC for Qobuz/Deezer lookup'\n        );\n    }\n\n    async getVideoStreamUrl(id) {\n        const cacheKey = `video_stream_${id}`;\n\n        if (this.streamCache.has(cacheKey)) {\n            return this.streamCache.get(cacheKey);\n        }\n\n        const lookup = await this.getVideo(id);\n\n        let streamUrl;\n\n        const findValue = (obj, key) => {\n            if (!obj || typeof obj !== 'object') return null;\n            if (obj[key]) return obj[key];\n            for (const v of Object.values(obj)) {\n                if (v && typeof v === 'object') {\n                    const f = findValue(v, key);\n                    if (f) return f;\n                }\n            }\n            return null;\n        };\n\n        const manifest = findValue(lookup, 'manifest') || findValue(lookup, 'Manifest');\n        if (manifest) {\n            streamUrl = this.extractStreamUrlFromManifest(manifest);\n        }\n\n        if (!streamUrl) {\n            streamUrl =\n                findValue(lookup, 'OriginalTrackUrl') ||\n                findValue(lookup, 'originalTrackUrl') ||\n                findValue(lookup, 'url') ||\n                findValue(lookup, 'streamUrl') ||\n                findValue(lookup, 'manifestUrl');\n        }\n\n        if (!streamUrl) {\n            throw new Error(`Could not resolve video stream URL for ID: ${id}`);\n        }\n\n        if (!(lookup instanceof TidalResponse)) {\n            this.streamCache.set(cacheKey, streamUrl);\n        }\n        return streamUrl;\n    }\n\n    async enrichTrack(input, { downloadQuality = 'HI_RES_LOSSLESS' }) {\n        if (downloadQuality == 'DOLBY_ATMOS' && !input?.audioModes?.includes('DOLBY_ATMOS')) {\n            downloadQuality = 'LOSSLESS';\n        }\n\n        const id = input?.id || input;\n        const inputTrack = typeof input === 'object' ? input : null;\n        const metadataTrack = id ? await this.getTrackMetadata(id).catch(() => null) : null;\n        const track = metadataTrack\n            ? this.prepareTrack({ ...(inputTrack || {}), ...metadataTrack })\n            : inputTrack?.isrc\n              ? inputTrack\n              : await this.getTrackMetadata(id);\n        const isVideo = track?.type?.toLowerCase().includes('video');\n        const cleanQuality = isCustomFormat(downloadQuality) ? 'LOSSLESS' : downloadQuality;\n\n        let lookup = null;\n        let externalRgInfo = null;\n        let externalStreamUrl = null;\n        let externalStreamType = null;\n        let externalProvider = null;\n        let externalDecryptionKey = null;\n        let externalKeyId = null;\n        let externalMimeType = null;\n        let externalMediaMimeType = null;\n        let externalSourceUrl = null;\n\n        if (track?.provider === 'soundcloud' || track?.isSoundCloud || String(id).startsWith('sc_')) {\n            const { soundCloudAPI } = await import('./soundcloud-api.js');\n            const scStream = await soundCloudAPI.getStreamUrl(id);\n            externalStreamUrl = scStream.url;\n            externalProvider = 'soundcloud';\n            externalSourceUrl = scStream.url;\n            externalMimeType = scStream.mimeType;\n            lookup = {\n                info: {\n                    audioQuality: 'HIGH',\n                    trackReplayGain: 0,\n                    trackPeakAmplitude: 1,\n                    albumReplayGain: 0,\n                    albumPeakAmplitude: 1,\n                },\n            };\n        } else if (isVideo) {\n            lookup = await this.getVideo(id);\n        } else if (devModeSettings.isEnabled()) {\n            let fallbackStream = null;\n            try {\n                const fallbackProvider = this.getFallbackProvider(true);\n                if (fallbackProvider) {\n                    fallbackStream = await fallbackProvider.getTrackForDownload(id, cleanQuality);\n                }\n            } catch (err) {\n                console.debug('[DevMode Download] Fallback download lookup failed, falling back to TIDAL Dev Mode:', err);\n            }\n\n            if (fallbackStream && fallbackStream.url && fallbackStream.provider === 'qobuz') {\n                externalStreamUrl = fallbackStream.url;\n                externalProvider = 'qobuz';\n                externalSourceUrl = fallbackStream.url;\n                lookup = {\n                    info: {\n                        audioQuality: fallbackStream.quality || cleanQuality,\n                        trackReplayGain: fallbackStream.rgInfo?.trackReplayGain ?? 0,\n                        trackPeakAmplitude: fallbackStream.rgInfo?.trackPeakAmplitude ?? 1,\n                        albumReplayGain: fallbackStream.rgInfo?.albumReplayGain ?? 0,\n                        albumPeakAmplitude: fallbackStream.rgInfo?.albumPeakAmplitude ?? 1,\n                    },\n                };\n            } else {\n                lookup = new PlaybackInfo(await this.getTrackFromDevMode(id, cleanQuality));\n            }\n        } else {\n            let amazonResult = null;\n            let qobuzResult = null;\n            let deezerResult = null;\n            const getAmazonForDownload = async () => {\n                try {\n                    return await this.getAmazonMusicStreamUrl(id, cleanQuality, { track });\n                } catch (error) {\n                    console.debug('Amazon Music stream lookup failed during download enrichment:', error);\n                    return null;\n                }\n            };\n\n            if (track?.isrc) {\n                qobuzResult = await this.getQobuzStreamUrl(track.isrc, cleanQuality, track.title || track.name);\n            }\n            if (!qobuzResult?.url) {\n                amazonResult = await getAmazonForDownload();\n                if (!amazonResult?.url && track?.isrc) {\n                    deezerResult = await this.getDeezerStreamUrl(track.isrc, cleanQuality);\n                }\n            }\n\n            const externalResult = qobuzResult?.url ? qobuzResult : amazonResult?.url ? amazonResult : deezerResult;\n            if (externalResult?.url) {\n                externalStreamUrl = externalResult.url;\n                externalRgInfo = externalResult.rgInfo;\n                externalStreamType = externalResult.playbackType || null;\n                externalProvider =\n                    externalResult.provider || (qobuzResult?.url ? 'qobuz' : amazonResult?.url ? 'amazon' : 'deezer');\n                externalDecryptionKey = externalResult.decryptionKey || null;\n                externalKeyId = externalResult.keyId || null;\n                externalMimeType = externalResult.mimeType || null;\n                externalMediaMimeType = externalResult.mediaMimeType || externalMimeType;\n                externalSourceUrl = externalResult.sourceUrl || externalStreamUrl;\n                lookup = {\n                    info: {\n                        audioQuality: cleanQuality,\n                        trackReplayGain: externalRgInfo?.trackReplayGain ?? 0,\n                        trackPeakAmplitude: externalRgInfo?.trackPeakAmplitude ?? 1,\n                        albumReplayGain: externalRgInfo?.albumReplayGain ?? 0,\n                        albumPeakAmplitude: externalRgInfo?.albumPeakAmplitude ?? 1,\n                    },\n                };\n            } else {\n                deezerResult = track?.isrc ? await this.getDeezerStreamUrl(track.isrc, 'LOSSLESS') : null;\n                if (deezerResult?.url) {\n                    externalProvider = 'deezer';\n                    externalStreamUrl = deezerResult.url;\n                    externalSourceUrl = deezerResult.url;\n                    lookup = {\n                        info: {\n                            audioQuality: cleanQuality,\n                            trackReplayGain: 0,\n                            trackPeakAmplitude: 1,\n                            albumReplayGain: 0,\n                            albumPeakAmplitude: 1,\n                        },\n                    };\n                } else {\n                    try {\n                        lookup = new PlaybackInfo(await this.getTrack(id, cleanQuality));\n                    } catch (tidalError) {\n                        try {\n                            if (cleanQuality === 'HI_RES_LOSSLESS') {\n                                lookup = new PlaybackInfo(await this.getTrack(id, 'LOSSLESS'));\n                            } else {\n                                throw tidalError;\n                            }\n                        } catch {\n                            try {\n                                if (cleanQuality === 'HI_RES_LOSSLESS' || cleanQuality === 'LOSSLESS') {\n                                    lookup = new PlaybackInfo(await this.getTrack(id, 'HIGH'));\n                                } else {\n                                    throw tidalError;\n                                }\n                            } catch {\n                                try {\n                                    if (cleanQuality !== 'LOW') {\n                                        lookup = new PlaybackInfo(await this.getTrack(id, 'LOW'));\n                                    } else {\n                                        throw tidalError;\n                                    }\n                                } catch {\n                                    notifyAudioSourceMissing();\n                                    throw new Error(\n                                        track?.isrc\n                                            ? 'Could not resolve audio stream from Amazon Music, Qobuz, or Deezer'\n                                            : 'Cannot resolve audio stream: Amazon Music failed and track has no ISRC for Qobuz/Deezer lookup'\n                                    );\n                                }\n                            }\n                        }\n                    }\n                }\n            }\n        }\n\n        const enrichedTrack = { ...this.prepareTrack(track) };\n        if (externalRgInfo) {\n            enrichedTrack.replayGain = new ReplayGain(externalRgInfo);\n        } else if (lookup.info) {\n            enrichedTrack.replayGain = new ReplayGain({\n                trackReplayGain: lookup.info.trackReplayGain,\n                trackPeakAmplitude: lookup.info.trackPeakAmplitude,\n                albumReplayGain: lookup.info.albumReplayGain,\n                albumPeakAmplitude: lookup.info.albumPeakAmplitude,\n            });\n        }\n\n        if (\n            track.album?.id &&\n            !track.isSoundCloud &&\n            track.provider !== 'soundcloud' &&\n            !String(id).startsWith('sc_') &&\n            (track.album?.totalDiscs == null || track.album?.numberOfTracksOnDisc == null || !track.album?.cover)\n        ) {\n            try {\n                const albumData = await this.getAlbum(track.album.id);\n                enrichedTrack.album = new EnrichedAlbum({\n                    ...albumData.album,\n                    ...enrichedTrack.album,\n                    // Preserve the full album's cover when the track's album cover is null/undefined,\n                    // since some API responses omit or null-out cover in the track's album sub-object.\n                    cover: enrichedTrack.album?.cover || albumData.album?.cover,\n                });\n\n                if (albumData.tracks?.length > 0) {\n                    const discTrackCounts = new Map();\n                    let maxDiscNumber = 0;\n                    for (const t of albumData.tracks) {\n                        const dn = getTrackDiscNumber(t);\n                        discTrackCounts.set(dn, (discTrackCounts.get(dn) || 0) + 1);\n                        if (dn > maxDiscNumber) maxDiscNumber = dn;\n                    }\n                    const totalDiscs = maxDiscNumber || 1;\n                    const discNumber = getTrackDiscNumber(track);\n                    enrichedTrack.album = new EnrichedAlbum({\n                        ...(enrichedTrack.album || {}),\n\n                        totalDiscs: track.album?.totalDiscs ?? totalDiscs,\n                        numberOfTracksOnDisc: track.album?.numberOfTracksOnDisc ?? discTrackCounts.get(discNumber),\n                    });\n                }\n            } catch (e) {\n                console.warn('Failed to fetch album for disc info:', e);\n            }\n        }\n\n        if (!(enrichedTrack.album instanceof EnrichedAlbum)) {\n            enrichedTrack.album = new TrackAlbum(enrichedTrack.album);\n        }\n\n        if (!externalProvider) {\n            externalProvider = track?.provider === 'soundcloud' || track?.isSoundCloud || String(id).startsWith('sc_') ? 'soundcloud' : 'tidal';\n        }\n        enrichedTrack.provider = externalProvider;\n        if (externalProvider === 'soundcloud') {\n            enrichedTrack.isSoundCloud = true;\n        }\n\n        const finalEnriched = new EnrichedTrack(enrichedTrack);\n        finalEnriched.provider = externalProvider;\n        if (externalProvider === 'soundcloud') {\n            finalEnriched.isSoundCloud = true;\n        }\n        const result = { lookup, enrichedTrack: finalEnriched, isVideo };\n        result.provider = externalProvider;\n        if (externalStreamUrl) {\n            result.externalStreamUrl = externalStreamUrl;\n            result.externalStreamType = externalStreamType;\n            result.externalProvider = externalProvider;\n            result.externalDecryptionKey = externalDecryptionKey;\n            result.externalKeyId = externalKeyId;\n            result.externalMimeType = externalMimeType;\n            result.externalMediaMimeType = externalMediaMimeType;\n            result.externalSourceUrl = externalSourceUrl;\n        }\n        if (externalProvider === 'qobuz') {\n            result.qobuzStreamUrl = externalStreamUrl;\n        }\n        if (externalProvider === 'amazon') {\n            result.amazonMusicStreamUrl = externalSourceUrl || externalStreamUrl;\n        }\n        return result;\n    }\n\n    /**\n     * Downloads a track or video from TIDAL in the specified quality.\n     *\n     * Handles multiple stream types (DASH, HLS, and direct HTTP), applies post-processing\n     * for audio tracks, adds metadata, and optionally triggers a browser download.\n     *\n     * @async\n     * @param {string} id - The TIDAL track or video ID\n     * @param {string} [quality='HI_RES_LOSSLESS'] - The desired audio quality (e.g., 'HI_RES_LOSSLESS', 'LOSSLESS', 'HIGH', 'NORMAL').\n     *                                               Custom FFMPEG formats are transcoded from LOSSLESS.\n     * @param {string} filename - The filename to save the downloaded content as\n     * @param {Object} [options={}] - Additional download options\n     * @param {Function} [options.onProgress] - Callback function for progress updates with signature:\n     *                                          `(progressEvent) => void`\n     * @param {Object} [options.track] - Track metadata object to attach to the audio file\n     * @param {boolean} [options.calculateDashBytes=true] - Whether to calculate total bytes for DASH streams\n     * @param {AbortSignal} [options.signal] - AbortSignal to cancel the download\n     * @param {boolean} [options.triggerDownload=true] - Whether to trigger browser download after completion\n     *\n     * @returns {Promise<Blob>} The downloaded content as a Blob object\n     *\n     * @throws {Error} If stream URL cannot be resolved, manifest is missing, or download fails\n     * @throws {AbortError} If the download is aborted via the signal\n     * @throws {FfmpegError} If audio transcoding fails\n     */\n    async downloadTrack(id, quality = 'HI_RES_LOSSLESS', filename, options = {}) {\n        // Load ffmpeg in the background.\n        loadFfmpeg().catch(console.error);\n        const metadataModule = await import('./metadata.js');\n        const { prefetchMetadataObjects, addMetadataToAudio } = metadataModule;\n\n        const { onProgress, track: inputTrack, calculateDashBytes = true } = options;\n\n        let prefetchPromises = null;\n\n        try {\n            // Custom FFMPEG formats are not native TIDAL qualities; download LOSSLESS and transcode\n            let downloadQuality = isCustomFormat(quality) ? 'LOSSLESS' : quality;\n\n            const enriched = await this.enrichTrack(inputTrack || id, { downloadQuality });\n            const { lookup, enrichedTrack, isVideo } = enriched;\n\n            let streamUrl = enriched.externalStreamUrl || enriched.qobuzStreamUrl || null;\n            let postProcessingQuality = lookup.info?.audioQuality ?? null;\n            let blob;\n\n            if (streamUrl) {\n                const coverId = getTrackCoverId(enrichedTrack);\n                prefetchPromises = {\n                    coverFetch: coverId ? getCoverBlob(this, coverId).catch(() => null) : Promise.resolve(null),\n                    lyricsFetch: Promise.resolve(null),\n                };\n            } else {\n                prefetchPromises = prefetchMetadataObjects(enrichedTrack, this);\n            }\n\n            if (!streamUrl) {\n                if (lookup.originalTrackUrl) {\n                    streamUrl = lookup.originalTrackUrl;\n                } else {\n                    const findValue = (obj, key) => {\n                        if (!obj || typeof obj !== 'object') return null;\n                        if (obj[key]) return obj[key];\n                        for (const v of Object.values(obj)) {\n                            if (v && typeof v === 'object') {\n                                const f = findValue(v, key);\n                                if (f) return f;\n                            }\n                        }\n                        return null;\n                    };\n\n                    const manifest = isVideo\n                        ? findValue(lookup, 'manifest') || findValue(lookup, 'Manifest')\n                        : lookup.info?.manifest;\n\n                    if (!manifest) {\n                        throw new Error('Could not resolve manifest');\n                    }\n\n                    if (preferDolbyAtmosSettings.isEnabled() && enrichedTrack.audioModes?.includes('DOLBY_ATMOS')) {\n                        try {\n                            const stream = await this.getStreamUrl(id, 'DOLBY_ATMOS', true);\n                            const manifestRes = await fetch(stream.url, { signal: options.signal });\n                            const manifestText = await manifestRes.text();\n                            streamUrl = this.extractStreamUrlFromManifest(btoa(manifestText));\n\n                            if (streamUrl) {\n                                postProcessingQuality = 'DOLBY_ATMOS';\n                            }\n                        } catch (err) {\n                            console.error('Failed to extract Dolby Atmos stream URL:', err);\n                        }\n                    }\n\n                    if (!streamUrl) {\n                        streamUrl = this.extractStreamUrlFromManifest(manifest);\n                        if (!streamUrl) {\n                            throw new Error('Could not resolve stream URL');\n                        }\n                    }\n                }\n            }\n\n            if (enriched.externalProvider === 'amazon' && enriched.externalStreamType?.includes('cenc')) {\n                const response = await fetch(enriched.externalSourceUrl || streamUrl, {\n                    cache: 'no-store',\n                    signal: options.signal,\n                });\n\n                if (!response.ok) {\n                    throw new Error(`Fetch failed: ${response.status}`);\n                }\n\n                const encryptedBlob = await response.blob();\n                blob = await ffmpeg(encryptedBlob, {\n                    rawArgs: [\n                        '-decryption_key',\n                        enriched.externalDecryptionKey,\n                        '-i',\n                        'input',\n                        '-c:a',\n                        'flac',\n                        'output.flac',\n                    ],\n                    outputName: 'output.flac',\n                    outputMime: 'audio/flac',\n                    onProgress,\n                    signal: options.signal,\n                });\n            } else if (streamUrl.startsWith('blob:')) {\n                try {\n                    const downloader = new DashDownloader();\n                    blob = await downloader.downloadDashStream(getProxyUrl(streamUrl), {\n                        signal: options.signal,\n                        onProgress,\n                        calculateDashBytes: calculateDashBytes ?? true,\n                    });\n                } catch (dashError) {\n                    console.error('DASH download failed:', dashError);\n                    if (isVideo) throw dashError;\n\n                    // Fallback to LOSSLESS if DASH fails, but not if we're already downloading LOSSLESS\n                    if (downloadQuality !== 'LOSSLESS') {\n                        console.warn('Falling back to LOSSLESS (16-bit) download.');\n                        return this.downloadTrack(id, 'LOSSLESS', filename, options);\n                    }\n                    throw dashError;\n                }\n            } else if (streamUrl.includes('.m3u8') || streamUrl.includes('application/vnd.apple.mpegurl')) {\n                try {\n                    const downloader = new HlsDownloader();\n                    blob = await downloader.downloadHlsStream(getProxyUrl(streamUrl), {\n                        signal: options.signal,\n                        onProgress,\n                    });\n                } catch (hlsError) {\n                    console.error('HLS download failed:', hlsError);\n                    throw hlsError;\n                }\n            } else {\n                // Try HEAD first to get Content-Length when GET uses chunked encoding (fixes #278)\n                let headContentLength = null;\n                try {\n                    const headResponse = await fetch(streamUrl, {\n                        method: 'HEAD',\n                        cache: 'no-store',\n                        signal: options.signal,\n                    });\n                    if (headResponse.ok) {\n                        const cl = headResponse.headers.get('Content-Length');\n                        if (cl) headContentLength = parseInt(cl, 10);\n                    }\n                } catch (_) {\n                    /* ignore HEAD failure; proceed with GET */\n                }\n\n                const response = await fetch(getProxyUrl(streamUrl), {\n                    cache: 'no-store',\n                    signal: options.signal,\n                });\n\n                if (!response.ok) {\n                    throw new Error(`Fetch failed: ${response.status}`);\n                }\n\n                const contentLengthHeader = response.headers.get('Content-Length');\n                const totalBytes = resolveDownloadTotalBytes(contentLengthHeader, headContentLength);\n\n                let receivedBytes = 0;\n\n                if (response.body) {\n                    const chunks = [];\n\n                    for await (const chunk of readableStreamIterator(response.body)) {\n                        chunks.push(chunk);\n                        receivedBytes += chunk.byteLength;\n\n                        onProgress?.(new DownloadProgress(receivedBytes, totalBytes || undefined));\n                    }\n\n                    const defaultMime = isVideo ? 'video/mp4' : 'audio/flac';\n                    blob = new Blob(chunks, { type: response.headers.get('Content-Type') || defaultMime });\n                } else {\n                    onProgress?.(new DownloadProgress(0, undefined));\n                    blob = await response.blob();\n                    onProgress?.(new DownloadProgress(blob.size, blob.size));\n                }\n            }\n\n            if (!isVideo) {\n                blob = await applyAudioPostProcessing(blob, quality, onProgress, options.signal, postProcessingQuality);\n            }\n\n            // Add metadata if track information is provided\n            if (enrichedTrack) {\n                onProgress?.({\n                    stage: 'processing',\n                    message: 'Adding metadata...',\n                });\n\n                onProgress?.(new DownloadProgress('Adding metadata'));\n                try {\n                    if (isVideo) {\n                        blob = new File(\n                            [\n                                await ffmpeg(blob, {\n                                    args: ['-c', 'copy'],\n                                    outputName: 'output.mp4',\n                                    outputMime: 'video/mp4',\n                                    onProgress,\n                                    signal: options.signal,\n                                }),\n                            ],\n                            'output.mp4',\n                            { type: 'video/mp4' }\n                        );\n                    }\n                    blob = await addMetadataToAudio(blob, enrichedTrack, this, quality, prefetchPromises);\n                } catch (err) {\n                    console.error(err);\n                }\n            }\n\n            if (options.triggerDownload ?? true) {\n                // Detect actual format and fix filename extension if needed\n                const detectedExtension = await getExtensionFromBlob(blob);\n                let finalFilename = filename;\n\n                // Replace extension if it doesn't match detected format\n                const currentExtension = filename.split('.').pop()?.toLowerCase();\n                if (currentExtension && currentExtension !== detectedExtension) {\n                    finalFilename = filename.replace(/\.[^.]+$/, `.${detectedExtension}`);\n                }\n\n                triggerDownload(blob, finalFilename);\n            }\n\n            return blob;\n        } catch (error) {\n            if (error.name === 'AbortError') {\n                throw error;\n            }\n            console.error('Download failed:', error);\n            if (error instanceof FfmpegError || error.code === 'MP3_ENCODING_FAILED') {\n                throw error;\n            }\n            if (error.message === RATE_LIMIT_ERROR_MESSAGE) {\n                throw error;\n            }\n            throw new Error('Download failed. The stream may require a proxy.');\n        }\n    }\n\n    getCoverUrl(id, size = '320') {\n        if (devModeSettings.isEnabled() && !this._inSyncCoverUrl) {\n            this._inSyncCoverUrl = true;\n            try {\n                return this.getFallbackProvider().getCoverUrl(id, size);\n            } finally {\n                this._inSyncCoverUrl = false;\n            }\n        }\n        if (!id) {\n            return `https://picsum.photos/seed/${Math.random()}/${size}`;\n        }\n\n        if (typeof id === 'string' && (id.startsWith('http') || id.startsWith('blob:') || id.startsWith('assets/'))) {\n            return id;\n        }\n\n        const formattedId = String(id).replace(/-/g, '/');\n        return `https://resources.tidal.com/images/${formattedId}/${size}x${size}.jpg`;\n    }\n\n    getCoverSrcset(id) {\n        if (devModeSettings.isEnabled() && !this._inSyncCoverSrcset) {\n            this._inSyncCoverSrcset = true;\n            try {\n                return this.getFallbackProvider().getCoverSrcset(id);\n            } finally {\n                this._inSyncCoverSrcset = false;\n            }\n        }\n        if (\n            !id ||\n            (typeof id === 'string' && (id.startsWith('http') || id.startsWith('blob:') || id.startsWith('assets/')))\n        ) {\n            return '';\n        }\n\n        const formattedId = String(id).replace(/-/g, '/');\n        const baseUrl = `https://resources.tidal.com/images/${formattedId}`;\n        return `${baseUrl}/160x160.jpg 160w, ${baseUrl}/320x320.jpg 320w, ${baseUrl}/640x640.jpg 640w`;\n    }\n\n    getArtistPictureUrl(id, size = '320') {\n        if (devModeSettings.isEnabled() && !this._inSyncArtistPicUrl) {\n            this._inSyncArtistPicUrl = true;\n            try {\n                return this.getFallbackProvider().getArtistPictureUrl(id, size);\n            } finally {\n                this._inSyncArtistPicUrl = false;\n            }\n        }\n        if (!id) {\n            return `https://picsum.photos/seed/${Math.random()}/${size}`;\n        }\n\n        if (typeof id === 'string' && (id.startsWith('blob:') || id.startsWith('assets/'))) {\n            return id;\n        }\n\n        const formattedId = String(id).replace(/-/g, '/');\n        return `https://resources.tidal.com/images/${formattedId}/${size}x${size}.jpg`;\n    }\n\n    getArtistPictureSrcset(id) {\n        if (devModeSettings.isEnabled() && !this._inSyncArtistPicSrcset) {\n            this._inSyncArtistPicSrcset = true;\n            try {\n                return this.getFallbackProvider().getArtistPictureSrcset(id);\n            } finally {\n                this._inSyncArtistPicSrcset = false;\n            }\n        }\n        if (!id || (typeof id === 'string' && (id.startsWith('blob:') || id.startsWith('assets/')))) {\n            return '';\n        }\n\n        const formattedId = String(id).replace(/-/g, '/');\n        const baseUrl = `https://resources.tidal.com/images/${formattedId}`;\n        return `${baseUrl}/160x160.jpg 160w, ${baseUrl}/320x320.jpg 320w, ${baseUrl}/640x640.jpg 640w`;\n    }\n\n    getVideoCoverUrl(imageId, size = '1280') {\n        if (!imageId) {\n            return null;\n        }\n\n        if (\n            typeof imageId === 'string' &&\n            (imageId.startsWith('http') || imageId.startsWith('blob:') || imageId.startsWith('assets/'))\n        ) {\n            return imageId;\n        }\n\n        const formattedId = String(imageId).replace(/-/g, '/');\n        return `https://resources.tidal.com/images/${formattedId}/${size}x720.jpg`;\n    }\n\n    async clearCache() {\n        await this.cache.clear();\n        this.streamCache.clear();\n    }\n\n    getCacheStats() {\n        return {\n            ...this.cache.getCacheStats(),\n            streamUrls: this.streamCache.size,\n        };\n    }\n}\n
+//js/api.js
+import {
+    RATE_LIMIT_ERROR_MESSAGE,
+    deriveTrackQuality,
+    delay,
+    isTrackUnavailable,
+    getExtensionFromBlob,
+    getTrackDiscNumber,
+    normalizeQualityToken,
+    getTrackCoverId,
+    getCoverBlob,
+} from './utils.js';
+import {
+    preferDolbyAtmosSettings,
+    trackDateSettings,
+    devModeSettings,
+    monochromePlaybackSettings,
+    amazonMusicSettings,
+    deezerFallbackSettings,
+} from './storage.js';
+import { APICache } from './cache.js';
+import { DashDownloader } from './dash-downloader.ts';
+import { HlsDownloader } from './hls-downloader.js';
+import { getProxyUrl, wrapTidalUrl } from './proxy-utils.js';
+import { loadFfmpeg, FfmpegError, ffmpeg } from './ffmpeg.js';
+import { triggerDownload, applyAudioPostProcessing } from './download-utils.ts';
+import { isCustomFormat } from './ffmpegFormats.ts';
+import { DownloadProgress } from './progressEvents.js';
+import { resolveDownloadTotalBytes } from './downloadProgressUtils.js';
+import { readableStreamIterator } from './readableStreamIterator.js';
+import { HiFiClient, TidalResponse } from './HiFi.ts';
+import { QobuzClient, QobuzProvider, TidalProvider, FallbackProvider } from './services/index.js';
+import { isIos, isSafari, isChrome, canUseNativeAmazonCenc, getAmazonDecrypterCodec } from './platform-detection.js';
+import {
+    TrackAlbum,
+    EnrichedAlbum,
+    EnrichedTrack,
+    ReplayGain,
+    PlaybackInfo,
+    Track,
+    Album,
+    PreparedVideo,
+    PreparedTrack,
+} from './container-classes.js';
+
+export const DASH_MANIFEST_UNAVAILABLE_CODE = 'DASH_MANIFEST_UNAVAILABLE';
+export { resolveDownloadTotalBytes };
+let lastAudioSourceMissingNotifyAt = 0;
+const AMAZON_RATE_LIMITED_UNTIL_KEY = 'amazon-music-rate-limited-until';
+const AMAZON_RATE_LIMIT_DURATION_MS = 30 * 60 * 1000;
+const MONOCHROME_PLAYBACK_SESSION_KEY = 'monochromePlaybackSession';
+const MONOCHROME_SESSION_EXPIRY_LEEWAY_SECONDS = 15;
+const MONOCHROME_PLAYBACK_TURNSTILE_SITE_KEY = '0x4AAAAAADgxqF6QVMm0GLHH';
+function notifyAudioSourceMissing() {
+    const now = Date.now();
+    if (now - lastAudioSourceMissingNotifyAt < 3000) return;
+    lastAudioSourceMissingNotifyAt = now;
+    import('./downloads.js').then((m) => m.showNotification('Could not find Audio Source')).catch(() => {});
+}
+
+export class LosslessAPI {
+    constructor(settings) {
+        this.settings = settings;
+        this.cache = new APICache({
+            maxSize: 200,
+            ttl: 1000 * 60 * 30,
+        });
+        this.streamCache = new Map();
+        this.turnstileLoadPromise = null;
+        this.monochromeRateLimitedUntil = 0;
+
+        setInterval(
+            async () => {
+                await this.cache.clearExpired();
+                this.pruneStreamCache();
+            },
+            1000 * 60 * 5
+        );
+    }
+
+    pruneStreamCache() {
+        if (this.streamCache.size > 50) {
+            const entries = Array.from(this.streamCache.entries());
+            const toDelete = entries.slice(0, entries.length - 50);
+            toDelete.forEach(([key]) => this.streamCache.delete(key));
+        }
+    }
+
+    getFallbackProvider(isStreaming = false) {
+        const qobuzUrl = devModeSettings.getQobuzUrl();
+        const qobuzToken = devModeSettings.getQobuzToken();
+        const qobuzUserId = devModeSettings.getQobuzUserId();
+        const tidalUrl = devModeSettings.getUrl();
+
+        if (
+            !this._metadataProvider ||
+            !this._streamingProvider ||
+            this._lastQobuzUrl !== qobuzUrl ||
+            this._lastQobuzToken !== qobuzToken ||
+            this._lastQobuzUserId !== qobuzUserId ||
+            this._lastTidalUrl !== tidalUrl
+        ) {
+            this._lastQobuzUrl = qobuzUrl;
+            this._lastQobuzToken = qobuzToken;
+            this._lastQobuzUserId = qobuzUserId;
+            this._lastTidalUrl = tidalUrl;
+
+            const qobuzProvider = qobuzUrl && qobuzUrl.trim() ? new QobuzProvider(new QobuzClient()) : null;
+            const tidalProvider = new TidalProvider(this);
+
+            const metadataProviders = [tidalProvider];
+            if (qobuzProvider) metadataProviders.push(qobuzProvider);
+
+            const streamingProviders = [];
+            if (qobuzProvider) streamingProviders.push(qobuzProvider);
+            streamingProviders.push(tidalProvider);
+
+            this._metadataProvider = new FallbackProvider(metadataProviders);
+            this._streamingProvider = new FallbackProvider(streamingProviders);
+        }
+        return isStreaming ? this._streamingProvider : this._metadataProvider;
+    }
+
+    usesSingleUsePlaybackUrls() {
+        return monochromePlaybackSettings?.isEnabled() === true;
+    }
+
+    async fetchWithRetry(relativePath, options = {}) {
+        const type = options.type || 'api';
+        const isSearchRequest = relativePath.startsWith('/search/');
+        const getInstances = async (forceRefresh = false) => {
+            if (forceRefresh && this.settings && typeof this.settings.refreshInstances === 'function') {
+                try {
+                    await this.settings.refreshInstances();
+                } catch (refreshError) {
+                    console.warn('Failed to refresh API instances from uptime workers:', refreshError);
+                }
+            }
+
+            let instances = await this.settings.getInstances(type);
+            if (options.userInstancesOnly) {
+                instances = instances.filter((i) => i.isUser);
+                if (instances.length === 0) {
+                    throw new Error(`No user API instances configured for type: ${type}`);
+                }
+            } else if (instances.length === 0) {
+                throw new Error(`No API instances configured for type: ${type}`);
+            }
+
+            if (options.minVersion) {
+                instances = instances.filter((instance) => {
+                    if (!instance.version) return false;
+                    return parseFloat(instance.version) >= parseFloat(options.minVersion);
+                });
+                if (instances.length === 0) {
+                    throw new Error(
+                        `No API instances configured for type: ${type} with minVersion: ${options.minVersion}`
+                    );
+                }
+            }
+
+            if (options.allowedDomains) {
+                instances = instances.filter((instance) => {
+                    const url = typeof instance === 'string' ? instance : instance.url;
+                    return options.allowedDomains.some((domain) => url.includes(domain));
+                });
+                if (instances.length === 0) {
+                    throw new Error(
+                        `No API instances configured for type: ${type} matching allowedDomains: ${options.allowedDomains.join(', ')}`
+                    );
+                }
+            }
+
+            return instances;
+        };
+
+        const tryInstances = async (instances) => {
+            const maxTotalAttempts = instances.length * 2; // Allow some retries across instances
+            let lastError = null;
+            let instanceIndex = Math.floor(Math.random() * instances.length);
+
+            for (let attempt = 1; attempt <= maxTotalAttempts; attempt++) {
+                const instance = instances[instanceIndex % instances.length];
+                const baseUrl = typeof instance === 'string' ? instance : instance.url;
+
+                const isTidal = baseUrl.includes('api.tidal.com') || baseUrl.includes('openapi.tidal.com');
+                const targetUrl = baseUrl.endsWith('/')
+                    ? `${baseUrl}${relativePath.substring(1)}`
+                    : `${baseUrl}${relativePath}`;
+
+                const url = isTidal ? wrapTidalUrl(targetUrl) : targetUrl;
+
+                try {
+                    const response = await fetch(url, { signal: options.signal });
+
+                    if (response.status === 429) {
+                        console.warn(`Rate limit hit on ${baseUrl}. Trying next instance...`);
+                        instanceIndex++;
+                        await delay(500);
+                        continue;
+                    }
+
+                    if (response.ok) {
+                        return response;
+                    }
+
+                    if (response.status === 401) {
+                        const errorData = await response
+                            .clone()
+                            .json()
+                            .catch(() => null);
+                        if (errorData?.subStatus === 11002) {
+                            console.warn(`Auth failed on ${baseUrl}. Trying next instance...`);
+                            instanceIndex++;
+                            continue;
+                        }
+                    }
+
+                    if (response.status >= 500) {
+                        console.warn(`Server error ${response.status} on ${baseUrl}. Trying next instance...`);
+                        instanceIndex++;
+                        continue;
+                    }
+
+                    lastError = new Error(`Request failed with status ${response.status}`);
+                    instanceIndex++;
+                } catch (error) {
+                    if (error.name === 'AbortError') throw error;
+                    lastError = error;
+                    console.warn(`Network error on ${baseUrl}: ${error.message}. Trying next instance...`);
+                    instanceIndex++;
+                    await delay(200);
+                }
+            }
+
+            throw lastError || new Error(`All API instances failed for: ${relativePath}`);
+        };
+
+        if (devModeSettings.isEnabled()) {
+            const devBaseUrl = devModeSettings.getUrl().replace(/\/+$/, '');
+            const url = devBaseUrl + (relativePath.startsWith('/') ? relativePath : '/' + relativePath);
+
+            if (import.meta.env.DEV) {
+                console.log('[dev-mode]', url);
+            }
+
+            const response = await fetch(url, { signal: options.signal });
+            if (!response.ok) {
+                throw new Error(`Dev mode request failed: ${response.status} ${response.statusText}`);
+            }
+            return response;
+        }
+
+        const shouldTryNative = type !== 'streaming';
+
+        if (shouldTryNative) {
+            try {
+                if (import.meta.env.DEV) {
+                    console.log(relativePath);
+                }
+
+                // HiFiClient.query fans out across the native TIDAL endpoints used by the route
+                // implementation, including api.tidal.com and openapi.tidal.com where applicable.
+                return await HiFiClient.instance.query(relativePath);
+            } catch (err) {
+                if (options.directOnly) {
+                    throw err;
+                }
+
+                if (import.meta.env.DEV && isSearchRequest) {
+                    console.warn(
+                        `[search] native TIDAL query failed for ${relativePath}, trying HiFi worker instances`,
+                        err
+                    );
+                } else {
+                    console.warn(
+                        `Native TIDAL query failed for ${relativePath}. Falling back to configured HiFi API instances...`,
+                        err
+                    );
+                }
+            }
+        }
+
+        try {
+            return await tryInstances(await getInstances(false));
+        } catch (error) {
+            if (type === 'streaming' || options.userInstancesOnly) {
+                throw error;
+            }
+        }
+
+        return await tryInstances(await getInstances(true));
+    }
+
+    findSearchSection(source, key, visited) {
+        if (!source || typeof source !== 'object') return;
+
+        if (Array.isArray(source)) {
+            for (const e of source) {
+                const f = this.findSearchSection(e, key, visited);
+                if (f) return f;
+            }
+            return;
+        }
+
+        if (visited.has(source)) return;
+        visited.add(source);
+
+        if ('items' in source && Array.isArray(source.items)) return source;
+
+        if (key in source) {
+            const f = this.findSearchSection(source[key], key, visited);
+            if (f) return f;
+        }
+
+        for (const v of Object.values(source)) {
+            const f = this.findSearchSection(v, key, visited);
+            if (f) return f;
+        }
+    }
+
+    buildSearchResponse(section) {
+        const items = section?.items ?? [];
+        return {
+            items,
+            limit: section?.limit ?? items.length,
+            offset: section?.offset ?? 0,
+            totalNumberOfItems: section?.totalNumberOfItems ?? items.length,
+        };
+    }
+
+    normalizeSearchResponse(data, key) {
+        const section = this.findSearchSection(data, key, new Set());
+        return this.buildSearchResponse(section);
+    }
+
+    prepareTrack(track) {
+        let normalized = { ...track };
+
+        if (track.type && typeof track.type === 'string') {
+            const lowType = track.type.toLowerCase();
+            if (lowType.includes('video')) {
+                normalized.type = 'video';
+            } else if (lowType.includes('track')) {
+                normalized.type = 'track';
+            } else {
+                normalized.type = lowType;
+            }
+        }
+
+        if (!normalized.artist && Array.isArray(normalized.artists) && normalized.artists.length > 0) {
+            normalized.artist = normalized.artists[0];
+        } else if (normalized.artist && !normalized.artists) {
+            normalized.artists = [normalized.artist];
+        }
+
+        if (track.album) {
+            normalized.album = { ...track.album };
+            if (track.album.releaseDate) {
+                normalized.album.releaseDate = track.album.releaseDate;
+            }
+        }
+
+        const derivedQuality = deriveTrackQuality(normalized);
+        if (derivedQuality && normalized.audioQuality !== derivedQuality) {
+            normalized.audioQuality = derivedQuality;
+        }
+
+        normalized.isUnavailable = isTrackUnavailable(normalized);
+
+        return normalized.type == 'video' ? new PreparedVideo(normalized) : new PreparedTrack(normalized);
+    }
+
+    prepareAlbum(album) {
+        if (!album.artist && Array.isArray(album.artists) && album.artists.length > 0) {
+            return { ...album, artist: album.artists[0] };
+        }
+        return album;
+    }
+
+    preparePlaylist(playlist) {
+        return playlist;
+    }
+
+    prepareVideo(video) {
+        let normalized = { ...video, type: 'video' };
+
+        if (!video.artist && Array.isArray(video.artists) && video.artists.length > 0) {
+            normalized.artist = video.artists[0];
+        }
+
+        return normalized;
+    }
+
+    prepareArtist(artist) {
+        if (!artist.type && Array.isArray(artist.artistTypes) && artist.artistTypes.length > 0) {
+            return { ...artist, type: artist.artistTypes[0] };
+        }
+        return artist;
+    }
+
+    async enrichTracksWithAlbumDates(tracks, maxRequests = 20) {
+        if (!trackDateSettings.useAlbumYear()) return tracks;
+
+        const albumIdsToFetch = [];
+        for (const track of tracks) {
+            if (!track.album?.releaseDate && track.album?.id && !albumIdsToFetch.includes(track.album.id)) {
+                albumIdsToFetch.push(track.album.id);
+            }
+        }
+
+        if (albumIdsToFetch.length === 0) return tracks;
+
+        // Limit the number of albums to fetch to prevent spamming
+        const limitedIds = albumIdsToFetch.slice(0, maxRequests);
+        if (albumIdsToFetch.length > maxRequests) {
+            console.warn(`[Enrich] Too many albums to fetch (${albumIdsToFetch.length}). limiting to ${maxRequests}.`);
+        }
+
+        const albumDateMap = new Map();
+
+        // Chunk requests to avoid spamming
+        const chunkSize = 5;
+        for (let i = 0; i < limitedIds.length; i += chunkSize) {
+            const chunk = limitedIds.slice(i, i + chunkSize);
+            const results = await Promise.allSettled(chunk.map((id) => this.getAlbum(id)));
+
+            for (let j = 0; j < results.length; j++) {
+                const result = results[j];
+                const id = chunk[j];
+                if (result.status === 'fulfilled' && result.value.album?.releaseDate) {
+                    albumDateMap.set(id, result.value.album.releaseDate);
+                }
+            }
+        }
+
+        return tracks.map((track) => {
+            if (!track.album?.releaseDate && track.album?.id && albumDateMap.has(track.album.id)) {
+                return { ...track, album: { ...track.album, releaseDate: albumDateMap.get(track.album.id) } };
+            }
+            return track;
+        });
+    }
+
+    async enrichTracksWithAlbumCover(tracks, maxRequests = 20) {
+        if (!Array.isArray(tracks) || tracks.length === 0) return tracks;
+
+        const albumIdsToFetch = [];
+        for (const track of tracks) {
+            if (!track?.album?.cover && track?.album?.id && !albumIdsToFetch.includes(track.album.id)) {
+                albumIdsToFetch.push(track.album.id);
+            }
+        }
+
+        if (albumIdsToFetch.length === 0) return tracks;
+
+        const limitedIds = albumIdsToFetch.slice(0, maxRequests);
+
+        const coverMap = new Map();
+        const chunkSize = 5;
+        for (let i = 0; i < limitedIds.length; i += chunkSize) {
+            const chunk = limitedIds.slice(i, i + chunkSize);
+            const results = await Promise.allSettled(chunk.map((id) => this.getAlbum(id)));
+            for (let j = 0; j < results.length; j++) {
+                const r = results[j];
+                if (r.status === 'fulfilled' && r.value?.album?.cover) {
+                    coverMap.set(chunk[j], r.value.album.cover);
+                }
+            }
+        }
+
+        if (coverMap.size === 0) return tracks;
+
+        return tracks.map((track) => {
+            if (!track?.album?.cover && track?.album?.id && coverMap.has(track.album.id)) {
+                return { ...track, album: { ...track.album, cover: coverMap.get(track.album.id) } };
+            }
+            return track;
+        });
+    }
+
+    async enrichArtistsWithPicture(artists, maxRequests = 10) {
+        if (!Array.isArray(artists) || artists.length === 0) return artists;
+
+        const idsToFetch = [];
+        for (const artist of artists) {
+            if (!artist?.picture && artist?.id && !idsToFetch.includes(artist.id)) {
+                idsToFetch.push(artist.id);
+            }
+        }
+
+        if (idsToFetch.length === 0) return artists;
+
+        const limitedIds = idsToFetch.slice(0, maxRequests);
+
+        const pictureMap = new Map();
+        const chunkSize = 5;
+        for (let i = 0; i < limitedIds.length; i += chunkSize) {
+            const chunk = limitedIds.slice(i, i + chunkSize);
+            const results = await Promise.allSettled(chunk.map((id) => this.getArtist(id, { lightweight: true })));
+            for (let j = 0; j < results.length; j++) {
+                const r = results[j];
+                if (r.status === 'fulfilled' && r.value?.picture) {
+                    pictureMap.set(chunk[j], r.value.picture);
+                }
+            }
+        }
+
+        if (pictureMap.size === 0) return artists;
+
+        return artists.map((artist) => {
+            if (!artist?.picture && artist?.id && pictureMap.has(artist.id)) {
+                return { ...artist, picture: pictureMap.get(artist.id) };
+            }
+            return artist;
+        });
+    }
+
+    parseTrackLookup(data) {
+        const entries = Array.isArray(data) ? data : [data];
+        let track, info, originalTrackUrl;
+
+        for (const entry of entries) {
+            if (!entry || typeof entry !== 'object') continue;
+
+            if (!track && 'duration' in entry) {
+                track = entry;
+                continue;
+            }
+
+            if (!info && 'manifest' in entry) {
+                info = entry;
+                continue;
+            }
+
+            if (!originalTrackUrl && 'OriginalTrackUrl' in entry) {
+                const candidate = entry.OriginalTrackUrl;
+                if (typeof candidate === 'string') {
+                    originalTrackUrl = candidate;
+                }
+            }
+        }
+
+        if (!track || !info) {
+            throw new Error('Malformed track response');
+        }
+
+        return { track, info, originalTrackUrl };
+    }
+
+    extractStreamUrlFromManifest(manifest) {
+        if (!manifest) return null;
+
+        try {
+            let decoded;
+            if (typeof manifest === 'string') {
+                try {
+                    decoded = atob(manifest);
+                } catch {
+                    decoded = manifest;
+                }
+            } else if (typeof manifest === 'object') {
+                if (manifest.urls && Array.isArray(manifest.urls)) {
+                    const priorityKeywords = ['flac', 'lossless', 'hi-res', 'high'];
+                    const sortedUrls = [...manifest.urls].sort((a, b) => {
+                        const aLow = a.toLowerCase();
+                        const bLow = b.toLowerCase();
+                        const aScore = priorityKeywords.findIndex((k) => aLow.includes(k));
+                        const bScore = priorityKeywords.findIndex((k) => bLow.includes(k));
+
+                        const finalAScore = aScore === -1 ? 999 : aScore;
+                        const finalBScore = bScore === -1 ? 999 : bScore;
+
+                        return finalAScore - finalBScore;
+                    });
+                    return sortedUrls[0];
+                }
+                if (manifest.urls?.[0]) return manifest.urls[0];
+                return null;
+            } else {
+                return null;
+            }
+
+            // Check if it's a DASH manifest (XML)
+            if (decoded.includes('<MPD')) {
+                const blob = new Blob([decoded], { type: 'application/dash+xml' });
+                return URL.createObjectURL(blob);
+            }
+
+            try {
+                const parsed = JSON.parse(decoded);
+                if (parsed?.urls && Array.isArray(parsed.urls)) {
+                    const priorityKeywords = ['flac', 'lossless', 'hi-res', 'high'];
+                    const sortedUrls = [...parsed.urls].sort((a, b) => {
+                        const aLow = a.toLowerCase();
+                        const bLow = b.toLowerCase();
+                        const aScore = priorityKeywords.findIndex((k) => aLow.includes(k));
+                        const bScore = priorityKeywords.findIndex((k) => bLow.includes(k));
+                        const finalAScore = aScore === -1 ? 999 : aScore;
+                        const finalBScore = bScore === -1 ? 999 : bScore;
+                        return finalAScore - finalBScore;
+                    });
+                    return sortedUrls[0];
+                }
+                if (parsed?.urls?.[0]) {
+                    return parsed.urls[0];
+                }
+            } catch {
+                const match = decoded.match(/https?:\/\/[\w\-.~:?#[@!$&'()*+,;=%/]+/);
+                return match ? match[0] : null;
+            }
+        } catch (error) {
+            console.error('Failed to decode manifest:', error);
+            return null;
+        }
+    }
+
+    deduplicateAlbums(albums) {
+        const unique = new Map();
+
+        for (const album of albums) {
+            // Key based on title and numberOfTracks (excluding duration and explicit)
+            const key = JSON.stringify([album.title, album.numberOfTracks || 0]);
+
+            if (unique.has(key)) {
+                const existing = unique.get(key);
+
+                // Priority 1: Explicit
+                if (album.explicit && !existing.explicit) {
+                    unique.set(key, album);
+                    continue;
+                }
+                if (!album.explicit && existing.explicit) {
+                    continue;
+                }
+
+                // Priority 2: More Metadata Tags (if explicit status is same)
+                const existingTags = existing.mediaMetadata?.tags?.length || 0;
+                const newTags = album.mediaMetadata?.tags?.length || 0;
+
+                if (newTags > existingTags) {
+                    unique.set(key, album);
+                }
+            } else {
+                unique.set(key, album);
+            }
+        }
+
+        return Array.from(unique.values());
+    }
+
+    async search(query, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().search(query, options);
+        }
+        const cached = await this.cache.get('search_all', query);
+        if (cached) return cached;
+
+        try {
+            const response = await this.fetchWithRetry(`/search/?q=${encodeURIComponent(query)}`, options);
+            const data = await response.json();
+
+            const extractSection = (key) => this.normalizeSearchResponse(data, key);
+
+            const tracksData = extractSection('tracks');
+            const artistsData = extractSection('artists');
+            const albumsData = extractSection('albums');
+            const playlistsData = extractSection('playlists');
+            const videosData = extractSection('videos');
+
+            const preparedTracks = tracksData.items.map((t) => this.prepareTrack(t));
+            const preparedArtists = artistsData.items.map((a) => this.prepareArtist(a));
+
+            const [enrichedTracks, enrichedArtists] = await Promise.all([
+                this.enrichTracksWithAlbumCover(preparedTracks),
+                options.enrichArtists === false
+                    ? Promise.resolve(preparedArtists)
+                    : this.enrichArtistsWithPicture(preparedArtists),
+            ]);
+
+            const results = {
+                tracks: {
+                    ...tracksData,
+                    items: enrichedTracks,
+                },
+                artists: {
+                    ...artistsData,
+                    items: enrichedArtists,
+                },
+                albums: {
+                    ...albumsData,
+                    items: albumsData.items.map((a) => this.prepareAlbum(a)),
+                },
+                playlists: playlistsData
+                    ? {
+                          ...playlistsData,
+                          items: playlistsData.items.map((p) => this.preparePlaylist(p)),
+                      }
+                    : { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 },
+                videos: {
+                    ...videosData,
+                    items: videosData.items.map((v) => this.prepareTrack(v)),
+                },
+            };
+
+            await this.cache.set('search_all', query, results);
+
+            return results;
+        } catch (error) {
+            if (import.meta.env.DEV) {
+                console.warn('[search] combined search failed, using HiFi scoped fallback', error);
+            }
+
+            // Final fallback: hifi-api-compatible scoped searches (?s, ?a, ?al, ?v, ?p)
+            const [tracks, videos, artists, albums, playlists] = await Promise.all([
+                this.searchTracks(query, options).catch(() => ({ items: [] })),
+                this.searchVideos(query, options).catch(() => ({ items: [] })),
+                this.searchArtists(query, options).catch(() => ({ items: [] })),
+                this.searchAlbums(query, options).catch(() => ({ items: [] })),
+                this.searchPlaylists(query, options).catch(() => ({ items: [] })),
+            ]);
+
+            return {
+                tracks,
+                videos,
+                artists,
+                albums,
+                playlists,
+            };
+        }
+    }
+
+    async searchTracks(query, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().searchTracks(query, options);
+        }
+        const cached = await this.cache.get('search_tracks', query);
+        if (cached) return cached;
+
+        try {
+            const response = await this.fetchWithRetry(`/search/?s=${encodeURIComponent(query)}`, options);
+            const data = await response.json();
+            const normalized = this.normalizeSearchResponse(data, 'tracks');
+            const preparedTracks = normalized.items.map((t) => this.prepareTrack(t));
+            const dateEnriched = await this.enrichTracksWithAlbumDates(preparedTracks);
+            const enrichedTracks = await this.enrichTracksWithAlbumCover(dateEnriched);
+            const result = {
+                ...normalized,
+                items: enrichedTracks,
+            };
+
+            if (!(response instanceof TidalResponse)) {
+                await this.cache.set('search_tracks', query, result);
+            }
+            return result;
+        } catch (error) {
+            if (error.name === 'AbortError') throw error;
+            console.error('Track search failed:', error);
+            return { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 };
+        }
+    }
+
+    async searchTracksByIsrc(isrc, options = {}) {
+        const normalizedIsrc = String(isrc || '').trim();
+        if (!normalizedIsrc) return { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 };
+
+        const cacheKey = `isrc:${normalizedIsrc}`;
+        const cached = await this.cache.get('search_tracks', cacheKey);
+        if (cached) return cached;
+
+        try {
+            const response = await this.fetchWithRetry(
+                `/search/?i=${encodeURIComponent(normalizedIsrc)}`,
+                options
+            );
+            const data = await response.json();
+            const normalized = this.normalizeSearchResponse(data, 'tracks');
+            const preparedTracks = normalized.items.map((t) => this.prepareTrack(t));
+            const dateEnriched = await this.enrichTracksWithAlbumDates(preparedTracks);
+            const enrichedTracks = await this.enrichTracksWithAlbumCover(dateEnriched);
+            const result = {
+                ...normalized,
+                items: enrichedTracks,
+            };
+
+            if (!(response instanceof TidalResponse)) {
+                await this.cache.set('search_tracks', cacheKey, result);
+            }
+            return result;
+        } catch (error) {
+            if (error.name === 'AbortError') throw error;
+            console.error('ISRC track search failed:', error);
+            return { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 };
+        }
+    }
+
+    async searchArtists(query, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().searchArtists(query, options);
+        }
+        const cached = await this.cache.get('search_artists', query);
+        if (cached) return cached;
+
+        try {
+            const response = await this.fetchWithRetry(`/search/?a=${encodeURIComponent(query)}`, options);
+            const data = await response.json();
+            const normalized = this.normalizeSearchResponse(data, 'artists');
+            const preparedArtists = normalized.items.map((a) => this.prepareArtist(a));
+            const enrichedArtists = await this.enrichArtistsWithPicture(preparedArtists);
+            const result = {
+                ...normalized,
+                items: enrichedArtists,
+            };
+
+            if (!(response instanceof TidalResponse)) {
+                await this.cache.set('search_artists', query, result);
+            }
+            return result;
+        } catch (error) {
+            if (error.name === 'AbortError') throw error;
+            console.error('Artist search failed:', error);
+            return { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 };
+        }
+    }
+
+    async searchAlbums(query, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().searchAlbums(query, options);
+        }
+        const cached = await this.cache.get('search_albums', query);
+        if (cached) return cached;
+
+        try {
+            const response = await this.fetchWithRetry(`/search/?al=${encodeURIComponent(query)}`, options);
+            const data = await response.json();
+            const normalized = this.normalizeSearchResponse(data, 'albums');
+            const preparedItems = normalized.items.map((a) => this.prepareAlbum(a));
+            const result = {
+                ...normalized,
+                items: this.deduplicateAlbums(preparedItems),
+            };
+
+            if (!(response instanceof TidalResponse)) {
+                await this.cache.set('search_albums', query, result);
+            }
+            return result;
+        } catch (error) {
+            if (error.name === 'AbortError') throw error;
+            console.error('Album search failed:', error);
+            return { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 };
+        }
+    }
+
+    async searchPlaylists(query, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().searchPlaylists(query, options);
+        }
+        const cached = await this.cache.get('search_playlists', query);
+        if (cached) return cached;
+
+        try {
+            const response = await this.fetchWithRetry(`/search/?p=${encodeURIComponent(query)}`, options);
+            const data = await response.json();
+            const normalized = this.normalizeSearchResponse(data, 'playlists');
+            const result = {
+                ...normalized,
+                items: normalized.items.map((p) => this.preparePlaylist(p)),
+            };
+
+            if (!(response instanceof TidalResponse)) {
+                await this.cache.set('search_playlists', query, result);
+            }
+            return result;
+        } catch (error) {
+            if (error.name === 'AbortError') throw error;
+            console.error('Playlist search failed:', error);
+            return { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 };
+        }
+    }
+
+    async searchVideos(query, options = {}) {
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().searchVideos(query, options);
+        }
+        const cached = await this.cache.get('search_videos', query);
+        if (cached) return cached;
+
+        try {
+            const response = await this.fetchWithRetry(`/search/?v=${encodeURIComponent(query)}`, {
+                ...options,
+            });
+            const data = await response.json();
+            const normalized = this.normalizeSearchResponse(data, 'videos');
+            const result = {
+                ...normalized,
+                items: normalized.items.map((v) => this.prepareVideo(v)),
+            };
+
+            if (!(response instanceof TidalResponse)) {
+                await this.cache.set('search_videos', query, result);
+            }
+            return result;
+        } catch (error) {
+            if (error.name === 'AbortError') throw error;
+            console.error('Video search failed:', error);
+            return { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 };
+        }
+    }
+
+    async getVideo(id) {
+        if (String(id).startsWith('sc_')) return null;
+        const cached = await this.cache.get('video', id);
+        if (cached) return cached;
+
+        const response = await this.fetchWithRetry(`/video/?id=${id}`, {
+            type: 'streaming',
+        });
+        const jsonResponse = await response.json();
+
+        const data = jsonResponse.data || jsonResponse;
+
+        const result = {
+            track: data,
+            info: data,
+            originalTrackUrl: data.OriginalTrackUrl || null,
+        };
+
+        if (!(response instanceof TidalResponse)) {
+            await this.cache.set('video', id, result);
+        }
+        return result;
+    }
+
+    async getAlbum(id, options = {}) {
+        if (String(id).startsWith('sc_')) return null;
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().getAlbum(id);
+        }
+        const cached = await this.cache.get('album', id);
+        if (cached) return cached;
+
+        const response = await this.fetchWithRetry(`/album/?id=${id}`);
+        const jsonData = await response.json();
+
+        // Unwrap the data property if it exists
+        const data = jsonData.data || jsonData;
+
+        let album, tracksSection;
+
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+            // Check for album metadata at root level
+            if ('numberOfTracks' in data || 'title' in data) {
+                album = this.prepareAlbum(data);
+            }
+
+            // Set tracksSection if items exist
+            if ('items' in data) {
+                tracksSection = data;
+
+                // If we still don't have album but have items with tracks, try to extract album from first track
+                if (!album && data.items && data.items.length > 0) {
+                    const firstItem = data.items[0];
+                    const track = firstItem.item || firstItem;
+
+                    // Check if track has album property
+                    if (track && track.album) {
+                        album = this.prepareAlbum(track.album);
+                    }
+                }
+            }
+        }
+
+        if (!album) throw new Error('Album not found');
+
+        // If album exists but has no artist, try to extract from tracks
+        if (!album.artist && tracksSection?.items && tracksSection.items.length > 0) {
+            const firstTrack = tracksSection.items[0];
+            const track = firstTrack.item || firstTrack;
+            if (track && track.artist) {
+                album = { ...album, artist: track.artist };
+            }
+        }
+
+        // If album exists but has no releaseDate, try to extract from tracks
+        if (!album.releaseDate && tracksSection?.items && tracksSection.items.length > 0) {
+            const firstTrack = tracksSection.items[0];
+            const track = firstTrack.item || firstTrack;
+
+            if (track) {
+                if (track.album && track.album.releaseDate) {
+                    album = { ...album, releaseDate: track.album.releaseDate };
+                } else if (track.streamStartDate) {
+                    album = { ...album, releaseDate: track.streamStartDate.split('T')[0] };
+                }
+            }
+        }
+
+        let tracks = (tracksSection?.items || []).map((i) => this.prepareTrack(i.item || i));
+
+        // Handle pagination if there are more tracks
+        if (album && album.numberOfTracks > tracks.length) {
+            let offset = tracks.length;
+            const SAFE_MAX_TRACKS = 10000;
+
+            while (tracks.length < album.numberOfTracks && tracks.length < SAFE_MAX_TRACKS) {
+                try {
+                    const nextResponse = await this.fetchWithRetry(`/album/?id=${id}&offset=${offset}&limit=500`);
+                    const nextJson = await nextResponse.json();
+                    const nextData = nextJson.data || nextJson;
+
+                    let nextItems = [];
+
+                    if (nextData.items) {
+                        nextItems = nextData.items;
+                    } else if (Array.isArray(nextData)) {
+                        for (const entry of nextData) {
+                            if (entry && typeof entry === 'object' && 'items' in entry && Array.isArray(entry.items)) {
+                                nextItems = entry.items;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!nextItems || nextItems.length === 0) break;
+
+                    const preparedItems = nextItems.map((i) => this.prepareTrack(i.item || i));
+                    if (preparedItems.length === 0) break;
+
+                    // Safeguard: If API ignores offset, it returns the first page again.
+                    // Check if the first new item matches the very first track we have.
+                    if (tracks.length > 0 && preparedItems[0].id === tracks[0].id) {
+                        break;
+                    }
+
+                    // Also check if the first new item matches the last track we have (overlap check)
+                    if (tracks.length > 0 && preparedItems[0].id === tracks[tracks.length - 1].id) {
+                        // If it's just one overlap, maybe we should skip it?
+                        // But usually offset should be precise.
+                        // If we see exact same id as first track, it's definitely a loop.
+                    }
+
+                    tracks = tracks.concat(preparedItems);
+                    offset += preparedItems.length;
+                } catch (error) {
+                    console.error(`Error fetching album tracks at offset ${offset}:`, error);
+                    break;
+                }
+            }
+        }
+
+        // Enrich tracks with album releaseDate if available
+        if (album?.releaseDate) {
+            tracks = tracks.map((track) => {
+                if (track.album && !track.album.releaseDate) {
+                    return { ...track, album: { ...track.album, releaseDate: album.releaseDate } };
+                }
+                return track;
+            });
+        }
+
+        tracks = tracks.map((t) => {
+            if (t.album) {
+                // Propagate the parent album's cover to each track's album sub-object when
+                // the API omits it in the per-track album object (common for album endpoints).
+                t.album = new TrackAlbum({
+                    ...t.album,
+                    cover: t.album.cover || album.cover,
+                });
+            }
+
+            return new Track(t);
+        });
+
+        album = new Album(album);
+
+        const result = { album, tracks };
+
+        if (!(response instanceof TidalResponse)) {
+            await this.cache.set('album', id, result);
+        }
+        return result;
+    }
+
+    async getPlaylist(id, options = {}) {
+        if (String(id).startsWith('sc_')) return null;
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().getPlaylist(id);
+        }
+        const cached = await this.cache.get('playlist', id);
+        if (cached) return cached;
+
+        const response = await this.fetchWithRetry(`/playlist/?id=${id}`);
+        const jsonData = await response.json();
+
+        // Unwrap the data property if it exists
+        const data = jsonData.data || jsonData;
+
+        let playlist = null;
+        let tracksSection = null;
+
+        // Check for direct playlist property (common in v2 responses)
+        if (data.playlist) {
+            playlist = data.playlist;
+        }
+
+        // Check for direct items property
+        if (data.items) {
+            tracksSection = { items: data.items };
+        }
+
+        // Fallback: iterate if we still missed something or if structure is flat array
+        if (!playlist || !tracksSection) {
+            const entries = Array.isArray(data) ? data : [data];
+            for (const entry of entries) {
+                if (!entry || typeof entry !== 'object') continue;
+
+                if (
+                    !playlist &&
+                    ('uuid' in entry || 'numberOfTracks' in entry || ('title' in entry && 'id' in entry))
+                ) {
+                    playlist = entry;
+                }
+
+                if (!tracksSection && 'items' in entry) {
+                    tracksSection = entry;
+                }
+            }
+        }
+
+        // Fallback 2: If we have a list of entries but no explicit playlist object, try to find one that looks like a playlist
+        if (!playlist && Array.isArray(data)) {
+            for (const entry of data) {
+                if (entry && typeof entry === 'object' && ('uuid' in entry || 'numberOfTracks' in entry)) {
+                    playlist = entry;
+                    break;
+                }
+            }
+        }
+
+        if (!playlist) throw new Error('Playlist not found');
+
+        let tracks = (tracksSection?.items || []).map((i) => this.prepareTrack(i.item || i));
+
+        // Handle pagination if there are more tracks
+        if (playlist.numberOfTracks > tracks.length) {
+            let offset = tracks.length;
+            const SAFE_MAX_TRACKS = 10000;
+
+            while (tracks.length < playlist.numberOfTracks && tracks.length < SAFE_MAX_TRACKS) {
+                try {
+                    const nextResponse = await this.fetchWithRetry(`/playlist/?id=${id}&offset=${offset}`);
+                    const nextJson = await nextResponse.json();
+                    const nextData = nextJson.data || nextJson;
+
+                    let nextItems = [];
+
+                    if (nextData.items) {
+                        nextItems = nextData.items;
+                    } else if (Array.isArray(nextData)) {
+                        for (const entry of nextData) {
+                            if (entry && typeof entry === 'object' && 'items' in entry && Array.isArray(entry.items)) {
+                                nextItems = entry.items;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!nextItems || nextItems.length === 0) break;
+
+                    const preparedItems = nextItems.map((i) => this.prepareTrack(i.item || i));
+                    if (preparedItems.length === 0) break;
+
+                    // Safeguard: If API ignores offset, it returns the first page again.
+                    // Check if the first new item matches the very first track we have.
+                    if (tracks.length > 0 && preparedItems[0].id === tracks[0].id) {
+                        break;
+                    }
+
+                    tracks = tracks.concat(preparedItems);
+                    offset += preparedItems.length;
+                } catch (error) {
+                    console.error(`Error fetching playlist tracks at offset ${offset}:`, error);
+                    break;
+                }
+            }
+        }
+
+        // Enrich tracks with album release dates
+        // Removed to reduce API load. Playlists can be very large.
+        // tracks = await this.enrichTracksWithAlbumDates(tracks);
+
+        tracks = tracks.map((t) => {
+            if (t.album) {
+                t.album = new TrackAlbum(t.album);
+            }
+
+            return new Track(t);
+        });
+
+        const result = { playlist, tracks };
+
+        if (!(response instanceof TidalResponse)) {
+            await this.cache.set('playlist', id, result);
+        }
+        return result;
+    }
+
+    async getMix(id) {
+        if (String(id).startsWith('sc_')) return null;
+        const cached = await this.cache.get('mix', id);
+        if (cached) return cached;
+
+        const response = await this.fetchWithRetry(`/mix/?id=${id}`, { type: 'api', minVersion: '2.3' });
+        const data = await response.json();
+
+        const mixData = data.mix;
+        const items = data.items || [];
+
+        if (!mixData) {
+            throw new Error('Mix metadata not found');
+        }
+
+        let tracks = items.map((i) => this.prepareTrack(i.item || i));
+
+        // Enrich tracks with album release dates
+        // Limited to reduce API load
+        tracks = await this.enrichTracksWithAlbumDates(tracks, 10);
+
+        tracks = tracks.map((t) => {
+            if (t.album) {
+                t.album = new TrackAlbum(t.album);
+            }
+
+            return new Track(t);
+        });
+
+        const mix = {
+            id: mixData.id,
+            title: mixData.title,
+            subTitle: mixData.subTitle,
+            description: mixData.description,
+            mixType: mixData.mixType,
+            cover: mixData.images?.LARGE?.url || mixData.images?.MEDIUM?.url || mixData.images?.SMALL?.url || null,
+        };
+
+        const result = { mix, tracks };
+        if (!(response instanceof TidalResponse)) {
+            await this.cache.set('mix', id, result);
+        }
+        return result;
+    }
+
+    async getArtistSocials(artistName) {
+        const cacheKey = `artist_socials_${artistName}`;
+        const cached = await this.cache.get('artist', cacheKey);
+        if (cached) return cached;
+
+        try {
+            const searchUrl = `https://musicbrainz.org/ws/2/artist/?query=artist:${encodeURIComponent(artistName)}&fmt=json`;
+            const searchRes = await fetch(searchUrl, {
+                headers: { 'User-Agent': 'Monochrome/2.0.0 ( https://github.com/monochrome-music/monochrome )' },
+            });
+            const searchData = await searchRes.json();
+
+            if (!searchData.artists || searchData.artists.length === 0) return [];
+
+            const artist = searchData.artists[0];
+            const mbid = artist.id;
+
+            const detailsUrl = `https://musicbrainz.org/ws/2/artist/${mbid}?inc=url-rels&fmt=json`;
+            const detailsRes = await fetch(detailsUrl, {
+                headers: { 'User-Agent': 'Monochrome/2.0.0 ( https://github.com/monochrome-music/monochrome )' },
+            });
+            const detailsData = await detailsRes.json();
+
+            const links = [];
+            if (detailsData.relations) {
+                for (const rel of detailsData.relations) {
+                    if (
+                        [
+                            'social network',
+                            'streaming',
+                            'official homepage',
+                            'youtube',
+                            'soundcloud',
+                            'bandcamp',
+                        ].includes(rel.type)
+                    ) {
+                        links.push({ type: rel.type, url: rel.url.resource });
+                    }
+                }
+            }
+
+            await this.cache.set('artist', cacheKey, links);
+            return links;
+        } catch (e) {
+            console.warn('Failed to fetch artist socials:', e);
+            return [];
+        }
+    }
+
+    async getArtist(artistId, options = {}) {
+        if (String(artistId).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getArtistById(artistId, options);
+        }
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().getArtist(artistId);
+        }
+        const cacheKey = options.lightweight ? `artist_${artistId}_light` : `artist_${artistId}`;
+        if (!options.skipCache) {
+            const cached = await this.cache.get('artist', cacheKey);
+            if (cached) return cached;
+        }
+
+        const primaryResponse = await this.fetchWithRetry(`/artist/?id=${artistId}`);
+        const primaryJsonData = await primaryResponse.json();
+
+        // Unwrap data property if it exists, then unwrap artist property if it exists
+        let primaryData = primaryJsonData.data || primaryJsonData;
+        const rawArtist = primaryData.artist || (Array.isArray(primaryData) ? primaryData[0] : primaryData);
+
+        if (!rawArtist) throw new Error('Primary artist details not found.');
+
+        const artist = {
+            ...this.prepareArtist(rawArtist),
+            picture: rawArtist.picture || null,
+            name: rawArtist.name || 'Unknown Artist',
+        };
+
+        const albumMap = new Map();
+        const trackMap = new Map();
+        const videoMap = new Map();
+
+        const isTrack = (v) => v?.id && (v.duration || v.trackNumber != null || v.type === 'track');
+        const isAlbum = (v) =>
+            v?.id && ('numberOfTracks' in v || 'numberOfItems' in v || v.type === 'album' || v.type === 'ALBUM');
+        const isVideo = (v) => v?.id && (!!v.type?.toLowerCase().includes('video') || v.type === 'VIDEO');
+
+        const scan = (value, visited) => {
+            if (!value || typeof value !== 'object' || visited.has(value)) return;
+            visited.add(value);
+
+            if (Array.isArray(value)) {
+                value.forEach((item) => scan(item, visited));
+                return;
+            }
+
+            const item = value.item || value;
+            const type = (item.type || '').toLowerCase();
+
+            if (isAlbum(item) || type === 'album') albumMap.set(item.id, this.prepareAlbum(item));
+            if ((isTrack(item) || type === 'track') && !isAlbum(item) && !isVideo(item)) {
+                trackMap.set(item.id, this.prepareTrack(item));
+            }
+            if (isVideo(item) || type === 'video') videoMap.set(item.id, this.prepareVideo(item));
+
+            Object.values(value).forEach((nested) => scan(nested, visited));
+        };
+
+        const visited = new Set();
+        scan(primaryData, visited);
+
+        if (albumMap.size === 0) {
+            try {
+                if (import.meta.env.DEV) {
+                    console.log('No albums in primary response, trying fallback fetch');
+                }
+                const albumsResponse = await this.fetchWithRetry(`/artist/?f=${artistId}&skip_tracks=true`);
+                const albumsData = await albumsResponse.json();
+                scan(albumsData, visited);
+            } catch (e) {
+                console.warn('Fallback album fetch failed:', e);
+            }
+        }
+
+        const matchesArtistId = (item) => {
+            const candidateIds = [
+                item.artistId,
+                item.artist_id,
+                item.artist?.id,
+                ...(Array.isArray(item.artists) ? item.artists.map((a) => a.id) : []),
+                ...(Array.isArray(item.artistRoles) ? item.artistRoles.map((r) => r.artist?.id) : []),
+            ].filter((id) => id != null);
+
+            if (item.artist && (typeof item.artist === 'number' || typeof item.artist === 'string')) {
+                candidateIds.push(item.artist);
+            }
+
+            return candidateIds.some((id) => Number(id) === Number(artist.id) || Number(id) === Number(artistId));
+        };
+
+        if (!options.lightweight) {
+            try {
+                const videoSearch = await this.searchVideos(artist.name);
+                if (videoSearch && videoSearch.items) {
+                    for (const item of videoSearch.items) {
+                        if (matchesArtistId(item) && !videoMap.has(item.id)) {
+                            videoMap.set(item.id, item);
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to fetch additional videos via search:', e);
+            }
+        }
+
+        const rawReleases = Array.from(albumMap.values()).filter(matchesArtistId);
+        const allReleases = this.deduplicateAlbums(rawReleases).sort(
+            (a, b) => new Date(b.releaseDate || 0) - new Date(a.releaseDate || 0)
+        );
+
+        const eps = allReleases.filter((a) => a.type === 'EP' || a.type === 'SINGLE');
+        const albums = allReleases.filter((a) => !eps.includes(a));
+
+        const topTracks = Array.from(trackMap.values())
+            .filter(matchesArtistId)
+            .sort((a, b) => (b.popularity || 0) - (a.popularity || 0))
+            .slice(0, 15);
+
+        const videos = Array.from(videoMap.values()).sort(
+            (a, b) => new Date(b.releaseDate || 0) - new Date(a.releaseDate || 0)
+        );
+
+        // Enrich tracks with album release dates
+        const tracks = options.lightweight ? topTracks : await this.enrichTracksWithAlbumDates(topTracks);
+
+        const result = { ...artist, albums, eps, tracks, videos };
+
+        if (!(primaryResponse instanceof TidalResponse)) {
+            await this.cache.set('artist', cacheKey, result);
+        }
+        return result;
+    }
+
+    async getArtistTopTracks(artistId, options = {}) {
+        if (String(artistId).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            const tracks = await soundCloudAPI.getArtistTopTracks(artistId, options);
+            return {
+                tracks: tracks || [],
+                total: (tracks || []).length,
+                hasMore: false,
+            };
+        }
+        const offset = options.offset || 0;
+        const limit = options.limit || 15;
+        console.log('[getArtistTopTracks] Called:', { artistId, offset, limit, options });
+
+        const cacheKey = `artist_tracks_${artistId}_${offset}_${limit}`;
+        if (!options.skipCache) {
+            const cached = await this.cache.get('artist', cacheKey);
+            if (cached) return cached;
+        }
+
+        try {
+            // Use f parameter with skip_tracks=true to get toptracks from the dedicated endpoint
+            const response = await this.fetchWithRetry(
+                `/artist/?f=${artistId}&skip_tracks=true&offset=${offset}&limit=${limit}`
+            );
+            const jsonData = await response.json();
+
+            let data = jsonData.data || jsonData;
+            console.log(
+                '[getArtistTopTracks] Raw response data keys:',
+                Object.keys(data),
+                'tracks:',
+                data.tracks?.length
+            );
+
+            // Extract tracks from the response
+            let tracks = [];
+
+            // Check for tracks array directly (from toptracks endpoint)
+            if (Array.isArray(data.tracks)) {
+                tracks = data.tracks;
+            }
+
+            // Also scan for tracks in the data structure
+            if (tracks.length === 0) {
+                const trackMap = new Map();
+                const isTrack = (v) => v?.id && v.duration;
+
+                const scan = (value, visited) => {
+                    if (!value || typeof value !== 'object' || visited.has(value)) return;
+                    visited.add(value);
+
+                    if (Array.isArray(value)) {
+                        value.forEach((item) => scan(item, visited));
+                        return;
+                    }
+
+                    const item = value.item || value;
+                    if (isTrack(item)) {
+                        trackMap.set(item.id, this.prepareTrack(item));
+                    }
+
+                    Object.values(value).forEach((nested) => scan(nested, visited));
+                };
+
+                const visited = new Set();
+                scan(data, visited);
+                tracks = Array.from(trackMap.values());
+            }
+
+            tracks = tracks.map((t) => this.prepareTrack(t)).sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
+            tracks = await this.enrichTracksWithAlbumDates(tracks);
+
+            // Safeguard: If API ignores offset, it returns the same first tracks
+            const hasMore = tracks.length === limit && (offset === 0 || tracks[0]?.id !== options.firstTrackId);
+            const result = {
+                tracks,
+                offset,
+                limit,
+                hasMore,
+            };
+
+            if (!(response instanceof TidalResponse)) {
+                await this.cache.set('artist', cacheKey, result);
+            }
+            return result;
+        } catch (e) {
+            console.warn('Failed to fetch artist top tracks:', e);
+            return { tracks: [], offset, limit, hasMore: false };
+        }
+    }
+
+    async getSimilarArtists(artistId) {
+        if (String(artistId).startsWith('sc_')) return [];
+        const cached = await this.cache.get('similar_artists', artistId);
+        if (cached) return cached;
+
+        try {
+            const response = await this.fetchWithRetry(`/artist/similar/?id=${artistId}`, {
+                type: 'api',
+                minVersion: '2.3',
+            });
+            const data = await response.json();
+
+            // Handle various response structures
+            const items = data.artists || data.items || data.data || (Array.isArray(data) ? data : []);
+
+            const result = items.map((artist) => this.prepareArtist(artist));
+
+            if (!(response instanceof TidalResponse)) {
+                await this.cache.set('similar_artists', artistId, result);
+            }
+            return result;
+        } catch (e) {
+            console.warn('Failed to fetch similar artists:', e);
+            return [];
+        }
+    }
+
+    async getArtistBiography(artistId, options = {}) {
+        if (String(artistId).startsWith('sc_')) return null;
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider().getArtistBiography(artistId);
+        }
+        const cacheKey = `artist_bio_v1_${artistId}`;
+        const cached = await this.cache.get('artist', cacheKey);
+        if (cached) return cached;
+
+        try {
+            const response = await this.fetchWithRetry(`/artist/bio/?id=${artistId}`, { type: 'api' });
+
+            if (response.ok) {
+                const { data } = await response.json();
+                if (data && data.text) {
+                    const bio = {
+                        text: data.text,
+                        source: data.source || 'Tidal',
+                    };
+                    if (!(response instanceof TidalResponse)) {
+                        await this.cache.set('artist', cacheKey, bio);
+                    }
+                    return bio;
+                }
+            }
+        } catch (e) {
+            console.warn('Failed to fetch Tidal biography:', e);
+        }
+        return null;
+    }
+
+    async getSimilarAlbums(albumId) {
+        if (String(albumId).startsWith('sc_')) return [];
+        const cached = await this.cache.get('similar_albums', albumId);
+        if (cached) return cached;
+
+        try {
+            const response = await this.fetchWithRetry(`/album/similar/?id=${albumId}`, {
+                type: 'api',
+                minVersion: '2.3',
+            });
+            const data = await response.json();
+
+            const items = data.items || data.albums || data.data || (Array.isArray(data) ? data : []);
+
+            const result = items.map((album) => this.prepareAlbum(album));
+
+            if (!(response instanceof TidalResponse)) {
+                await this.cache.set('similar_albums', albumId, result);
+            }
+            return result;
+        } catch (e) {
+            console.warn('Failed to fetch similar albums:', e);
+            return [];
+        }
+    }
+
+    async getRecommendedTracksForPlaylist(tracks, limit = 20, options = {}) {
+        const artistMap = new Map();
+
+        // Check if tracks already have artist info (some might)
+        for (const track of tracks) {
+            const artists = track.artists || (track.artist ? [track.artist] : []);
+            for (const artist of artists) {
+                if (artist.id) {
+                    artistMap.set(artist.id, artist);
+                }
+            }
+        }
+
+        if (artistMap.size < 3) {
+            console.log('Not enough artists from stored data, trying search approach...');
+
+            for (const track of tracks.slice(0, 5)) {
+                try {
+                    // Search for the track to get full metadata
+                    const searchQuery =
+                        `"${track.title}" ${track.artist?.name || track.artists?.[0]?.name || ''}`.trim();
+                    const searchResult = await this.searchTracks(searchQuery, { signal: AbortSignal.timeout(5000) });
+
+                    if (searchResult.items && searchResult.items.length > 0) {
+                        const foundTrack = searchResult.items[0];
+                        const foundArtists = foundTrack.artists || (foundTrack.artist ? [foundTrack.artist] : []);
+                        for (const artist of foundArtists) {
+                            if (artist.id) {
+                                artistMap.set(artist.id, artist);
+                            }
+                        }
+                    }
+                } catch (e) {
+                    console.warn(`Search failed for track "${track.title}":`, e);
+                }
+            }
+        }
+
+        const artists = Array.from(artistMap.values());
+        console.log(`Found ${artists.length} unique artists from ${tracks.length} tracks`);
+
+        if (artists.length === 0) {
+            console.log('No artists found, cannot generate recommendations');
+            return [];
+        }
+
+        const recommendedTracks = [];
+        const seenTrackIds = new Set(tracks.map((t) => t.id));
+
+        const shuffledArtists = [...artists].sort(() => Math.random() - 0.5);
+        const artistsToProcess = shuffledArtists.slice(0, Math.min(15, shuffledArtists.length));
+
+        const artistPromises = artistsToProcess.map(async (artist) => {
+            try {
+                const artistData = await this.getArtist(artist.id, { lightweight: true, skipCache: options.refresh });
+                if (artistData && artistData.tracks && artistData.tracks.length > 0) {
+                    const availableTracks = artistData.tracks.filter((track) => !seenTrackIds.has(track.id));
+
+                    const newTracks = options.knownTrackIds
+                        ? availableTracks.filter((t) => !options.knownTrackIds.has(t.id))
+                        : availableTracks;
+                    const knownTracks = options.knownTrackIds
+                        ? availableTracks.filter((t) => options.knownTrackIds.has(t.id))
+                        : [];
+
+                    const shuffledNew = [...newTracks].sort(() => Math.random() - 0.5);
+                    const shuffledKnown = [...knownTracks].sort(() => Math.random() - 0.5);
+
+                    const combined = [...shuffledNew, ...shuffledKnown];
+                    return combined.slice(0, 2);
+                } else {
+                    console.warn(`No tracks found for artist ${artist.name}`);
+                    return [];
+                }
+            } catch (e) {
+                console.warn(`Failed to get tracks for artist ${artist.name}:`, e);
+                return [];
+            }
+        });
+
+        const results = await Promise.all(artistPromises);
+        results.forEach((tracks) => {
+            for (const t of tracks) {
+                if (!seenTrackIds.has(t.id)) {
+                    seenTrackIds.add(t.id);
+                    recommendedTracks.push(this.prepareTrack(t));
+                }
+            }
+        });
+
+        const shuffled = recommendedTracks.sort(() => 0.5 - Math.random());
+        const sliced = shuffled.slice(0, limit);
+        return this.enrichTracksWithAlbumCover(sliced);
+    }
+
+    normalizeTrackResponse(apiResponse) {
+        if (!apiResponse || typeof apiResponse !== 'object') {
+            return apiResponse;
+        }
+
+        // unwrap { version, data } if present
+        const raw = apiResponse.data ?? apiResponse;
+
+        // fabricate the track object expected by parseTrackLookup
+        const trackStub = {
+            duration: raw.duration ?? 0,
+            id: raw.trackId ?? null,
+        };
+
+        // return exactly what parseTrackLookup expects
+        return [trackStub, raw];
+    }
+
+    getTrackManifestFormats(quality) {
+        switch (normalizeQualityToken(quality) || quality) {
+            case 'DOLBY_ATMOS':
+                return ['EAC3_JOC'];
+            case 'HI_RES_LOSSLESS':
+                return ['FLAC_HIRES'];
+            case 'LOSSLESS':
+                return ['FLAC'];
+            case 'HIGH':
+                return ['AACLC'];
+            case 'LOW':
+                return ['HEAACV1'];
+            default:
+                return ['FLAC'];
+        }
+    }
+
+    getAdaptiveTrackManifestFormats() {
+        return ['FLAC_HIRES', 'FLAC', 'AACLC', 'HEAACV1', 'EAC3_JOC'];
+    }
+
+    shouldUseAdaptiveTrackManifest(download = false) {
+        if (download || typeof localStorage === 'undefined') {
+            return false;
+        }
+
+        try {
+            return (localStorage.getItem('adaptive-playback-quality') || '').toLowerCase() === 'auto';
+        } catch {
+            return false;
+        }
+    }
+
+    getAudioQualityFromManifestFormats(formats = []) {
+        if (formats.includes('EAC3_JOC')) return 'DOLBY_ATMOS';
+        if (formats.includes('FLAC_HIRES')) return 'HI_RES_LOSSLESS';
+        if (formats.includes('FLAC')) return 'LOSSLESS';
+        if (formats.includes('AACLC')) return 'HIGH';
+        if (formats.includes('HEAACV1')) return 'LOW';
+        return null;
+    }
+
+    async normalizeTrackManifestResponse(apiResponse, quality) {
+        if (!apiResponse || typeof apiResponse !== 'object') {
+            return apiResponse;
+        }
+
+        const raw = apiResponse.data?.data ?? apiResponse.data ?? apiResponse;
+        const attributes = raw?.attributes ?? {};
+        const manifestUrl = attributes.uri;
+
+        if (!manifestUrl) {
+            throw new Error('Malformed track manifests response');
+        }
+
+        const manifestResponse = await fetch(manifestUrl);
+        if (!manifestResponse.ok) {
+            throw new Error(`Failed to fetch signed track manifest: HTTP ${manifestResponse.status}`);
+        }
+
+        const manifestText = await manifestResponse.text();
+        const manifestMimeType =
+            manifestResponse.headers.get('content-type') ||
+            (manifestText.includes('<MPD') ? 'application/dash+xml' : 'application/octet-stream');
+        const normalizedQuality =
+            this.getAudioQualityFromManifestFormats(attributes.formats) || normalizeQualityToken(quality) || 'HIGH';
+
+        const isHiRes = normalizedQuality === 'HI_RES_LOSSLESS';
+        const isLossless = normalizedQuality === 'LOSSLESS' || isHiRes;
+        const trackNorm = attributes.trackAudioNormalizationData || {};
+        const albumNorm = attributes.albumAudioNormalizationData || {};
+
+        const info = {
+            trackId: Number(raw.id) || null,
+            assetPresentation: attributes.trackPresentation || 'FULL',
+            audioQuality: normalizedQuality,
+            manifestMimeType,
+            manifestHash: attributes.hash || '',
+            manifest: btoa(manifestText),
+            bitDepth: isHiRes ? 24 : isLossless ? 16 : undefined,
+            sampleRate: isHiRes ? 96000 : isLossless ? 44100 : undefined,
+            replayGain: trackNorm.replayGain,
+            trackReplayGain: trackNorm.replayGain,
+            trackPeakAmplitude: trackNorm.peakAmplitude,
+            albumReplayGain: albumNorm.replayGain,
+            albumPeakAmplitude: albumNorm.peakAmplitude,
+            drmData: attributes.drmData || null,
+            formats: attributes.formats || [],
+        };
+
+        const trackStub = {
+            duration: raw.duration ?? 0,
+            id: Number(raw.id) || null,
+        };
+
+        return [trackStub, info];
+    }
+
+    async getTrackMetadata(id) {
+        if (String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getTrackById(id);
+        }
+        const cacheKey = `meta_${id}`;
+        const cached = await this.cache.get('track', cacheKey);
+        if (cached) return cached;
+
+        const response = await this.fetchWithRetry(`/info/?id=${id}`, { type: 'api' });
+        const json = await response.json();
+        const data = json.data || json;
+
+        let track;
+        const items = Array.isArray(data) ? data : [data];
+        const found = items.find((i) => i.id == id || (i.item && i.item.id == id));
+
+        if (found) {
+            track = this.prepareTrack(found.item || found);
+            await this.cache.set('track', cacheKey, track);
+            return track;
+        }
+
+        throw new Error('Track metadata not found');
+    }
+
+    async getTrackRecommendations(id) {
+        if (String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getTrackRecommendations(id);
+        }
+        const cached = await this.cache.get('recommendations', id);
+        if (cached) return cached;
+
+        try {
+            const response = await this.fetchWithRetry(`/recommendations/?id=${id}`, {
+                type: 'api',
+                minVersion: '2.4',
+            });
+            const json = await response.json();
+            const data = json.data || json;
+
+            const items = data.items || [];
+            const tracks = items.map((item) => this.prepareTrack(item.track || item));
+
+            if (!(response instanceof TidalResponse)) {
+                await this.cache.set('recommendations', id, tracks);
+            }
+            return tracks;
+        } catch (error) {
+            console.error('Failed to fetch recommendations:', error);
+            return [];
+        }
+    }
+
+    async getTrackFromDevMode(id, quality = 'LOSSLESS') {
+        const devBaseUrl = devModeSettings.getUrl().replace(/\/+$/, '');
+        const requestedQuality = normalizeQualityToken(quality) || quality || 'LOSSLESS';
+        
+        const qualitiesToTry = [requestedQuality];
+        if (requestedQuality === 'HI_RES_LOSSLESS') {
+            qualitiesToTry.push('LOSSLESS', 'HIGH');
+        } else if (requestedQuality === 'LOSSLESS') {
+            qualitiesToTry.push('HIGH');
+        }
+
+        let lastError = null;
+
+        for (const currentQuality of qualitiesToTry) {
+            const params = new URLSearchParams({
+                id: String(id),
+                quality: currentQuality,
+                adaptive: 'false',
+            });
+            for (const format of this.getTrackManifestFormats(currentQuality)) {
+                params.append('formats', format);
+            }
+
+            const url = `${devBaseUrl}/trackManifests/?${params.toString()}`;
+            if (import.meta.env.DEV) {
+                console.log('[dev-mode]', url);
+            }
+            const response = await fetch(url);
+            
+            if (response.ok) {
+                const jsonResponse = await response.json();
+                return this.parseTrackLookup(await this.normalizeTrackManifestResponse(jsonResponse, currentQuality));
+            }
+            
+            lastError = new Error(`Dev mode request failed for quality ${currentQuality}: ${response.status} ${response.statusText}`);
+            
+            // If it's not a 403/404, or we're on the lowest quality already, don't keep trying
+            if (response.status !== 403 && response.status !== 404) {
+                break;
+            }
+        }
+        
+        throw lastError;
+    }
+
+    async getTrack(id, quality = 'LOSSLESS', { adaptive = false, _fromProvider = false } = {}) {
+        if (String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getTrackById(id);
+        }
+        if (devModeSettings.isEnabled() && !_fromProvider) {
+            return await this.getFallbackProvider().getTrack(id, quality);
+        }
+        const cacheKey = `${id}_${quality}_${adaptive ? 'adaptive' : 'fixed'}`;
+        const cached = await this.cache.get('track', cacheKey);
+        if (cached) return cached;
+
+        const requestedQuality = normalizeQualityToken(quality) || quality || 'LOSSLESS';
+        
+        const qualitiesToTry = [requestedQuality];
+        if (requestedQuality === 'HI_RES_LOSSLESS') {
+            qualitiesToTry.push('LOSSLESS', 'HIGH');
+        } else if (requestedQuality === 'LOSSLESS') {
+            qualitiesToTry.push('HIGH');
+        }
+
+        let lastError = null;
+        let response = null;
+        let currentQuality = requestedQuality;
+
+        for (const q of qualitiesToTry) {
+            currentQuality = q;
+            const params = new URLSearchParams({
+                id: String(id),
+                quality: currentQuality,
+                adaptive: String(adaptive),
+            });
+            const formats = adaptive ? this.getAdaptiveTrackManifestFormats() : this.getTrackManifestFormats(q);
+            for (const format of formats) {
+                params.append('formats', format);
+            }
+
+            try {
+                response = await this.fetchWithRetry(`/trackManifests/?${params.toString()}`, { type: 'streaming' });
+                lastError = null;
+                break;
+            } catch (err) {
+                lastError = err;
+                if (err.message && (err.message.includes('403') || err.message.includes('404'))) {
+                    continue;
+                }
+                break;
+            }
+        }
+
+        if (lastError) throw lastError;
+
+        const jsonResponse = await response.json();
+        const result = this.parseTrackLookup(await this.normalizeTrackManifestResponse(jsonResponse, currentQuality));
+
+        if (!(response instanceof TidalResponse)) {
+            await this.cache.set('track', cacheKey, result);
+        }
+        return result;
+    }
+
+    async getQobuzStreamUrl(isrc, quality = 'LOSSLESS', expectedTitle = null) {
+        let qobuzInstances = [];
+        try {
+            qobuzInstances = await this.settings.getInstances('qobuz');
+        } catch {
+            // ignore
+        }
+
+        if (!qobuzInstances || qobuzInstances.length === 0) {
+            return null;
+        }
+
+        for (const instance of qobuzInstances) {
+            const rawUrl = typeof instance === 'string' ? instance : instance?.url;
+            if (!rawUrl || typeof rawUrl !== 'string') continue;
+            const baseUrl = rawUrl.replace(/\/+$/, '');
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+                const trackRes = await fetch(
+                    getProxyUrl(`${baseUrl}/api/get-music?q=${encodeURIComponent(isrc)}&offset=0`),
+                    {
+                        signal: controller.signal,
+                    }
+                );
+                clearTimeout(timeoutId);
+                if (!trackRes.ok) continue;
+                const trackJson = await trackRes.json();
+
+                const tracks = trackJson.data?.tracks?.items || [];
+                let match = tracks.find((t) => t.isrc?.toLowerCase() === isrc.toLowerCase()) || tracks[0];
+
+                if (match && expectedTitle) {
+                    const mTitle = expectedTitle.toLowerCase().trim();
+                    const tTitle = (match.title || match.name || '').toLowerCase().trim();
+                    const isTitleSimilar = tTitle === mTitle || tTitle.includes(mTitle) || mTitle.includes(tTitle);
+                    if (!isTitleSimilar) {
+                        console.warn(`[api.js] ISRC match rejected for ${isrc}! Expected title "${expectedTitle}", but Qobuz returned "${match.title || match.name}" (ID: ${match.id}).`);
+                        match = null;
+                    }
+                }
+
+                if (match && match.id) {
+                    const qobuzTrackId = match.id;
+                    const qobuzQualityMap = {
+                        HI_RES_LOSSLESS: '27',
+                        LOSSLESS: '6',
+                        HIGH: '5',
+                        LOW: '5',
+                    };
+                    const qobuzQuality = qobuzQualityMap[quality] || '6';
+
+                    const streamController = new AbortController();
+                    const streamTimeoutId = setTimeout(() => streamController.abort(), 8000);
+
+                    const streamRes = await fetch(
+                        `${baseUrl}/api/download-music?track_id=${qobuzTrackId}&quality=${qobuzQuality}`,
+                        { signal: streamController.signal }
+                    );
+                    clearTimeout(streamTimeoutId);
+                    if (!streamRes.ok) continue;
+                    const streamJson = await streamRes.json();
+
+                    if (streamJson.success && streamJson.data && streamJson.data.url) {
+                        let rgInfo = null;
+                        if (match.audio_info) {
+                            rgInfo = {
+                                trackReplayGain: match.audio_info.replaygain_track_gain,
+                                trackPeakAmplitude: match.audio_info.replaygain_track_peak,
+                                albumReplayGain: match.audio_info.replaygain_album_gain,
+                                albumPeakAmplitude: match.audio_info.replaygain_album_peak,
+                            };
+                        }
+                        return { url: streamJson.data.url, rgInfo };
+                    }
+                }
+            } catch (e) {
+                console.warn(`Qobuz instance ${baseUrl} failed for ISRC ${isrc}:`, e);
+                continue;
+            }
+        }
+        return null;
+    }
+
+    getDeezerStreamFormat(quality = 'LOSSLESS') {
+        const map = {
+            HI_RES_LOSSLESS: 'FLAC',
+            LOSSLESS: 'FLAC',
+            DOLBY_ATMOS: 'FLAC',
+            HIGH: 'MP3_320',
+            LOW: 'MP3_128',
+            NORMAL: 'MP3_128',
+        };
+        return map[quality] || map[normalizeQualityToken(quality)] || 'FLAC';
+    }
+
+    async getDeezerStreamUrl(isrc, quality = 'LOSSLESS') {
+        if (!isrc || !deezerFallbackSettings.isEnabled()) return null;
+        const baseUrl = deezerFallbackSettings.getApiBaseUrl().replace(/\/+$/, '');
+        if (!baseUrl) return null;
+        const format = this.getDeezerStreamFormat(quality);
+        const url = `${baseUrl}/stream/?isrc=${encodeURIComponent(isrc)}&format=${encodeURIComponent(format)}`;
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 12000);
+            const res = await fetch(getProxyUrl(url), { method: 'HEAD', signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (!res.ok && res.status !== 405 && res.status !== 501) return null;
+        } catch (e) {
+            console.warn(`Deezer fallback failed for ISRC ${isrc}:`, e);
+            return null;
+        }
+        return { url, format, provider: 'deezer', rgInfo: null };
+    }
+
+    getAmazonMusicQuality(quality = 'LOSSLESS', { preferAdaptiveAuto = false } = {}) {
+        let adaptiveQuality = null;
+        try {
+            adaptiveQuality =
+                typeof localStorage !== 'undefined'
+                    ? localStorage.getItem('adaptive-playback-quality') || 'auto'
+                    : null;
+        } catch {}
+        if (preferAdaptiveAuto && String(adaptiveQuality || '').toLowerCase() === 'auto') {
+            return 'UHD';
+        }
+
+        const qualityMap = {
+            auto: 'UHD',
+            AUTO: 'UHD',
+            ADAPTIVE: 'UHD',
+            HI_RES_LOSSLESS: 'UHD',
+            LOSSLESS: 'HD',
+            HIGH: 'SD_HIGH',
+            LOW: 'SD_LOW',
+            NORMAL: 'SD_MEDIUM',
+            DOLBY_ATMOS: 'UHD',
+        };
+        return qualityMap[quality] || qualityMap[normalizeQualityToken(quality)] || 'HD';
+    }
+
+    getAmazonRateLimitedUntil() {
+        try {
+            return Number(localStorage.getItem(AMAZON_RATE_LIMITED_UNTIL_KEY) || 0);
+        } catch {
+            return this.amazonRateLimitedUntil || 0;
+        }
+    }
+
+    isAmazonRateLimited() {
+        return Date.now() < this.getAmazonRateLimitedUntil();
+    }
+
+    setAmazonRateLimited() {
+        const until = Date.now() + AMAZON_RATE_LIMIT_DURATION_MS;
+        this.amazonRateLimitedUntil = until;
+        try {
+            localStorage.setItem(AMAZON_RATE_LIMITED_UNTIL_KEY, String(until));
+        } catch {}
+
+        for (const [key, value] of this.streamCache.entries()) {
+            if (value?.provider === 'amazon') {
+                this.streamCache.delete(key);
+            }
+        }
+
+        console.warn('Amazon Music API returned 403; falling back to Qobuz for 30 minutes');
+    }
+
+    clearAmazonTurnstileJwt() {
+        localStorage.removeItem('amazon_turnstile_jwt');
+        localStorage.removeItem('amazon_turnstile_expiry');
+    }
+
+    handleAmazonApiStatus(status, endpointName = 'Amazon Music API') {
+        if (status === 403) {
+            this.setAmazonRateLimited();
+            throw new Error(`${endpointName} rate limited the client`);
+        }
+    }
+
+    getAmazonSelectedQualityInfo(trackInfo) {
+        if (!Array.isArray(trackInfo?.available_qualities)) return null;
+        return trackInfo.available_qualities.find((item) => item.quality === trackInfo.quality_selected) || null;
+    }
+
+    getAmazonCodecString(codec) {
+        const normalized = String(codec || '').toLowerCase();
+        if (normalized === 'flac') return 'fLaC';
+        if (normalized === 'opus') return 'Opus';
+        if (normalized === 'aac' || normalized === 'mp4a.40.2') return 'mp4a.40.2';
+        if (normalized === 'eac3' || normalized === 'ec-3') return 'ec-3';
+        return normalized;
+    }
+
+    getAmazonDecryptionKey(data) {
+        return (
+            data?.decryption_key ||
+            data?.decryptionKey ||
+            data?.decryption?.key ||
+            data?.drm?.decryption_key ||
+            data?.drm?.decryptionKey ||
+            null
+        );
+    }
+
+    getAmazonMimeType(qualityInfo = null) {
+        const codec = this.getAmazonCodecString(qualityInfo?.codec);
+        return codec ? `audio/mp4; codecs="${codec}"` : 'audio/mp4';
+    }
+
+    getAmazonQualityDisplay(trackInfo, qualityInfo = null) {
+        const quality = String(trackInfo?.quality_selected || trackInfo?.quality_requested || '').trim();
+        if (qualityInfo?.bitDepth && qualityInfo?.sampleRate) {
+            const sampleRate =
+                qualityInfo.sampleRate === 44100 ? '44.1' : String(Math.round(qualityInfo.sampleRate / 1000));
+            if (quality.startsWith('UHD_')) {
+                return `HD ${qualityInfo.bitDepth}/${sampleRate}`;
+            }
+            if (quality.startsWith('HD_')) {
+                return `FLAC ${qualityInfo.bitDepth}/${sampleRate}`;
+            }
+        }
+        return quality.replace(/^UHD_/, 'HD ').replace(/^HD_/, 'FLAC ').replace(/_/g, ' ');
+    }
+
+    async fetchWithTimeout(url, options = {}, timeout = 10000) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        try {
+            return await fetch(url, {
+                ...options,
+                signal: options.signal || controller.signal,
+            });
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
+
+    async loadTurnstile() {
+        if (typeof window === 'undefined' || typeof document === 'undefined') {
+            throw new Error('Turnstile is only available in the browser');
+        }
+
+        if (window.turnstile) return window.turnstile;
+        if (this.turnstileLoadPromise) return this.turnstileLoadPromise;
+
+        this.turnstileLoadPromise = new Promise((resolve, reject) => {
+            const existing = document.querySelector('script[data-monochrome-turnstile]');
+            if (existing) {
+                existing.addEventListener('load', () => resolve(window.turnstile), { once: true });
+                existing.addEventListener('error', () => reject(new Error('Failed to load Turnstile')), {
+                    once: true,
+                });
+                return;
+            }
+
+            const script = document.createElement('script');
+            script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+            script.async = true;
+            script.defer = true;
+            script.dataset.monochromeTurnstile = 'true';
+            script.onload = () => resolve(window.turnstile);
+            script.onerror = () => reject(new Error('Failed to load Turnstile'));
+            document.head.appendChild(script);
+        }).finally(() => {
+            this.turnstileLoadPromise = null;
+        });
+
+        return this.turnstileLoadPromise;
+    }
+
+    getTurnstileContainer({
+        panelId = 'amazon-music-turnstile-panel',
+        containerId = 'amazon-music-turnstile-container',
+        message = 'Amazon Music playback needs a quick browser check.',
+    } = {}) {
+        let panel = document.getElementById(panelId);
+        if (!panel) {
+            panel = document.createElement('div');
+            panel.id = panelId;
+            panel.style.position = 'fixed';
+            panel.style.right = '16px';
+            panel.style.bottom = '84px';
+            panel.style.zIndex = '9999';
+            panel.style.width = '320px';
+            panel.style.padding = '12px';
+            panel.style.border = '1px solid var(--border)';
+            panel.style.borderRadius = 'var(--radius-md)';
+            panel.style.background = 'var(--card)';
+            panel.style.color = 'var(--foreground)';
+            panel.style.boxShadow = '0 12px 32px rgba(0, 0, 0, 0.28)';
+            panel.style.fontSize = '0.8rem';
+            panel.style.display = 'none';
+            panel.innerHTML = `
+                <div style="font-weight: 600; margin-bottom: 0.25rem;">Cloudflare verification</div>
+                <div style="color: var(--muted-foreground); margin-bottom: 0.75rem; line-height: 1.35;">
+                    ${message}
+                </div>
+                <div id="${containerId}"></div>
+            `;
+            document.body.appendChild(panel);
+        }
+        return panel.querySelector(`#${containerId}`);
+    }
+
+    async getTurnstileResponse({
+        siteKey = amazonMusicSettings.getTurnstileSiteKey().trim(),
+        action = null,
+        panelId = 'amazon-music-turnstile-panel',
+        containerId = 'amazon-music-turnstile-container',
+        message = 'Amazon Music playback needs a quick browser check.',
+    } = {}) {
+        if (!siteKey) {
+            return null;
+        }
+
+        const container = this.getTurnstileContainer({ panelId, containerId, message });
+        container.innerHTML = '';
+        const turnstile = await this.loadTurnstile();
+
+        const playBtns = document.querySelectorAll('.play-pause-btn, #fs-play-pause-btn');
+        const oldHtmls = new Map();
+        playBtns.forEach((btn) => {
+            oldHtmls.set(btn, btn.innerHTML);
+            btn.innerHTML = `<svg class="animate-spin" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>`;
+        });
+
+        const attemptTurnstile = (isRetry = false) => {
+            return new Promise((resolve, reject) => {
+                let timeoutId;
+                let widgetId;
+                const cleanup = () => {
+                    playBtns.forEach((btn) => {
+                        if (oldHtmls.has(btn)) {
+                            btn.innerHTML = oldHtmls.get(btn);
+                        }
+                    });
+                    clearTimeout(timeoutId);
+                    if (widgetId && turnstile.remove) {
+                        try {
+                            turnstile.remove(widgetId);
+                        } catch {}
+                    }
+                    document.getElementById(panelId)?.remove();
+                };
+
+                timeoutId = setTimeout(() => {
+                    cleanup();
+                    reject(new Error('Turnstile timed out'));
+                }, 30000);
+
+                const config = {
+                    sitekey: siteKey,
+                    size: 'invisible',
+                    execution: isRetry ? 'render' : 'execute',
+                    appearance: isRetry ? 'always' : 'interaction-only',
+                    theme: 'auto',
+                    'before-interactive-callback': () => {
+                        const p = document.getElementById(panelId);
+                        if (p) p.style.display = 'block';
+                    },
+                    callback: (token) => {
+                        cleanup();
+                        resolve(token);
+                    },
+                    'error-callback': () => {
+                        if (!isRetry) {
+                            if (widgetId && turnstile.remove) {
+                                try {
+                                    turnstile.remove(widgetId);
+                                } catch {}
+                            }
+                            clearTimeout(timeoutId);
+                            container.innerHTML = '';
+                            attemptTurnstile(true).then(resolve, reject);
+                        } else {
+                            cleanup();
+                            reject(new Error('Turnstile failed'));
+                        }
+                    },
+                    'expired-callback': () => {
+                        cleanup();
+                        reject(new Error('Turnstile expired'));
+                    },
+                };
+
+                widgetId = turnstile.render(container, config);
+                if (!isRetry) {
+                    turnstile.execute(widgetId);
+                }
+            });
+        };
+
+        return await attemptTurnstile(false);
+    }
+
+    async getTurnstileJwt({ forceRefresh = false } = {}) {
+        if (!forceRefresh) {
+            const cachedJwt = localStorage.getItem('amazon_turnstile_jwt');
+            const cachedExpiry = localStorage.getItem('amazon_turnstile_expiry');
+            if (cachedJwt && cachedExpiry && Date.now() < parseInt(cachedExpiry, 10)) {
+                return cachedJwt;
+            }
+        }
+        if (this._turnstileJwtPromise && !forceRefresh) {
+            return this._turnstileJwtPromise;
+        }
+
+        this._turnstileJwtPromise = (async () => {
+            if (forceRefresh) {
+                this.clearAmazonTurnstileJwt();
+            }
+
+            const apiBaseUrl = amazonMusicSettings.getApiBaseUrl().replace(/\/+$/, '');
+            let response = null;
+
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const turnstileResponse = await this.getTurnstileResponse();
+                if (!turnstileResponse) return null;
+
+                response = await fetch(`${apiBaseUrl}/api/auth/turnstile`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ cf_turnstile_response: turnstileResponse }),
+                });
+
+                this.handleAmazonApiStatus(response.status, 'Amazon Music Turnstile auth');
+                if ((response.status === 401 || response.status === 428) && attempt === 0) {
+                    this.clearAmazonTurnstileJwt();
+                    continue;
+                }
+                break;
+            }
+
+            if (!response.ok) {
+                throw new Error(`Failed to exchange Turnstile token: ${response.status}`);
+            }
+
+            const data = await response.json();
+            const jwt = data.access_token;
+            const expiry = Date.now() + 60 * 60 * 1000;
+
+            localStorage.setItem('amazon_turnstile_jwt', jwt);
+            localStorage.setItem('amazon_turnstile_expiry', expiry.toString());
+
+            return jwt;
+        })().finally(() => {
+            this._turnstileJwtPromise = null;
+        });
+
+        return this._turnstileJwtPromise;
+    }
+
+    async canPlayAmazonMusicStream(streamInfo) {
+        return streamInfo?.provider === 'amazon';
+    }
+
+    getJwtExpiry(token) {
+        try {
+            const encoded = token.split('.')[1];
+            const normalized = encoded.replace(/-/g, '+').replace(/_/g, '/');
+            const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+            return Number(JSON.parse(atob(padded)).exp || 0);
+        } catch {
+            return 0;
+        }
+    }
+
+    clearMonochromePlaybackSession() {
+        try {
+            sessionStorage.removeItem(MONOCHROME_PLAYBACK_SESSION_KEY);
+        } catch {}
+    }
+
+    getCachedMonochromePlaybackSession() {
+        try {
+            const token = sessionStorage.getItem(MONOCHROME_PLAYBACK_SESSION_KEY);
+            if (!token) return null;
+            const expiry = this.getJwtExpiry(token);
+            if (expiry <= Math.floor(Date.now() / 1000) + MONOCHROME_SESSION_EXPIRY_LEEWAY_SECONDS) {
+                this.clearMonochromePlaybackSession();
+                return null;
+            }
+            return token;
+        } catch {
+            return null;
+        }
+    }
+
+    async getMonochromePlaybackSession({ forceRefresh = false } = {}) {
+        if (!forceRefresh) {
+            const cachedSession = this.getCachedMonochromePlaybackSession();
+            if (cachedSession) return cachedSession;
+            if (this._monochromeSessionPromise) return this._monochromeSessionPromise;
+        } else {
+            this.clearMonochromePlaybackSession();
+        }
+
+        this._monochromeSessionPromise = (async () => {
+            const turnstileToken = await this.getTurnstileResponse({
+                siteKey: MONOCHROME_PLAYBACK_TURNSTILE_SITE_KEY,
+                action: 'auth',
+                panelId: 'monochrome-playback-turnstile-panel',
+                containerId: 'monochrome-playback-turnstile-container',
+                message: 'Monochrome Playback needs a quick browser check.',
+            });
+            if (!turnstileToken) return null;
+
+            const apiBaseUrl = monochromePlaybackSettings.getApiBaseUrl().replace(/\/+$/, '');
+            const response = await this.fetchWithTimeout(
+                `${apiBaseUrl}/auth/turnstile`,
+                {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ turnstile_token: turnstileToken }),
+                },
+                15000
+            );
+            if (!response.ok) {
+                throw new Error(`Monochrome Playback session exchange failed: ${response.status}`);
+            }
+
+            const data = await response.json();
+            const accessToken = String(data.access_token || '').trim();
+            if (!accessToken) {
+                throw new Error('Monochrome Playback session exchange returned no access token');
+            }
+            sessionStorage.setItem(MONOCHROME_PLAYBACK_SESSION_KEY, accessToken);
+            return accessToken;
+        })().finally(() => {
+            this._monochromeSessionPromise = null;
+        });
+
+        return this._monochromeSessionPromise;
+    }
+
+    setMonochromeRateLimit(response) {
+        const retryAfter = response.headers?.get?.('Retry-After');
+        const seconds = Number(retryAfter);
+        if (Number.isFinite(seconds) && seconds > 0) {
+            this.monochromeRateLimitedUntil = Date.now() + seconds * 1000;
+            return;
+        }
+        const retryAt = Date.parse(retryAfter || '');
+        this.monochromeRateLimitedUntil = Number.isFinite(retryAt) ? retryAt : Date.now() + 30 * 1000;
+    }
+
+    async getMonochromePlaybackStreamUrl(tidalTrackId, options = {}) {
+        try {
+            if (!monochromePlaybackSettings?.isEnabled() || Date.now() < this.monochromeRateLimitedUntil) {
+                return null;
+            }
+
+            const track =
+                options.track || (tidalTrackId ? await this.getTrackMetadata(tidalTrackId).catch(() => null) : null);
+            if (!track) return null;
+
+            const title = this.getAmazonTrackTitle(track);
+            const artist = this.getAmazonTrackArtist(track);
+            if (!title || !artist) return null;
+
+            const body = { song_name: title, artist };
+            const isrc = String(track.isrc || '').trim();
+            const duration = this.getAmazonTrackDuration(track);
+            if (isrc) body.isrc = isrc;
+            if (duration) body.duration = Math.round(duration);
+
+            const apiBaseUrl = monochromePlaybackSettings.getApiBaseUrl().replace(/\/+$/, '');
+
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const headers = { 'Content-Type': 'application/json' };
+                const sessionToken = await this.getMonochromePlaybackSession({ forceRefresh: attempt > 0 });
+                if (!sessionToken) return null;
+                headers.Authorization = `Bearer ${sessionToken}`;
+
+                const response = await this.fetchWithTimeout(
+                    `${apiBaseUrl}/playback`,
+                    {
+                        method: 'POST',
+                        headers,
+                        body: JSON.stringify(body),
+                    },
+                    20000
+                );
+
+                if (response.status === 401 && attempt === 0) {
+                    this.clearMonochromePlaybackSession();
+                    continue;
+                }
+                if (response.status === 429) {
+                    this.setMonochromeRateLimit(response);
+                    return null;
+                }
+                if (!response.ok) {
+                    throw new Error(`Monochrome Playback request failed: ${response.status}`);
+                }
+
+                const data = await response.json();
+                if (!data?.url) {
+                    throw new Error('Monochrome Playback returned no stream URL');
+                }
+
+                return {
+                    url: data.url,
+                    sourceUrl: data.url,
+                    provider: 'monochrome',
+                    playbackType: 'direct',
+                    quality: 'LOSSLESS',
+                    qualityDisplay: 'FLAC',
+                    mimeType: 'audio/flac',
+                    mediaMimeType: 'audio/flac',
+                    trackId: data.track_id || null,
+                    recordingId: data.recording_id || null,
+                    rgInfo: {
+                        trackReplayGain: 0,
+                        trackPeakAmplitude: 1,
+                        albumReplayGain: 0,
+                        albumPeakAmplitude: 1,
+                    },
+                };
+            }
+        } catch (error) {
+            console.warn(`Monochrome Playback failed for Tidal track ${tidalTrackId}:`, error);
+        }
+        return null;
+    }
+
+    bytesToHex(bytes) {
+        return Array.from(bytes)
+            .map((byte) => byte.toString(16).padStart(2, '0'))
+            .join('');
+    }
+
+    escapeXml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&apos;');
+    }
+
+    formatDurationForMpd(seconds) {
+        const duration = Number.isFinite(seconds) && seconds > 0 ? seconds : 3600;
+        return `PT${duration.toFixed(3).replace(/\.?0+$/, '')}S`;
+    }
+
+    formatKeyIdUuid(keyId) {
+        const normalized = String(keyId || '')
+            .replace(/-/g, '')
+            .toLowerCase();
+        if (normalized.length !== 32) return normalized;
+        return `${normalized.slice(0, 8)}-${normalized.slice(8, 12)}-${normalized.slice(12, 16)}-${normalized.slice(16, 20)}-${normalized.slice(20)}`;
+    }
+
+    readMp4Uint32(bytes, offset) {
+        if (offset + 4 > bytes.length) return null;
+        return ((bytes[offset] << 24) | (bytes[offset + 1] << 16) | (bytes[offset + 2] << 8) | bytes[offset + 3]) >>> 0;
+    }
+
+    readMp4Uint64(bytes, offset) {
+        const high = this.readMp4Uint32(bytes, offset);
+        const low = this.readMp4Uint32(bytes, offset + 4);
+        if (high == null || low == null) return null;
+        return high * 2 ** 32 + low;
+    }
+
+    readMp4Type(bytes, offset) {
+        if (offset + 4 > bytes.length) return null;
+        return String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+    }
+
+    findTopLevelMp4Boxes(buffer) {
+        const bytes = new Uint8Array(buffer);
+        const boxes = [];
+        let offset = 0;
+
+        while (offset + 8 <= bytes.length) {
+            const size32 = this.readMp4Uint32(bytes, offset);
+            const type = this.readMp4Type(bytes, offset + 4);
+            if (!size32 || !type) break;
+
+            let size = size32;
+            let headerSize = 8;
+            if (size32 === 1) {
+                size = this.readMp4Uint64(bytes, offset + 8);
+                headerSize = 16;
+            } else if (size32 === 0) {
+                size = bytes.length - offset;
+            }
+
+            if (!Number.isFinite(size) || size < headerSize || offset + size > bytes.length) break;
+            boxes.push({
+                type,
+                start: offset,
+                end: offset + size - 1,
+                size,
+                headerSize,
+            });
+            offset += size;
+        }
+
+        return boxes;
+    }
+
+    findCencDefaultKid(buffer) {
+        const bytes = new Uint8Array(buffer);
+
+        for (let i = 4; i < bytes.length - 32; i++) {
+            if (this.readMp4Type(bytes, i) !== 'tenc') continue;
+
+            const size = this.readMp4Uint32(bytes, i - 4);
+            if (size < 32 || i - 4 + size > bytes.length) continue;
+
+            const payloadOffset = i + 4;
+            const kidOffset = payloadOffset + 8;
+            return this.bytesToHex(bytes.slice(kidOffset, kidOffset + 16));
+        }
+
+        return null;
+    }
+
+    findMp4SidxInfo(buffer) {
+        const bytes = new Uint8Array(buffer);
+
+        for (let typeOffset = 4; typeOffset < bytes.length - 32; typeOffset++) {
+            if (this.readMp4Type(bytes, typeOffset) !== 'sidx') continue;
+
+            const boxStart = typeOffset - 4;
+            let size = this.readMp4Uint32(bytes, boxStart);
+            let payloadOffset = typeOffset + 4;
+            if (size === 1) {
+                size = this.readMp4Uint64(bytes, boxStart + 8);
+                payloadOffset = boxStart + 16;
+            }
+
+            if (!Number.isFinite(size) || size < 32 || boxStart + size > bytes.length) continue;
+
+            const version = bytes[payloadOffset];
+            let cursor = payloadOffset + 4;
+            cursor += 4;
+            const timescale = this.readMp4Uint32(bytes, cursor);
+            cursor += 4;
+            if (!timescale) continue;
+
+            let earliestPresentationTime;
+            let firstOffset;
+            if (version === 0) {
+                earliestPresentationTime = this.readMp4Uint32(bytes, cursor);
+                cursor += 4;
+                firstOffset = this.readMp4Uint32(bytes, cursor);
+                cursor += 4;
+            } else if (version === 1) {
+                earliestPresentationTime = this.readMp4Uint64(bytes, cursor);
+                cursor += 8;
+                firstOffset = this.readMp4Uint64(bytes, cursor);
+                cursor += 8;
+            } else {
+                continue;
+            }
+
+            cursor += 2;
+            if (cursor + 2 > boxStart + size) continue;
+            const referenceCount = (bytes[cursor] << 8) | bytes[cursor + 1];
+            cursor += 2;
+            let durationUnits = 0;
+            for (let i = 0; i < referenceCount; i++) {
+                if (cursor + 12 > boxStart + size) {
+                    throw new Error('Amazon Music MP4 has a truncated SIDX');
+                }
+                const chunk = this.readMp4Uint32(bytes, cursor);
+                cursor += 4;
+                const referenceType = (chunk & 0x80000000) >>> 31;
+                const subsegmentDuration = this.readMp4Uint32(bytes, cursor);
+                cursor += 4;
+                cursor += 4;
+                if (referenceType === 1 || subsegmentDuration == null) {
+                    throw new Error('Amazon Music MP4 uses unsupported hierarchical SIDX');
+                }
+                durationUnits += subsegmentDuration;
+            }
+
+            return {
+                start: boxStart,
+                end: boxStart + size - 1,
+                firstSegmentStart: boxStart + size + firstOffset,
+                durationSeconds: durationUnits / timescale,
+                earliestPresentationTime,
+                timescale,
+            };
+        }
+
+        return null;
+    }
+
+    async readInitialBytes(response, maxBytes) {
+        if (!response.body) {
+            const buffer = await response.arrayBuffer();
+            return buffer.slice(0, maxBytes);
+        }
+
+        const reader = response.body.getReader();
+        const chunks = [];
+        let totalBytes = 0;
+
+        try {
+            while (totalBytes < maxBytes) {
+                const { done, value } = await reader.read();
+                if (done || !value) break;
+
+                chunks.push(value);
+                totalBytes += value.byteLength;
+            }
+        } finally {
+            await reader.cancel().catch(() => {});
+        }
+
+        const output = new Uint8Array(Math.min(totalBytes, maxBytes));
+        let offset = 0;
+        for (const chunk of chunks) {
+            const slice = chunk.subarray(0, Math.min(chunk.byteLength, output.byteLength - offset));
+            output.set(slice, offset);
+            offset += slice.byteLength;
+            if (offset >= output.byteLength) break;
+        }
+
+        return output.buffer;
+    }
+
+    getAmazonInitRangeEnd(buffer, sidxInfo) {
+        const boxes = this.findTopLevelMp4Boxes(buffer);
+        const firstSegmentStart = sidxInfo?.firstSegmentStart ?? null;
+        const moov = boxes.find((box) => box.type === 'moov');
+
+        if (moov && (firstSegmentStart == null || moov.end < firstSegmentStart)) {
+            return moov.end;
+        }
+
+        if (sidxInfo?.start > 0) {
+            return sidxInfo.start - 1;
+        }
+
+        if (firstSegmentStart && firstSegmentStart > 0) {
+            return firstSegmentStart - 1;
+        }
+
+        return null;
+    }
+
+    async getAmazonCencMp4Info(streamUrl) {
+        const maxInitBytes = 2 * 1024 * 1024;
+        const response = await this.fetchWithTimeout(
+            streamUrl,
+            {
+                headers: { Range: `bytes=0-${maxInitBytes - 1}` },
+            },
+            12000
+        );
+
+        if (!response.ok && response.status !== 206) {
+            throw new Error(`Amazon init segment fetch failed: ${response.status}`);
+        }
+
+        const buffer = await this.readInitialBytes(response, maxInitBytes);
+        const keyId = this.findCencDefaultKid(buffer);
+        const sidx = this.findMp4SidxInfo(buffer);
+        if (!sidx) {
+            throw new Error('Could not find Amazon Music MP4 segment index');
+        }
+
+        return {
+            keyId,
+            sidx,
+            initRangeEnd: this.getAmazonInitRangeEnd(buffer, sidx),
+        };
+    }
+
+    createAmazonMusicDashManifest(streamUrl, trackInfo, qualityInfo, mp4Info) {
+        const codec = this.getAmazonCodecString(qualityInfo?.codec);
+        const bandwidth = Number(qualityInfo?.bandwidth) || 1000000;
+        const sampleRate = Number(qualityInfo?.sampleRate) || 48000;
+        const duration = this.formatDurationForMpd(mp4Info?.sidx?.durationSeconds);
+        const initEnd = Number.isFinite(mp4Info?.initRangeEnd) ? mp4Info.initRangeEnd : mp4Info.sidx.start - 1;
+        const segmentBaseAttrs =
+            mp4Info?.sidx?.timescale && mp4Info?.sidx?.earliestPresentationTime != null
+                ? ` timescale="${mp4Info.sidx.timescale}" presentationTimeOffset="${mp4Info.sidx.earliestPresentationTime}"`
+                : '';
+        const representationId = this.escapeXml(trackInfo?.asin || 'amazon-music');
+        const escapedStreamUrl = this.escapeXml(streamUrl);
+
+        let contentProtection = '';
+        if (mp4Info?.keyId) {
+            const keyId = this.formatKeyIdUuid(mp4Info.keyId);
+            contentProtection = `
+      <ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011" value="cenc" cenc:default_KID="${keyId}"/>
+      <ContentProtection schemeIdUri="urn:uuid:e2719d58-a985-b3c9-781a-b030af78d30e" cenc:default_KID="${keyId}"/>`;
+        }
+
+        return `<?xml version="1.0" encoding="UTF-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" xmlns:cenc="urn:mpeg:cenc:2013" profiles="urn:mpeg:dash:profile:isoff-on-demand:2011" type="static" mediaPresentationDuration="${duration}" minBufferTime="PT1.5S">
+  <Period id="0" start="PT0S" duration="${duration}">
+    <AdaptationSet id="1" contentType="audio" mimeType="audio/mp4" codecs="${this.escapeXml(codec)}" audioSamplingRate="${sampleRate}" segmentAlignment="true" startWithSAP="1">${contentProtection}
+      <Representation id="${representationId}" bandwidth="${bandwidth}" codecs="${this.escapeXml(codec)}">
+        <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="2"/>
+        <BaseURL>${escapedStreamUrl}</BaseURL>
+        <SegmentBase indexRange="${mp4Info.sidx.start}-${mp4Info.sidx.end}"${segmentBaseAttrs}>
+          <Initialization range="0-${initEnd}"/>
+        </SegmentBase>
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>`;
+    }
+
+    createAmazonMusicDashUrl(streamUrl, trackInfo, qualityInfo, mp4Info) {
+        const manifest = this.createAmazonMusicDashManifest(streamUrl, trackInfo, qualityInfo, mp4Info);
+        const blob = new Blob([manifest], { type: 'application/dash+xml' });
+        return URL.createObjectURL(blob);
+    }
+
+    getAmazonTrackTitle(track) {
+        const title = String(track?.title || track?.name || '').trim();
+        const version = String(track?.version || '').trim();
+        return title && version ? `${title} (${version})` : title;
+    }
+
+    getAmazonTrackArtist(track) {
+        if (Array.isArray(track?.artists) && track.artists.length > 0) {
+            const artists = track.artists
+                .map((artist) => (typeof artist === 'string' ? artist : artist?.name || artist?.title))
+                .map((name) => String(name || '').trim())
+                .filter(Boolean);
+            if (artists.length > 0) return artists.join(', ');
+        }
+        if (typeof track?.artist === 'string') return track.artist.trim();
+        if (track?.artist?.name) return String(track.artist.name).trim();
+        return '';
+    }
+
+    getAmazonTrackAlbum(track) {
+        if (typeof track?.album === 'string') return track.album.trim();
+        return String(track?.album?.title || track?.album?.name || '').trim();
+    }
+
+    getAmazonTrackDuration(track) {
+        const duration = Number(track?.duration);
+        if (!Number.isFinite(duration) || duration <= 0) return null;
+        return duration > 10000 ? duration / 1000 : duration;
+    }
+
+    buildAmazonTrackLookupParams(track, amazonQuality) {
+        const title = this.getAmazonTrackTitle(track);
+        const artist = this.getAmazonTrackArtist(track);
+        const album = this.getAmazonTrackAlbum(track);
+        const duration = this.getAmazonTrackDuration(track);
+
+        if (!title || !artist) {
+            throw new Error('Amazon Music lookup requires a track title and artist');
+        }
+
+        const params = new URLSearchParams({
+            track: title,
+            duration: duration ? String(Math.round(duration)) : '',
+            album,
+            artist,
+        });
+
+        if (amazonQuality) {
+            params.set('quality', amazonQuality);
+        }
+
+        return params;
+    }
+
+    getAmazonTrackApiPayload(data) {
+        if (data?.stream_url) return data;
+        if (data?.data?.stream_url) return data.data;
+        if (data?.track?.stream_url) return data.track;
+        if (data?.result?.stream_url) return data.result;
+        return data;
+    }
+
+    async fetchAmazonTrackApi(apiBaseUrl, track, amazonQuality, { forceTurnstile = false } = {}) {
+        const params = this.buildAmazonTrackLookupParams(track, amazonQuality);
+        const headers = {};
+        const bypassToken = amazonMusicSettings.getTurnstileBypassToken().trim();
+
+        if (bypassToken && !forceTurnstile) {
+            params.set('bypass_token', bypassToken);
+        } else {
+            const turnstileJwt = await this.getTurnstileJwt({ forceRefresh: forceTurnstile });
+            if (!turnstileJwt) {
+                return null;
+            }
+            headers['X-Turnstile-JWT'] = turnstileJwt;
+        }
+
+        const response = await this.fetchWithTimeout(
+            `${apiBaseUrl}/api/track/?${params.toString()}`,
+            {
+                headers,
+            },
+            15000
+        );
+        this.handleAmazonApiStatus(response.status, 'Amazon Music API');
+        return response;
+    }
+
+    async getAmazonMusicStreamUrl(tidalTrackId, quality = 'LOSSLESS', options = {}) {
+        try {
+            if (!amazonMusicSettings?.isEnabled()) {
+                return null;
+            }
+            if (this.isAmazonRateLimited()) {
+                return null;
+            }
+
+            const track =
+                options.track || (tidalTrackId ? await this.getTrackMetadata(tidalTrackId).catch(() => null) : null);
+            if (!track) {
+                return null;
+            }
+
+            let turnstileJwtPromise = null;
+            const bypassToken = amazonMusicSettings.getTurnstileBypassToken().trim();
+            if (!bypassToken) {
+                turnstileJwtPromise = this.getTurnstileJwt().catch(() => null);
+            }
+
+            if (turnstileJwtPromise) {
+                await turnstileJwtPromise;
+            }
+
+            const amazonQuality = this.getAmazonMusicQuality(quality, options);
+            const apiBaseUrl = amazonMusicSettings.getApiBaseUrl().replace(/\/+$/, '');
+
+            let response = await this.fetchAmazonTrackApi(apiBaseUrl, track, amazonQuality);
+            if (response && (response.status === 401 || response.status === 428)) {
+                this.clearAmazonTurnstileJwt();
+                response = await this.fetchAmazonTrackApi(apiBaseUrl, track, amazonQuality, { forceTurnstile: true });
+            }
+            if (!response) return null;
+
+            if (!response.ok) {
+                throw new Error(`Amazon Music API failed: ${response.status}`);
+            }
+
+            const data = this.getAmazonTrackApiPayload(await response.json());
+            if (!data?.stream_url) {
+                throw new Error('Amazon Music API returned no stream URL');
+            }
+
+            const decryptionKey = this.getAmazonDecryptionKey(data);
+            const selectedQualityInfo = this.getAmazonSelectedQualityInfo(data);
+            const mp4Info = await this.getAmazonCencMp4Info(data.stream_url).catch((e) => {
+                console.warn('Failed to get Amazon MP4 info:', e);
+                return null;
+            });
+            if (decryptionKey && !mp4Info?.keyId && !options.allowCencWithoutKeyId) {
+                throw new Error('Could not find Amazon Music CENC key ID');
+            }
+            const manifestUrl = mp4Info
+                ? this.createAmazonMusicDashUrl(data.stream_url, data, selectedQualityInfo, mp4Info)
+                : data.stream_url;
+
+            return {
+                url: manifestUrl,
+                sourceUrl: data.stream_url,
+                asin: data.asin || data.id || null,
+                provider: 'amazon',
+                playbackType: mp4Info ? (mp4Info.keyId ? 'dash-cenc' : 'dash') : 'direct',
+                quality: data.quality_selected || amazonQuality,
+                qualityDisplay: this.getAmazonQualityDisplay(data, selectedQualityInfo),
+                decryptionKey,
+                keyId: mp4Info?.keyId || null,
+                mimeType: mp4Info ? 'application/dash+xml' : this.getAmazonMimeType(selectedQualityInfo),
+                mediaMimeType: this.getAmazonMimeType(selectedQualityInfo),
+                rgInfo: {
+                    trackReplayGain:
+                        data.replay_gain?.program_loudness_lufs != null
+                            ? -14.0 - data.replay_gain.program_loudness_lufs
+                            : 0,
+                    trackPeakAmplitude: 1,
+                    albumReplayGain:
+                        data.replay_gain?.program_loudness_lufs != null
+                            ? -14.0 - data.replay_gain.program_loudness_lufs
+                            : 0,
+                    albumPeakAmplitude: 1,
+                },
+            };
+        } catch (error) {
+            console.warn(`Amazon Music stream failed for Tidal track ${tidalTrackId}:`, error);
+            return null;
+        }
+    }
+
+    async getStreamUrl(id, quality = 'LOSSLESS', options = {}) {
+        if (String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            return await soundCloudAPI.getStreamUrl(id, options);
+        }
+        if (devModeSettings.isEnabled() && !options._fromProvider) {
+            return await this.getFallbackProvider(true).getStreamUrl(id, quality);
+        }
+        const cacheKey = `stream_info_${id}_${quality}`;
+
+        if (this.streamCache.has(cacheKey)) {
+            const cached = this.streamCache.get(cacheKey);
+            if (cached?.provider === 'amazon' && this.isAmazonRateLimited()) {
+                this.streamCache.delete(cacheKey);
+            } else {
+                return cached;
+            }
+        }
+
+        if (devModeSettings.isEnabled()) {
+            const lookup = await this.getTrackFromDevMode(id, quality);
+            let streamUrl;
+            if (lookup.originalTrackUrl) {
+                streamUrl = lookup.originalTrackUrl;
+            } else if (lookup.info?.manifest) {
+                streamUrl = this.extractStreamUrlFromManifest(lookup.info.manifest);
+            }
+            if (!streamUrl) {
+                throw new Error('Could not resolve stream URL from dev mode');
+            }
+            const result = {
+                url: streamUrl,
+                rgInfo: lookup.info
+                    ? {
+                          trackReplayGain: lookup.info.trackReplayGain || lookup.info.replayGain,
+                          trackPeakAmplitude: lookup.info.trackPeakAmplitude || lookup.info.peakAmplitude,
+                          albumReplayGain: lookup.info.albumReplayGain,
+                          albumPeakAmplitude: lookup.info.albumPeakAmplitude,
+                      }
+                    : null,
+            };
+            this.streamCache.set(cacheKey, result);
+            return result;
+        }
+
+        const track = await this.getTrackMetadata(id);
+
+        const monochromeResult = await this.getMonochromePlaybackStreamUrl(id, { track });
+        if (monochromeResult?.url) {
+            // Monochrome Playback URLs may be single-use. Never place them in the reusable stream cache.
+            return monochromeResult;
+        }
+
+        if (amazonMusicSettings?.isEnabled() && !amazonMusicSettings.getTurnstileBypassToken().trim()) {
+            this.getTurnstileJwt().catch(() => null);
+        }
+
+        const canPlayAmazonCenc = canUseNativeAmazonCenc;
+        const needsProxyDecryption = !canPlayAmazonCenc;
+
+        let actualQuality = quality;
+
+        const targetCodec = getAmazonDecrypterCodec(actualQuality);
+
+        let amazonResult = null;
+        let qobuzResult = null;
+        let deezerResult = null;
+
+        const preferAmazon = Math.random() >= 0.5;
+        if (preferAmazon) {
+            amazonResult = await this.getAmazonMusicStreamUrl(id, actualQuality, {
+                preferAdaptiveAuto: true,
+                track,
+                allowCencWithoutKeyId: needsProxyDecryption,
+            });
+            if (!amazonResult?.url && track?.isrc) {
+                qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality, track.title || track.name);
+            }
+        } else {
+            if (track?.isrc) {
+                qobuzResult = await this.getQobuzStreamUrl(track.isrc, quality, track.title || track.name);
+            }
+            if (!qobuzResult?.url) {
+                amazonResult = await this.getAmazonMusicStreamUrl(id, actualQuality, {
+                    preferAdaptiveAuto: true,
+                    track,
+                    allowCencWithoutKeyId: needsProxyDecryption,
+                });
+            }
+        }
+        if (!amazonResult?.url && !qobuzResult?.url && track?.isrc) {
+            deezerResult = await this.getDeezerStreamUrl(track.isrc, quality);
+        }
+
+        if (amazonResult?.url) {
+            let streamUrl = amazonResult.url;
+            let playbackType = amazonResult.playbackType;
+            let provider = amazonResult.provider;
+            const shouldProxyAmazon =
+                needsProxyDecryption && !!amazonResult.decryptionKey && !!(amazonResult.sourceUrl || amazonResult.url);
+
+            console.log('[Amazon SW Decrypter] stream decision', {
+                needsProxyDecryption,
+                shouldProxyAmazon,
+                hasDecryptionKey: !!amazonResult.decryptionKey,
+                hasKeyId: !!amazonResult.keyId,
+                playbackType: amazonResult.playbackType,
+                urlHost: (() => {
+                    try {
+                        return new URL(amazonResult.sourceUrl || amazonResult.url).host;
+                    } catch {
+                        return null;
+                    }
+                })(),
+            });
+
+            // Route CENC streams through our custom SW decrypter on Safari/Firefox to bypass broken EME
+            if (shouldProxyAmazon) {
+                streamUrl = `${window.location.protocol}//${window.location.host}/api/decrypt-stream?url=${encodeURIComponent(amazonResult.sourceUrl || amazonResult.url)}&key=${amazonResult.decryptionKey}&codec=${targetCodec}`;
+                playbackType = []; // Treat as normal unencrypted stream
+                console.log('Routing Amazon Music CENC stream through SW Decrypter');
+            } else if (amazonResult.playbackType?.includes('cenc') && !canPlayAmazonCenc) {
+                if (amazonResult.decryptionKey) {
+                    const params = new URLSearchParams();
+                    // Pass the original source URL (the actual MP4 file) instead of the DASH manifest
+                    params.set('url', amazonResult.sourceUrl || amazonResult.url);
+                    params.set('key', amazonResult.decryptionKey);
+                    params.set('codec', targetCodec);
+                    streamUrl = `/api/decrypt-stream?${params.toString()}`;
+                    playbackType = []; // Treat as normal unencrypted stream
+                    console.log('Routing Amazon Music CENC stream through SW Decrypter');
+                } else {
+                    console.warn('Skipping Amazon Music CENC stream: decryption key missing for SW Decrypter.');
+                    amazonResult = null;
+                }
+            }
+
+            if (amazonResult) {
+                const result = {
+                    url: streamUrl,
+                    sourceUrl: amazonResult.sourceUrl && amazonResult.sourceUrl !== streamUrl ? amazonResult.sourceUrl : undefined,
+                    rgInfo: amazonResult.rgInfo,
+                    provider: provider,
+                    playbackType: playbackType,
+                    quality: amazonResult.quality,
+                    qualityDisplay: amazonResult.qualityDisplay,
+                    decryptionKey: amazonResult.decryptionKey,
+                    keyId: amazonResult.keyId,
+                    mimeType: amazonResult.mimeType,
+                    mediaMimeType: amazonResult.mediaMimeType,
+                };
+                const cleanResult = Object.fromEntries(Object.entries(result).filter(([_, v]) => v !== undefined));
+                this.streamCache.set(cacheKey, cleanResult);
+                return cleanResult;
+            }
+        }
+
+        if (qobuzResult?.url) {
+            const result = {
+                url: qobuzResult.url,
+                rgInfo: qobuzResult.rgInfo || {
+                    trackReplayGain: 0,
+                    trackPeakAmplitude: 1,
+                    albumReplayGain: 0,
+                    albumPeakAmplitude: 1,
+                },
+                provider: 'qobuz',
+            };
+            this.streamCache.set(cacheKey, result);
+            return result;
+        }
+
+        if (deezerResult?.url) {
+            const result = {
+                url: deezerResult.url,
+                rgInfo: {
+                    trackReplayGain: 0,
+                    trackPeakAmplitude: 1,
+                    albumReplayGain: 0,
+                    albumPeakAmplitude: 1,
+                },
+                provider: 'deezer',
+                deezerFormat: deezerResult.format,
+                deezerHiRes: deriveTrackQuality(track) === 'HI_RES_LOSSLESS',
+            };
+            this.streamCache.set(cacheKey, result);
+            return result;
+        }
+
+        if (track?.isrc && !qobuzResult && !deezerResult && !amazonResult) {
+            // Fallback just in case they weren't fetched
+            deezerResult = await this.getDeezerStreamUrl(track.isrc, quality);
+            if (deezerResult?.url) {
+                const result = {
+                    url: deezerResult.url,
+                    rgInfo: {
+                        trackReplayGain: 0,
+                        trackPeakAmplitude: 1,
+                        albumReplayGain: 0,
+                        albumPeakAmplitude: 1,
+                    },
+                    provider: 'deezer',
+                    deezerFormat: deezerResult.format,
+                    deezerHiRes: deriveTrackQuality(track) === 'HI_RES_LOSSLESS',
+                };
+                this.streamCache.set(cacheKey, result);
+                return result;
+            }
+        }
+
+        const hifiInstances = await this.settings.getInstances('streaming').catch(() => []);
+        if (hifiInstances && hifiInstances.length > 0) {
+            try {
+                const hifiTrack = await this.getTrack(id, quality, { adaptive: false });
+                if (hifiTrack?.info?.manifest) {
+                    const manifest = JSON.parse(atob(hifiTrack.info.manifest));
+                    if (manifest?.urls?.[0]) {
+                        const result = {
+                            url: manifest.urls[0],
+                            rgInfo: {
+                                trackReplayGain: hifiTrack.info.trackReplayGain ?? 0,
+                                trackPeakAmplitude: hifiTrack.info.trackPeakAmplitude ?? 1,
+                                albumReplayGain: hifiTrack.info.albumReplayGain ?? 0,
+                                albumPeakAmplitude: hifiTrack.info.albumPeakAmplitude ?? 1,
+                            },
+                        };
+                        this.streamCache.set(cacheKey, result);
+                        return result;
+                    }
+                }
+            } catch {
+                // ignore fallback error
+            }
+        }
+
+        notifyAudioSourceMissing();
+        throw new Error(
+            track?.isrc
+                ? 'Could not resolve stream URL from Monochrome Playback, Amazon Music, Qobuz, Deezer, or HiFi streaming APIs'
+                : 'Could not resolve stream URL: Monochrome Playback and Amazon Music failed and the track has no ISRC for Qobuz/Deezer lookup'
+        );
+    }
+
+    async getVideoStreamUrl(id) {
+        const cacheKey = `video_stream_${id}`;
+
+        if (this.streamCache.has(cacheKey)) {
+            return this.streamCache.get(cacheKey);
+        }
+
+        const lookup = await this.getVideo(id);
+
+        let streamUrl;
+
+        const findValue = (obj, key) => {
+            if (!obj || typeof obj !== 'object') return null;
+            if (obj[key]) return obj[key];
+            for (const v of Object.values(obj)) {
+                if (v && typeof v === 'object') {
+                    const f = findValue(v, key);
+                    if (f) return f;
+                }
+            }
+            return null;
+        };
+
+        const manifest = findValue(lookup, 'manifest') || findValue(lookup, 'Manifest');
+        if (manifest) {
+            streamUrl = this.extractStreamUrlFromManifest(manifest);
+        }
+
+        if (!streamUrl) {
+            streamUrl =
+                findValue(lookup, 'OriginalTrackUrl') ||
+                findValue(lookup, 'originalTrackUrl') ||
+                findValue(lookup, 'url') ||
+                findValue(lookup, 'streamUrl') ||
+                findValue(lookup, 'manifestUrl');
+        }
+
+        if (!streamUrl) {
+            throw new Error(`Could not resolve video stream URL for ID: ${id}`);
+        }
+
+        if (!(lookup instanceof TidalResponse)) {
+            this.streamCache.set(cacheKey, streamUrl);
+        }
+        return streamUrl;
+    }
+
+    async enrichTrack(input, { downloadQuality = 'HI_RES_LOSSLESS' }) {
+        if (downloadQuality == 'DOLBY_ATMOS' && !input?.audioModes?.includes('DOLBY_ATMOS')) {
+            downloadQuality = 'LOSSLESS';
+        }
+
+        const id = input?.id || input;
+        const inputTrack = typeof input === 'object' ? input : null;
+        const metadataTrack = id ? await this.getTrackMetadata(id).catch(() => null) : null;
+        const track = metadataTrack
+            ? this.prepareTrack({ ...(inputTrack || {}), ...metadataTrack })
+            : inputTrack?.isrc
+              ? inputTrack
+              : await this.getTrackMetadata(id);
+        const isVideo = track?.type?.toLowerCase().includes('video');
+        const cleanQuality = isCustomFormat(downloadQuality) ? 'LOSSLESS' : downloadQuality;
+
+        let lookup = null;
+        let externalRgInfo = null;
+        let externalStreamUrl = null;
+        let externalStreamType = null;
+        let externalProvider = null;
+        let externalDecryptionKey = null;
+        let externalKeyId = null;
+        let externalMimeType = null;
+        let externalMediaMimeType = null;
+        let externalSourceUrl = null;
+
+        if (track?.provider === 'soundcloud' || track?.isSoundCloud || String(id).startsWith('sc_')) {
+            const { soundCloudAPI } = await import('./soundcloud-api.js');
+            const scStream = await soundCloudAPI.getStreamUrl(id);
+            externalStreamUrl = scStream.url;
+            externalProvider = 'soundcloud';
+            externalSourceUrl = scStream.url;
+            externalMimeType = scStream.mimeType;
+            lookup = {
+                info: {
+                    audioQuality: 'HIGH',
+                    trackReplayGain: 0,
+                    trackPeakAmplitude: 1,
+                    albumReplayGain: 0,
+                    albumPeakAmplitude: 1,
+                },
+            };
+        } else if (isVideo) {
+            lookup = await this.getVideo(id);
+        } else if (devModeSettings.isEnabled()) {
+            let fallbackStream = null;
+            try {
+                const fallbackProvider = this.getFallbackProvider(true);
+                if (fallbackProvider) {
+                    fallbackStream = await fallbackProvider.getTrackForDownload(id, cleanQuality);
+                }
+            } catch (err) {
+                console.debug('[DevMode Download] Fallback download lookup failed, falling back to TIDAL Dev Mode:', err);
+            }
+
+            if (fallbackStream && fallbackStream.url && fallbackStream.provider === 'qobuz') {
+                externalStreamUrl = fallbackStream.url;
+                externalProvider = 'qobuz';
+                externalSourceUrl = fallbackStream.url;
+                lookup = {
+                    info: {
+                        audioQuality: fallbackStream.quality || cleanQuality,
+                        trackReplayGain: fallbackStream.rgInfo?.trackReplayGain ?? 0,
+                        trackPeakAmplitude: fallbackStream.rgInfo?.trackPeakAmplitude ?? 1,
+                        albumReplayGain: fallbackStream.rgInfo?.albumReplayGain ?? 0,
+                        albumPeakAmplitude: fallbackStream.rgInfo?.albumPeakAmplitude ?? 1,
+                    },
+                };
+            } else {
+                lookup = new PlaybackInfo(await this.getTrackFromDevMode(id, cleanQuality));
+            }
+        } else {
+            let amazonResult = null;
+            let qobuzResult = null;
+            let deezerResult = null;
+            const getAmazonForDownload = async () => {
+                try {
+                    return await this.getAmazonMusicStreamUrl(id, cleanQuality, { track });
+                } catch (error) {
+                    console.debug('Amazon Music stream lookup failed during download enrichment:', error);
+                    return null;
+                }
+            };
+
+            if (track?.isrc) {
+                qobuzResult = await this.getQobuzStreamUrl(track.isrc, cleanQuality, track.title || track.name);
+            }
+            if (!qobuzResult?.url) {
+                amazonResult = await getAmazonForDownload();
+                if (!amazonResult?.url && track?.isrc) {
+                    deezerResult = await this.getDeezerStreamUrl(track.isrc, cleanQuality);
+                }
+            }
+
+            const externalResult = qobuzResult?.url ? qobuzResult : amazonResult?.url ? amazonResult : deezerResult;
+            if (externalResult?.url) {
+                externalStreamUrl = externalResult.url;
+                externalRgInfo = externalResult.rgInfo;
+                externalStreamType = externalResult.playbackType || null;
+                externalProvider =
+                    externalResult.provider || (qobuzResult?.url ? 'qobuz' : amazonResult?.url ? 'amazon' : 'deezer');
+                externalDecryptionKey = externalResult.decryptionKey || null;
+                externalKeyId = externalResult.keyId || null;
+                externalMimeType = externalResult.mimeType || null;
+                externalMediaMimeType = externalResult.mediaMimeType || externalMimeType;
+                externalSourceUrl = externalResult.sourceUrl || externalStreamUrl;
+                lookup = {
+                    info: {
+                        audioQuality: cleanQuality,
+                        trackReplayGain: externalRgInfo?.trackReplayGain ?? 0,
+                        trackPeakAmplitude: externalRgInfo?.trackPeakAmplitude ?? 1,
+                        albumReplayGain: externalRgInfo?.albumReplayGain ?? 0,
+                        albumPeakAmplitude: externalRgInfo?.albumPeakAmplitude ?? 1,
+                    },
+                };
+            } else {
+                deezerResult = track?.isrc ? await this.getDeezerStreamUrl(track.isrc, 'LOSSLESS') : null;
+                if (deezerResult?.url) {
+                    externalProvider = 'deezer';
+                    externalStreamUrl = deezerResult.url;
+                    externalSourceUrl = deezerResult.url;
+                    lookup = {
+                        info: {
+                            audioQuality: cleanQuality,
+                            trackReplayGain: 0,
+                            trackPeakAmplitude: 1,
+                            albumReplayGain: 0,
+                            albumPeakAmplitude: 1,
+                        },
+                    };
+                } else {
+                    try {
+                        lookup = new PlaybackInfo(await this.getTrack(id, cleanQuality));
+                    } catch (tidalError) {
+                        try {
+                            if (cleanQuality === 'HI_RES_LOSSLESS') {
+                                lookup = new PlaybackInfo(await this.getTrack(id, 'LOSSLESS'));
+                            } else {
+                                throw tidalError;
+                            }
+                        } catch {
+                            try {
+                                if (cleanQuality === 'HI_RES_LOSSLESS' || cleanQuality === 'LOSSLESS') {
+                                    lookup = new PlaybackInfo(await this.getTrack(id, 'HIGH'));
+                                } else {
+                                    throw tidalError;
+                                }
+                            } catch {
+                                try {
+                                    if (cleanQuality !== 'LOW') {
+                                        lookup = new PlaybackInfo(await this.getTrack(id, 'LOW'));
+                                    } else {
+                                        throw tidalError;
+                                    }
+                                } catch {
+                                    notifyAudioSourceMissing();
+                                    throw new Error(
+                                        track?.isrc
+                                            ? 'Could not resolve audio stream from Amazon Music, Qobuz, or Deezer'
+                                            : 'Cannot resolve audio stream: Amazon Music failed and track has no ISRC for Qobuz/Deezer lookup'
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        const enrichedTrack = { ...this.prepareTrack(track) };
+        if (externalRgInfo) {
+            enrichedTrack.replayGain = new ReplayGain(externalRgInfo);
+        } else if (lookup.info) {
+            enrichedTrack.replayGain = new ReplayGain({
+                trackReplayGain: lookup.info.trackReplayGain,
+                trackPeakAmplitude: lookup.info.trackPeakAmplitude,
+                albumReplayGain: lookup.info.albumReplayGain,
+                albumPeakAmplitude: lookup.info.albumPeakAmplitude,
+            });
+        }
+
+        if (
+            track.album?.id &&
+            !track.isSoundCloud &&
+            track.provider !== 'soundcloud' &&
+            !String(id).startsWith('sc_') &&
+            (track.album?.totalDiscs == null || track.album?.numberOfTracksOnDisc == null || !track.album?.cover)
+        ) {
+            try {
+                const albumData = await this.getAlbum(track.album.id);
+                enrichedTrack.album = new EnrichedAlbum({
+                    ...albumData.album,
+                    ...enrichedTrack.album,
+                    // Preserve the full album's cover when the track's album cover is null/undefined,
+                    // since some API responses omit or null-out cover in the track's album sub-object.
+                    cover: enrichedTrack.album?.cover || albumData.album?.cover,
+                });
+
+                if (albumData.tracks?.length > 0) {
+                    const discTrackCounts = new Map();
+                    let maxDiscNumber = 0;
+                    for (const t of albumData.tracks) {
+                        const dn = getTrackDiscNumber(t);
+                        discTrackCounts.set(dn, (discTrackCounts.get(dn) || 0) + 1);
+                        if (dn > maxDiscNumber) maxDiscNumber = dn;
+                    }
+                    const totalDiscs = maxDiscNumber || 1;
+                    const discNumber = getTrackDiscNumber(track);
+                    enrichedTrack.album = new EnrichedAlbum({
+                        ...(enrichedTrack.album || {}),
+
+                        totalDiscs: track.album?.totalDiscs ?? totalDiscs,
+                        numberOfTracksOnDisc: track.album?.numberOfTracksOnDisc ?? discTrackCounts.get(discNumber),
+                    });
+                }
+            } catch (e) {
+                console.warn('Failed to fetch album for disc info:', e);
+            }
+        }
+
+        if (!(enrichedTrack.album instanceof EnrichedAlbum)) {
+            enrichedTrack.album = new TrackAlbum(enrichedTrack.album);
+        }
+
+        if (!externalProvider) {
+            externalProvider = track?.provider === 'soundcloud' || track?.isSoundCloud || String(id).startsWith('sc_') ? 'soundcloud' : 'tidal';
+        }
+        enrichedTrack.provider = externalProvider;
+        if (externalProvider === 'soundcloud') {
+            enrichedTrack.isSoundCloud = true;
+        }
+
+        const finalEnriched = new EnrichedTrack(enrichedTrack);
+        finalEnriched.provider = externalProvider;
+        if (externalProvider === 'soundcloud') {
+            finalEnriched.isSoundCloud = true;
+        }
+        const result = { lookup, enrichedTrack: finalEnriched, isVideo };
+        result.provider = externalProvider;
+        if (externalStreamUrl) {
+            result.externalStreamUrl = externalStreamUrl;
+            result.externalStreamType = externalStreamType;
+            result.externalProvider = externalProvider;
+            result.externalDecryptionKey = externalDecryptionKey;
+            result.externalKeyId = externalKeyId;
+            result.externalMimeType = externalMimeType;
+            result.externalMediaMimeType = externalMediaMimeType;
+            result.externalSourceUrl = externalSourceUrl;
+        }
+        if (externalProvider === 'qobuz') {
+            result.qobuzStreamUrl = externalStreamUrl;
+        }
+        if (externalProvider === 'amazon') {
+            result.amazonMusicStreamUrl = externalSourceUrl || externalStreamUrl;
+        }
+        return result;
+    }
+
+    /**
+     * Downloads a track or video from TIDAL in the specified quality.
+     *
+     * Handles multiple stream types (DASH, HLS, and direct HTTP), applies post-processing
+     * for audio tracks, adds metadata, and optionally triggers a browser download.
+     *
+     * @async
+     * @param {string} id - The TIDAL track or video ID
+     * @param {string} [quality='HI_RES_LOSSLESS'] - The desired audio quality (e.g., 'HI_RES_LOSSLESS', 'LOSSLESS', 'HIGH', 'NORMAL').
+     *                                               Custom FFMPEG formats are transcoded from LOSSLESS.
+     * @param {string} filename - The filename to save the downloaded content as
+     * @param {Object} [options={}] - Additional download options
+     * @param {Function} [options.onProgress] - Callback function for progress updates with signature:
+     *                                          `(progressEvent) => void`
+     * @param {Object} [options.track] - Track metadata object to attach to the audio file
+     * @param {boolean} [options.calculateDashBytes=true] - Whether to calculate total bytes for DASH streams
+     * @param {AbortSignal} [options.signal] - AbortSignal to cancel the download
+     * @param {boolean} [options.triggerDownload=true] - Whether to trigger browser download after completion
+     *
+     * @returns {Promise<Blob>} The downloaded content as a Blob object
+     *
+     * @throws {Error} If stream URL cannot be resolved, manifest is missing, or download fails
+     * @throws {AbortError} If the download is aborted via the signal
+     * @throws {FfmpegError} If audio transcoding fails
+     */
+    async downloadTrack(id, quality = 'HI_RES_LOSSLESS', filename, options = {}) {
+        // Load ffmpeg in the background.
+        loadFfmpeg().catch(console.error);
+        const metadataModule = await import('./metadata.js');
+        const { prefetchMetadataObjects, addMetadataToAudio } = metadataModule;
+
+        const { onProgress, track: inputTrack, calculateDashBytes = true } = options;
+
+        let prefetchPromises = null;
+
+        try {
+            // Custom FFMPEG formats are not native TIDAL qualities; download LOSSLESS and transcode
+            let downloadQuality = isCustomFormat(quality) ? 'LOSSLESS' : quality;
+
+            const enriched = await this.enrichTrack(inputTrack || id, { downloadQuality });
+            const { lookup, enrichedTrack, isVideo } = enriched;
+
+            let streamUrl = enriched.externalStreamUrl || enriched.qobuzStreamUrl || null;
+            let postProcessingQuality = lookup.info?.audioQuality ?? null;
+            let blob;
+
+            if (streamUrl) {
+                const coverId = getTrackCoverId(enrichedTrack);
+                prefetchPromises = {
+                    coverFetch: coverId ? getCoverBlob(this, coverId).catch(() => null) : Promise.resolve(null),
+                    lyricsFetch: Promise.resolve(null),
+                };
+            } else {
+                prefetchPromises = prefetchMetadataObjects(enrichedTrack, this);
+            }
+
+            if (!streamUrl) {
+                if (lookup.originalTrackUrl) {
+                    streamUrl = lookup.originalTrackUrl;
+                } else {
+                    const findValue = (obj, key) => {
+                        if (!obj || typeof obj !== 'object') return null;
+                        if (obj[key]) return obj[key];
+                        for (const v of Object.values(obj)) {
+                            if (v && typeof v === 'object') {
+                                const f = findValue(v, key);
+                                if (f) return f;
+                            }
+                        }
+                        return null;
+                    };
+
+                    const manifest = isVideo
+                        ? findValue(lookup, 'manifest') || findValue(lookup, 'Manifest')
+                        : lookup.info?.manifest;
+
+                    if (!manifest) {
+                        throw new Error('Could not resolve manifest');
+                    }
+
+                    if (preferDolbyAtmosSettings.isEnabled() && enrichedTrack.audioModes?.includes('DOLBY_ATMOS')) {
+                        try {
+                            const stream = await this.getStreamUrl(id, 'DOLBY_ATMOS', true);
+                            const manifestRes = await fetch(stream.url, { signal: options.signal });
+                            const manifestText = await manifestRes.text();
+                            streamUrl = this.extractStreamUrlFromManifest(btoa(manifestText));
+
+                            if (streamUrl) {
+                                postProcessingQuality = 'DOLBY_ATMOS';
+                            }
+                        } catch (err) {
+                            console.error('Failed to extract Dolby Atmos stream URL:', err);
+                        }
+                    }
+
+                    if (!streamUrl) {
+                        streamUrl = this.extractStreamUrlFromManifest(manifest);
+                        if (!streamUrl) {
+                            throw new Error('Could not resolve stream URL');
+                        }
+                    }
+                }
+            }
+
+            if (enriched.externalProvider === 'amazon' && enriched.externalStreamType?.includes('cenc')) {
+                const response = await fetch(enriched.externalSourceUrl || streamUrl, {
+                    cache: 'no-store',
+                    signal: options.signal,
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Fetch failed: ${response.status}`);
+                }
+
+                const encryptedBlob = await response.blob();
+                blob = await ffmpeg(encryptedBlob, {
+                    rawArgs: [
+                        '-decryption_key',
+                        enriched.externalDecryptionKey,
+                        '-i',
+                        'input',
+                        '-c:a',
+                        'flac',
+                        'output.flac',
+                    ],
+                    outputName: 'output.flac',
+                    outputMime: 'audio/flac',
+                    onProgress,
+                    signal: options.signal,
+                });
+            } else if (streamUrl.startsWith('blob:')) {
+                try {
+                    const downloader = new DashDownloader();
+                    blob = await downloader.downloadDashStream(getProxyUrl(streamUrl), {
+                        signal: options.signal,
+                        onProgress,
+                        calculateDashBytes: calculateDashBytes ?? true,
+                    });
+                } catch (dashError) {
+                    console.error('DASH download failed:', dashError);
+                    if (isVideo) throw dashError;
+
+                    // Fallback to LOSSLESS if DASH fails, but not if we're already downloading LOSSLESS
+                    if (downloadQuality !== 'LOSSLESS') {
+                        console.warn('Falling back to LOSSLESS (16-bit) download.');
+                        return this.downloadTrack(id, 'LOSSLESS', filename, options);
+                    }
+                    throw dashError;
+                }
+            } else if (streamUrl.includes('.m3u8') || streamUrl.includes('application/vnd.apple.mpegurl')) {
+                try {
+                    const downloader = new HlsDownloader();
+                    blob = await downloader.downloadHlsStream(getProxyUrl(streamUrl), {
+                        signal: options.signal,
+                        onProgress,
+                    });
+                } catch (hlsError) {
+                    console.error('HLS download failed:', hlsError);
+                    throw hlsError;
+                }
+            } else {
+                // Try HEAD first to get Content-Length when GET uses chunked encoding (fixes #278)
+                let headContentLength = null;
+                try {
+                    const headResponse = await fetch(streamUrl, {
+                        method: 'HEAD',
+                        cache: 'no-store',
+                        signal: options.signal,
+                    });
+                    if (headResponse.ok) {
+                        const cl = headResponse.headers.get('Content-Length');
+                        if (cl) headContentLength = parseInt(cl, 10);
+                    }
+                } catch (_) {
+                    /* ignore HEAD failure; proceed with GET */
+                }
+
+                const response = await fetch(getProxyUrl(streamUrl), {
+                    cache: 'no-store',
+                    signal: options.signal,
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Fetch failed: ${response.status}`);
+                }
+
+                const contentLengthHeader = response.headers.get('Content-Length');
+                const totalBytes = resolveDownloadTotalBytes(contentLengthHeader, headContentLength);
+
+                let receivedBytes = 0;
+
+                if (response.body) {
+                    const chunks = [];
+
+                    for await (const chunk of readableStreamIterator(response.body)) {
+                        chunks.push(chunk);
+                        receivedBytes += chunk.byteLength;
+
+                        onProgress?.(new DownloadProgress(receivedBytes, totalBytes || undefined));
+                    }
+
+                    const defaultMime = isVideo ? 'video/mp4' : 'audio/flac';
+                    blob = new Blob(chunks, { type: response.headers.get('Content-Type') || defaultMime });
+                } else {
+                    onProgress?.(new DownloadProgress(0, undefined));
+                    blob = await response.blob();
+                    onProgress?.(new DownloadProgress(blob.size, blob.size));
+                }
+            }
+
+            if (!isVideo) {
+                blob = await applyAudioPostProcessing(blob, quality, onProgress, options.signal, postProcessingQuality);
+            }
+
+            // Add metadata if track information is provided
+            if (enrichedTrack) {
+                onProgress?.({
+                    stage: 'processing',
+                    message: 'Adding metadata...',
+                });
+
+                onProgress?.(new DownloadProgress('Adding metadata'));
+                try {
+                    if (isVideo) {
+                        blob = new File(
+                            [
+                                await ffmpeg(blob, {
+                                    args: ['-c', 'copy'],
+                                    outputName: 'output.mp4',
+                                    outputMime: 'video/mp4',
+                                    onProgress,
+                                    signal: options.signal,
+                                }),
+                            ],
+                            'output.mp4',
+                            { type: 'video/mp4' }
+                        );
+                    }
+                    blob = await addMetadataToAudio(blob, enrichedTrack, this, quality, prefetchPromises);
+                } catch (err) {
+                    console.error(err);
+                }
+            }
+
+            if (options.triggerDownload ?? true) {
+                // Detect actual format and fix filename extension if needed
+                const detectedExtension = await getExtensionFromBlob(blob);
+                let finalFilename = filename;
+
+                // Replace extension if it doesn't match detected format
+                const currentExtension = filename.split('.').pop()?.toLowerCase();
+                if (currentExtension && currentExtension !== detectedExtension) {
+                    finalFilename = filename.replace(/\.[^.]+$/, `.${detectedExtension}`);
+                }
+
+                triggerDownload(blob, finalFilename);
+            }
+
+            return blob;
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                throw error;
+            }
+            console.error('Download failed:', error);
+            if (error instanceof FfmpegError || error.code === 'MP3_ENCODING_FAILED') {
+                throw error;
+            }
+            if (error.message === RATE_LIMIT_ERROR_MESSAGE) {
+                throw error;
+            }
+            throw new Error('Download failed. The stream may require a proxy.');
+        }
+    }
+
+    getCoverUrl(id, size = '320') {
+        if (devModeSettings.isEnabled() && !this._inSyncCoverUrl) {
+            this._inSyncCoverUrl = true;
+            try {
+                return this.getFallbackProvider().getCoverUrl(id, size);
+            } finally {
+                this._inSyncCoverUrl = false;
+            }
+        }
+        if (!id) {
+            return `https://picsum.photos/seed/${Math.random()}/${size}`;
+        }
+
+        if (typeof id === 'string' && (id.startsWith('http') || id.startsWith('blob:') || id.startsWith('assets/'))) {
+            return id;
+        }
+
+        const formattedId = String(id).replace(/-/g, '/');
+        return `https://resources.tidal.com/images/${formattedId}/${size}x${size}.jpg`;
+    }
+
+    getCoverSrcset(id) {
+        if (devModeSettings.isEnabled() && !this._inSyncCoverSrcset) {
+            this._inSyncCoverSrcset = true;
+            try {
+                return this.getFallbackProvider().getCoverSrcset(id);
+            } finally {
+                this._inSyncCoverSrcset = false;
+            }
+        }
+        if (
+            !id ||
+            (typeof id === 'string' && (id.startsWith('http') || id.startsWith('blob:') || id.startsWith('assets/')))
+        ) {
+            return '';
+        }
+
+        const formattedId = String(id).replace(/-/g, '/');
+        const baseUrl = `https://resources.tidal.com/images/${formattedId}`;
+        return `${baseUrl}/160x160.jpg 160w, ${baseUrl}/320x320.jpg 320w, ${baseUrl}/640x640.jpg 640w`;
+    }
+
+    getArtistPictureUrl(id, size = '320') {
+        if (devModeSettings.isEnabled() && !this._inSyncArtistPicUrl) {
+            this._inSyncArtistPicUrl = true;
+            try {
+                return this.getFallbackProvider().getArtistPictureUrl(id, size);
+            } finally {
+                this._inSyncArtistPicUrl = false;
+            }
+        }
+        if (!id) {
+            return `https://picsum.photos/seed/${Math.random()}/${size}`;
+        }
+
+        if (typeof id === 'string' && (id.startsWith('blob:') || id.startsWith('assets/'))) {
+            return id;
+        }
+
+        const formattedId = String(id).replace(/-/g, '/');
+        return `https://resources.tidal.com/images/${formattedId}/${size}x${size}.jpg`;
+    }
+
+    getArtistPictureSrcset(id) {
+        if (devModeSettings.isEnabled() && !this._inSyncArtistPicSrcset) {
+            this._inSyncArtistPicSrcset = true;
+            try {
+                return this.getFallbackProvider().getArtistPictureSrcset(id);
+            } finally {
+                this._inSyncArtistPicSrcset = false;
+            }
+        }
+        if (!id || (typeof id === 'string' && (id.startsWith('blob:') || id.startsWith('assets/')))) {
+            return '';
+        }
+
+        const formattedId = String(id).replace(/-/g, '/');
+        const baseUrl = `https://resources.tidal.com/images/${formattedId}`;
+        return `${baseUrl}/160x160.jpg 160w, ${baseUrl}/320x320.jpg 320w, ${baseUrl}/640x640.jpg 640w`;
+    }
+
+    getVideoCoverUrl(imageId, size = '1280') {
+        if (!imageId) {
+            return null;
+        }
+
+        if (
+            typeof imageId === 'string' &&
+            (imageId.startsWith('http') || imageId.startsWith('blob:') || imageId.startsWith('assets/'))
+        ) {
+            return imageId;
+        }
+
+        const formattedId = String(imageId).replace(/-/g, '/');
+        return `https://resources.tidal.com/images/${formattedId}/${size}x720.jpg`;
+    }
+
+    async clearCache() {
+        await this.cache.clear();
+        this.streamCache.clear();
+    }
+
+    getCacheStats() {
+        return {
+            ...this.cache.getCacheStats(),
+            streamUrls: this.streamCache.size,
+        };
+    }
+}
