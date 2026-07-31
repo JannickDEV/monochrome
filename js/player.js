@@ -23,7 +23,7 @@ import {
     preferDolbyAtmosSettings,
 } from './storage.js';
 import { audioContextManager } from './audio-context.js';
-import { isIos, isSafari, canUseNativeAmazonCenc } from './platform-detection.js';
+import { isIos, isSafari, canUseNativeAmazonCenc, getAmazonDecrypterCodec } from './platform-detection.js';
 import { db } from './db.js';
 import { getProxyUrl } from './proxy-utils.js';
 
@@ -587,6 +587,8 @@ export class Player {
     }
 
     async _executePreloadNextTracks() {
+        if (this.api.usesSingleUsePlaybackUrls?.()) return;
+
         if (this.preloadAbortController) {
             this.preloadAbortController.abort();
         }
@@ -635,6 +637,9 @@ export class Player {
                         : await this.api.getStreamUrl(track.id, requestQuality);
 
                 if (this.preloadAbortController.signal.aborted) break;
+
+                // Monochrome Playback URLs may be one-use. Resolve a fresh URL when playback actually starts.
+                if (streamInfo.provider === 'monochrome') continue;
 
                 this.preloadCache.set(track.id, streamInfo);
                 const streamUrl = streamInfo.url;
@@ -736,8 +741,7 @@ export class Player {
     }
 
     getAmazonNativeDecrypterCodec() {
-        const isAacQuality = this.quality === 'HIGH' || this.quality === 'SD_HIGH' || this.quality === 'SD_LOW';
-        return isAacQuality ? 'mp4a' : isSafari ? 'flac-hls' : 'flac';
+        return getAmazonDecrypterCodec(this.quality);
     }
 
     isNativeAmazonHlsDecryptionUrl(url) {
@@ -792,7 +796,8 @@ export class Player {
             !track.isLocal &&
             (streamInfo.playbackType?.includes('cenc') ||
                 (streamUrl.startsWith('blob:') && streamInfo.playbackType !== 'direct') ||
-                streamUrl.includes('.mpd'));
+                streamUrl.includes('.mpd') ||
+                (this.isNativeAmazonHlsDecryptionUrl(streamUrl) && !isSafari));
         if (requiresShaka && (!this.shakaPlayer || this.shakaPlayer.getMediaElement() !== activeElement)) {
             return false;
         }
@@ -853,7 +858,11 @@ export class Player {
             } else {
                 this.shakaPlayer.configure({ drm: { clearKeys: {} } });
             }
-            const shakaMimeType = streamInfo.playbackType?.includes('cenc') ? streamInfo.mimeType || null : null;
+            const shakaMimeType = streamInfo.playbackType?.includes('cenc')
+                ? streamInfo.mimeType || null
+                : this.isNativeAmazonHlsDecryptionUrl(streamUrl)
+                  ? 'application/vnd.apple.mpegurl'
+                  : null;
             handoffPromise =
                 startTime > 0
                     ? this.shakaPlayer.load(loadTarget, startTime, shakaMimeType)
@@ -1120,6 +1129,7 @@ export class Player {
         }
 
         this.setLoadingState(true);
+        this.resetProgressUI();
 
         const previousActiveElement = this.activeElement;
         const shouldPreserveGestureToken =
@@ -1221,10 +1231,10 @@ export class Player {
         }
 
         if (activeElement) {
+            activeElement.pause();
             // Let Shaka overwrite the activeElement's decoder pipeline gracefully if we're carrying it over.
             // It manages its own buffering teardown implicitly when `load()` is executed.
             if (!this.shakaInitialized) {
-                activeElement.pause();
                 activeElement.src = '';
                 activeElement.removeAttribute('src');
                 activeElement.load();
@@ -1559,6 +1569,7 @@ export class Player {
                     (isHlsStream ||
                         resolvedStreamInfo.playbackType?.includes('cenc') ||
                         streamUrl.includes('.mpd') ||
+                        (this.isNativeAmazonHlsDecryptionUrl(streamUrl) && !isSafari) ||
                         (streamUrl.startsWith('blob:') && resolvedStreamInfo.playbackType !== 'direct'));
 
                 if (shouldUseShaka) {
@@ -1588,7 +1599,9 @@ export class Player {
                     }
                     const shakaMimeType = resolvedStreamInfo.playbackType?.includes('cenc')
                         ? resolvedStreamInfo.mimeType || null
-                        : null;
+                        : this.isNativeAmazonHlsDecryptionUrl(streamUrl)
+                          ? 'application/vnd.apple.mpegurl'
+                          : null;
 
                     try {
                         if (startTime > 0) {
@@ -1717,6 +1730,17 @@ export class Player {
             const isPaused = this.activeElement?.paused ?? true;
             if (playPauseBtn) playPauseBtn.innerHTML = isPaused ? SVG_PLAY(20) : SVG_PAUSE(20);
         }
+    }
+
+    resetProgressUI() {
+        document.querySelectorAll('#progress-fill, #fs-progress-fill').forEach(el => el.style.width = '0%');
+        document.querySelectorAll('#current-time, #fs-current-time').forEach(el => el.textContent = '0:00');
+        document.querySelectorAll('#total-duration, #fs-total-duration').forEach(el => el.textContent = '0:00');
+        document.querySelectorAll('#progress-bar, #fs-progress-bar').forEach(el => {
+            el.style.webkitMaskImage = '';
+            el.style.maskImage = '';
+            el.classList.remove('has-waveform', 'waveform-loaded');
+        });
     }
 
     async playAtIndex(index) {
@@ -2171,6 +2195,7 @@ export class Player {
 
         if (this.shuffleActive) {
             this.originalQueueBeforeShuffle = [...this.queue];
+            this.originalQueueBeforeShuffle.forEach((t, i) => t._originalIndex = i);
             const currentTrack = this.queue[this.currentQueueIndex];
 
             const tracksToShuffle = [...this.queue];
@@ -2193,7 +2218,10 @@ export class Player {
         } else {
             const currentTrack = this.shuffledQueue[this.currentQueueIndex];
             this.queue = [...this.originalQueueBeforeShuffle];
-            this.currentQueueIndex = this.queue.findIndex((t) => t.id === currentTrack?.id);
+            this.currentQueueIndex = currentTrack?._originalIndex ?? this.queue.findIndex((t) => t.id === currentTrack?.id);
+            if (this.currentQueueIndex === -1) {
+                 this.currentQueueIndex = this.queue.findIndex((t) => t.id === currentTrack?.id);
+            }
         }
 
         this.preloadCache.clear();
@@ -2289,6 +2317,9 @@ export class Player {
         if (this.shuffleActive) {
             this.shuffledQueue.push(...tracks);
             this.originalQueueBeforeShuffle.push(...tracks);
+            this.originalQueueBeforeShuffle.forEach((track, index) => {
+                track._originalIndex = index;
+            });
         }
 
         if (!this.currentTrack || this.currentQueueIndex === -1) {
@@ -2309,7 +2340,15 @@ export class Player {
         // If we are shuffling, we might want to also add it to the original queue for consistency,
         // though syncing that is tricky. The standard logic often just appends to the active queue view.
         if (this.shuffleActive) {
-            this.originalQueueBeforeShuffle.push(...tracks); // Sync original queue
+            const currentTrack = this.shuffledQueue[this.currentQueueIndex];
+            const originalIndex = currentTrack?._originalIndex ?? this.originalQueueBeforeShuffle.findIndex((t) => t.id === currentTrack?.id);
+            
+            if (originalIndex !== -1 && originalIndex !== undefined) {
+                this.originalQueueBeforeShuffle.splice(originalIndex + 1, 0, ...tracks);
+            } else {
+                this.originalQueueBeforeShuffle.push(...tracks); // Sync original queue
+            }
+            this.originalQueueBeforeShuffle.forEach((t, i) => t._originalIndex = i);
         }
 
         await this.saveQueueState();
@@ -2319,12 +2358,7 @@ export class Player {
     async removeFromQueue(index) {
         const currentQueue = this.shuffleActive ? this.shuffledQueue : this.queue;
 
-        // If removing current track
-        if (index === this.currentQueueIndex) {
-            // If playing, we might want to stop or just let it finish?
-            // For now, let's just remove it.
-            // If it's the last track, playback will stop naturally or we handle it?
-        }
+        const isRemovingCurrent = index === this.currentQueueIndex;
 
         if (index < this.currentQueueIndex) {
             this.currentQueueIndex--;
@@ -2334,9 +2368,29 @@ export class Player {
 
         if (this.shuffleActive) {
             // Also remove from original queue
-            const originalIndex = this.originalQueueBeforeShuffle.findIndex((t) => t.id === removedTrack.id); // Simple ID check
-            if (originalIndex !== -1) {
+            const originalIndex = removedTrack._originalIndex ?? this.originalQueueBeforeShuffle.findIndex((t) => t.id === removedTrack.id); // Simple ID check
+            if (originalIndex !== -1 && originalIndex !== undefined) {
                 this.originalQueueBeforeShuffle.splice(originalIndex, 1);
+            }
+            this.originalQueueBeforeShuffle.forEach((t, i) => t._originalIndex = i);
+        }
+
+        if (isRemovingCurrent) {
+            if (this.currentQueueIndex < currentQueue.length) {
+                await this.playTrackFromQueue(0, 0);
+            } else {
+                this.playbackSequence++;
+                this.setLoadingState(false);
+                const el = this.activeElement;
+                if (el) {
+                    el.pause();
+                    el.src = '';
+                }
+                this.currentTrack = null;
+                this.currentQueueIndex = -1;
+                if (UIRenderer.instance) {
+                    UIRenderer.instance.setCurrentTrack(null);
+                }
             }
         }
 
