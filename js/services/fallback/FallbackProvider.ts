@@ -142,8 +142,8 @@ export class FallbackProvider implements Provider {
                             }
                         }
                         
-                        if (meta && meta.title && match.title) {
-                            const mTitle = meta.title.toLowerCase().trim();
+                        if (meta && (meta.title || meta.name) && match.title) {
+                            const mTitle = (meta.title || meta.name).toLowerCase().trim();
                             const tTitle = match.title.toLowerCase().trim();
                             
                             // Check if titles are at least partially similar
@@ -176,7 +176,7 @@ export class FallbackProvider implements Provider {
                     const items = fallbackSearchRes?.items || [];
                     
                     if (items.length > 0) {
-                        const mTitle = meta.title?.toLowerCase().trim();
+                        const mTitle = (meta.title || meta.name)?.toLowerCase().trim();
                         const mDuration = meta.duration || 0;
                         
                         // Filter by duration if available
