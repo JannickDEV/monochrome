@@ -102,6 +102,11 @@ export class FallbackProvider implements Provider {
                 const searchRes = await targetProvider.searchTracks(isrc, { limit: 10 });
                 const items = searchRes?.items || [];
 
+                if (items.length === 0 && targetProvider.id === 'qobuz') {
+                    console.warn(`[Safeguard] ISRC search results on Qobuz turned up entirely empty for ${id}. Forcing fallback to TIDAL.`);
+                    throw new Error(`Qobuz ISRC search turned up entirely empty for ${id}`);
+                }
+
                 if (items.length > 0) {
                     // Match exact ISRC case-insensitively
                     match = items.find((t: any) => t.isrc?.toLowerCase() === isrc!.toLowerCase());
