@@ -16,14 +16,11 @@ vi.mock('../storage.js', () => ({
     preferDolbyAtmosSettings: { isEnabled: vi.fn(() => false) },
     trackDateSettings: { useAlbumYear: vi.fn(() => false) },
     devModeSettings: { isEnabled: vi.fn(() => false), getUrl: vi.fn(() => '') },
-    monochromePlaybackSettings: { isEnabled: vi.fn(() => false) },
-    amazonMusicSettings: { isEnabled: vi.fn(() => false) },
     unifiedPlaybackSettings: {
         isEnabled: vi.fn(() => false),
         getApiBaseUrl: vi.fn(() => 'https://unified.example'),
         getApiToken: vi.fn(() => ''),
     },
-    deezerFallbackSettings: { isEnabled: vi.fn(() => false), getApiBaseUrl: vi.fn(() => '') },
 }));
 
 vi.mock('../cache.js', () => ({

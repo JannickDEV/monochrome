@@ -15,7 +15,6 @@ import {
     trackDateSettings,
     devModeSettings,
     unifiedPlaybackSettings,
-    deezerFallbackSettings,
 } from './storage.js';
 import { APICache } from './cache.js';
 import { DashDownloader } from './dash-downloader.ts';
@@ -1948,23 +1947,8 @@ export class LosslessAPI {
         return map[quality] || map[normalizeQualityToken(quality)] || 'FLAC';
     }
 
-    async getDeezerStreamUrl(isrc, quality = 'LOSSLESS') {
-        if (!isrc || !deezerFallbackSettings.isEnabled()) return null;
-        const baseUrl = deezerFallbackSettings.getApiBaseUrl().replace(/\/+$/, '');
-        if (!baseUrl) return null;
-        const format = this.getDeezerStreamFormat(quality);
-        const url = `${baseUrl}/stream/?isrc=${encodeURIComponent(isrc)}&format=${encodeURIComponent(format)}`;
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 12000);
-            const res = await fetch(getProxyUrl(url), { method: 'HEAD', signal: controller.signal });
-            clearTimeout(timeoutId);
-            if (!res.ok && res.status !== 405 && res.status !== 501) return null;
-        } catch (e) {
-            console.warn(`Deezer fallback failed for ISRC ${isrc}:`, e);
-            return null;
-        }
-        return { url, format, provider: 'deezer', rgInfo: null };
+    async getDeezerStreamUrl() {
+        return null;
     }
 
     getAmazonMusicQuality(quality = 'LOSSLESS', { preferAdaptiveAuto = false } = {}) {
