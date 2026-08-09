@@ -27,3 +27,4 @@ Qobuz-DL
 Caddyfile
 dev-dist
 bun.lock
+load-balancer

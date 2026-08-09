@@ -10,6 +10,9 @@ import {
     cardSettings,
     artistBannerSettings,
     waveformSettings,
+    silenceRemovalSettings,
+    crossfadeSettings,
+    donationPromptSettings,
     replayGainSettings,
     downloadQualitySettings,
     losslessContainerSettings,
@@ -32,14 +35,14 @@ import {
     pwaUpdateSettings,
     contentBlockingSettings,
     musicProviderSettings,
-    monochromePlaybackSettings,
-    amazonMusicSettings,
+    unifiedPlaybackSettings,
     deezerFallbackSettings,
     soundcloudSettings,
     gaplessPlaybackSettings,
     analyticsSettings,
     modalSettings,
     preferDolbyAtmosSettings,
+    nativeOsAtmosSettings,
     binauralDspSettings,
     fullscreenCoverNoRoundSettings,
     fullscreenCoverVanillaTiltSettings,
@@ -901,54 +904,39 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         });
     }
 
-    const amazonMusicToggle = document.getElementById('amazon-music-toggle');
-    if (amazonMusicToggle) {
-        amazonMusicToggle.checked = amazonMusicSettings.isEnabled();
-        amazonMusicToggle.addEventListener('change', (e) => {
-            amazonMusicSettings.setEnabled(e.target.checked);
+    const unifiedPlaybackToggle = document.getElementById('unified-playback-toggle');
+    if (unifiedPlaybackToggle) {
+        unifiedPlaybackToggle.checked = unifiedPlaybackSettings.isEnabled();
+        unifiedPlaybackToggle.addEventListener('change', (e) => {
+            unifiedPlaybackSettings.setEnabled(e.target.checked);
+            api?.clearUnifiedTurnstileJwt?.();
+            api?.clearCache?.();
+            if (e.target.checked && unifiedPlaybackSettings.getApiToken().trim()) {
+                api?.getUnifiedTurnstileJwt?.().catch(() => null);
+            }
         });
     }
 
-    const monochromePlaybackToggle = document.getElementById('monochrome-playback-toggle');
-    if (monochromePlaybackToggle) {
-        monochromePlaybackToggle.checked = monochromePlaybackSettings.isEnabled();
-        monochromePlaybackToggle.addEventListener('change', (e) => {
-            monochromePlaybackSettings.setEnabled(e.target.checked);
+    const unifiedApiBaseUrlInput = document.getElementById('unified-playback-api-base-url');
+    if (unifiedApiBaseUrlInput) {
+        unifiedApiBaseUrlInput.value = unifiedPlaybackSettings.getApiBaseUrl();
+        unifiedApiBaseUrlInput.addEventListener('change', (e) => {
+            unifiedPlaybackSettings.setApiBaseUrl(e.target.value.trim());
+            api?.clearUnifiedTurnstileJwt?.();
             api?.clearCache?.();
         });
     }
 
-    const monochromeApiBaseUrlInput = document.getElementById('monochrome-playback-api-base-url');
-    if (monochromeApiBaseUrlInput) {
-        monochromeApiBaseUrlInput.value = monochromePlaybackSettings.getApiBaseUrl();
-        monochromeApiBaseUrlInput.addEventListener('change', (e) => {
-            monochromePlaybackSettings.setApiBaseUrl(e.target.value.trim());
-            api?.clearMonochromePlaybackSession?.();
+    const unifiedApiTokenInput = document.getElementById('unified-playback-api-token');
+    if (unifiedApiTokenInput) {
+        unifiedApiTokenInput.value = unifiedPlaybackSettings.getApiToken();
+        unifiedApiTokenInput.addEventListener('change', (e) => {
+            unifiedPlaybackSettings.setApiToken(e.target.value.trim());
+            api?.clearUnifiedTurnstileJwt?.();
             api?.clearCache?.();
-        });
-    }
-
-    const amazonApiBaseUrlInput = document.getElementById('amazon-music-api-base-url');
-    if (amazonApiBaseUrlInput) {
-        amazonApiBaseUrlInput.value = amazonMusicSettings.getApiBaseUrl();
-        amazonApiBaseUrlInput.addEventListener('change', (e) => {
-            amazonMusicSettings.setApiBaseUrl(e.target.value.trim());
-        });
-    }
-
-    const amazonTurnstileSiteKeyInput = document.getElementById('amazon-music-turnstile-site-key');
-    if (amazonTurnstileSiteKeyInput) {
-        amazonTurnstileSiteKeyInput.value = amazonMusicSettings.getTurnstileSiteKey();
-        amazonTurnstileSiteKeyInput.addEventListener('change', (e) => {
-            amazonMusicSettings.setTurnstileSiteKey(e.target.value.trim());
-        });
-    }
-
-    const amazonTurnstileBypassTokenInput = document.getElementById('amazon-music-turnstile-bypass-token');
-    if (amazonTurnstileBypassTokenInput) {
-        amazonTurnstileBypassTokenInput.value = amazonMusicSettings.getTurnstileBypassToken();
-        amazonTurnstileBypassTokenInput.addEventListener('change', (e) => {
-            amazonMusicSettings.setTurnstileBypassToken(e.target.value.trim());
+            if (e.target.value.trim() && unifiedPlaybackSettings.isEnabled()) {
+                api?.getUnifiedTurnstileJwt?.().catch(() => null);
+            }
         });
     }
 
@@ -999,7 +987,7 @@ export async function initializeSettings(scrobbler, player, api, ui) {
 
         // Apply initially
         if (player.forceQuality) player.forceQuality(streamingQualitySetting.value);
-        const apiQuality = streamingQualitySetting.value === 'auto' ? 'LOSSLESS' : streamingQualitySetting.value;
+        const apiQuality = streamingQualitySetting.value === 'auto' ? 'HI_RES_LOSSLESS' : streamingQualitySetting.value;
         player.setQuality(localStorage.getItem('playback-quality') || apiQuality);
 
         streamingQualitySetting.addEventListener('change', (e) => {
@@ -1010,9 +998,25 @@ export async function initializeSettings(scrobbler, player, api, ui) {
             if (player.forceQuality) player.forceQuality(val);
 
             // Set fallback API quality
-            const newApiQuality = val === 'auto' ? 'LOSSLESS' : val;
+            const newApiQuality = val === 'auto' ? 'HI_RES_LOSSLESS' : val;
             player.setQuality(newApiQuality);
             localStorage.setItem('playback-quality', newApiQuality);
+        });
+    }
+
+    const preferDolbyAtmosToggle = document.getElementById('prefer-dolby-atmos-toggle');
+    if (preferDolbyAtmosToggle) {
+        preferDolbyAtmosToggle.checked = preferDolbyAtmosSettings.isEnabled();
+        preferDolbyAtmosToggle.addEventListener('change', (e) => {
+            preferDolbyAtmosSettings.setEnabled(e.target.checked);
+        });
+    }
+
+    const nativeOsAtmosToggle = document.getElementById('native-os-atmos-toggle');
+    if (nativeOsAtmosToggle) {
+        nativeOsAtmosToggle.checked = nativeOsAtmosSettings.isEnabled();
+        nativeOsAtmosToggle.addEventListener('change', (e) => {
+            nativeOsAtmosSettings.setEnabled(e.target.checked);
         });
     }
 
@@ -1021,6 +1025,7 @@ export async function initializeSettings(scrobbler, player, api, ui) {
     if (downloadQualitySetting) {
         // Assign categories to the static (native) options already in the HTML
         const staticCategories = {
+            DOLBY_ATMOS: 'Spatial',
             HI_RES_LOSSLESS: 'Lossless',
             LOSSLESS: 'Lossless',
             HIGH: 'AAC',
@@ -5979,6 +5984,47 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         });
     }
 
+    const silenceRemovalToggle = document.getElementById('silence-removal-toggle');
+    if (silenceRemovalToggle) {
+        silenceRemovalToggle.checked = silenceRemovalSettings.isEnabled();
+        silenceRemovalToggle.addEventListener('change', (e) => {
+            silenceRemovalSettings.setEnabled(e.target.checked);
+            window.dispatchEvent(new CustomEvent('waveform-update'));
+        });
+    }
+
+    const crossfadeToggle = document.getElementById('crossfade-toggle');
+    const crossfadeDuration = document.getElementById('crossfade-duration');
+    if (crossfadeToggle) {
+        crossfadeToggle.checked = crossfadeSettings.isEnabled();
+        crossfadeToggle.addEventListener('change', (e) => {
+            crossfadeSettings.setEnabled(e.target.checked);
+            if (crossfadeDuration) crossfadeDuration.disabled = !e.target.checked;
+            if (e.target.checked) {
+                const candidate = player.getNextCrossfadeCandidate?.();
+                const cachedStreamInfo = candidate ? player.preloadCache?.get(candidate.track.id) : null;
+                if (
+                    cachedStreamInfo &&
+                    player.isCrossfadeShakaStream?.(cachedStreamInfo) &&
+                    !cachedStreamInfo.crossfadeShakaPlayer
+                ) {
+                    player.preloadCache.delete(candidate.track.id);
+                }
+                player.preloadNextTracks?.();
+                void player.checkPreloadConditions?.();
+            }
+            window.dispatchEvent(new CustomEvent('waveform-update'));
+        });
+    }
+    if (crossfadeDuration) {
+        crossfadeDuration.value = String(crossfadeSettings.getDuration());
+        crossfadeDuration.disabled = !crossfadeSettings.isEnabled();
+        crossfadeDuration.addEventListener('change', (e) => {
+            crossfadeSettings.setDuration(e.target.value);
+            window.dispatchEvent(new CustomEvent('waveform-update'));
+        });
+    }
+
     // Visualizer Sensitivity
     const visualizerSensitivitySlider = document.getElementById('visualizer-sensitivity-slider');
     const visualizerSensitivityValue = document.getElementById('visualizer-sensitivity-value');
@@ -6364,6 +6410,17 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         sidebarShowDonateToggle.addEventListener('change', (e) => {
             sidebarSectionSettings.setShowDonate(e.target.checked);
             sidebarSectionSettings.applySidebarVisibility();
+        });
+    }
+
+    const donationPromptToggle = document.getElementById('donation-prompts-toggle');
+    if (donationPromptToggle) {
+        donationPromptToggle.checked = donationPromptSettings.isEnabled();
+        donationPromptToggle.addEventListener('change', (e) => {
+            donationPromptSettings.setEnabled(e.target.checked);
+            if (!e.target.checked) {
+                document.querySelectorAll('.donation-prompt').forEach((prompt) => prompt.remove());
+            }
         });
     }
 

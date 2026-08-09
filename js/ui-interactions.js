@@ -6,6 +6,7 @@ import {
     escapeHtml,
     createQualityBadgeHTML,
     createSourceBadgeHTML,
+    formatQualityBadgeText,
     positionMenu,
 } from './utils.js';
 import { sidePanelManager } from './side-panel.js';
@@ -23,6 +24,7 @@ import {
     SVG_TRASH,
     SVG_EQUAL,
     SVG_TRIANGLE_ALERT,
+    SVG_ATMOS,
 } from './icons.js';
 import { hapticSuccess } from './haptics.js';
 import { getLocalFilesSupportInfo } from './platform-detection.js';
@@ -271,7 +273,26 @@ export function initializeUIInteractions(player, api, ui) {
         const isBlocked = contentBlockingSettings?.shouldHideTrack(track);
         const trackTitle = getTrackTitle(track);
         const trackArtists = getTrackArtists(track, { fallback: 'Unknown' });
-        const qualityBadge = createQualityBadgeHTML(track);
+        let qualityBadge = '';
+        if (isPlaying && player.currentStreamInfo) {
+            const isAtmos =
+                player.currentStreamInfo.codec === 'eac3-joc' ||
+                player.currentStreamInfo.quality === 'DOLBY_ATMOS' ||
+                track?.audioQuality === 'DOLBY_ATMOS' ||
+                track?.quality === 'DOLBY_ATMOS' ||
+                track?.audioModes?.includes('DOLBY_ATMOS');
+
+            if (isAtmos) {
+                qualityBadge = `<span class="quality-badge quality-atmos" title="Dolby Atmos">${SVG_ATMOS(20)}</span>`;
+            } else {
+                const badgeText = formatQualityBadgeText(player.currentStreamInfo, null, player.quality);
+                if (badgeText) {
+                    qualityBadge = `<span class="quality-badge quality-hires" title="${escapeHtml(badgeText)}">${escapeHtml(badgeText)}</span>`;
+                }
+            }
+        } else {
+            qualityBadge = createQualityBadgeHTML(track);
+        }
         const sourceBadge = createSourceBadgeHTML(track);
         const blockedTitle = isBlocked
             ? `title="Blocked: ${contentBlockingSettings.isTrackBlocked(track.id) ? 'Track blocked' : contentBlockingSettings.isArtistBlocked(track.artist?.id) ? 'Artist blocked' : 'Album blocked'}"`

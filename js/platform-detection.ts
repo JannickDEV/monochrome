@@ -22,6 +22,9 @@ export const isChrome = lowerCaseOriginalUserAgent.includes('chrome') || lowerCa
 /** If the browser is Firefox (excluding Chromium browsers with a modified user agent). */
 export const isFirefox = lowerCaseOriginalUserAgent.includes('firefox') && !isChrome;
 
+/** If the browser is Microsoft Edge. */
+export const isEdge = lowerCaseOriginalUserAgent.includes('edg/') || lowerCaseOriginalUserAgent.includes('edge/');
+
 type AmazonDecrypterBrowser = {
     isFirefox: boolean;
     isSafari: boolean;
@@ -44,9 +47,14 @@ type NavigatorWithUserAgentData = Navigator & {
 export function getAmazonDecrypterCodec(
     quality: string,
     browser: AmazonDecrypterBrowser = { isFirefox, isSafari }
-): 'mp4a' | 'flac-hls' | 'flac-raw' | 'flac' {
-    const isAacQuality = quality === 'HIGH' || quality === 'SD_HIGH' || quality === 'SD_LOW';
-    if (isAacQuality) return 'mp4a';
+): 'opus' | 'mp4a' | 'flac-hls' | 'flac-raw' | 'flac' {
+    const normalizedQuality = quality.toUpperCase();
+    const isOpusQuality =
+        normalizedQuality === 'HIGH' ||
+        normalizedQuality === 'NORMAL' ||
+        normalizedQuality === 'LOW' ||
+        normalizedQuality.startsWith('SD_');
+    if (isOpusQuality) return 'opus';
     if (browser.isSafari) return 'flac-hls';
     if (browser.isFirefox) return 'flac-hls';
     return 'flac';

@@ -15,8 +15,7 @@ import {
     pwaUpdateSettings,
     modalSettings,
     keyboardShortcuts,
-    monochromePlaybackSettings,
-    amazonMusicSettings,
+    unifiedPlaybackSettings,
 } from './storage.js';
 import { UIRenderer } from './ui.js';
 import { Player } from './player.js';
@@ -59,7 +58,7 @@ import {
 } from './icons.js';
 import { HiFiClient } from './HiFi.js';
 
-const AMAZON_DECRYPTER_SW_VERSION = '2026-06-23-flac-hls-v8';
+const AMAZON_DECRYPTER_SW_VERSION = '2026-08-06-crossfade-v10';
 
 // Capture real iOS state before spoofing (needed for background audio)
 if (typeof window !== 'undefined') {
@@ -343,7 +342,6 @@ function initializeKeyboardShortcuts(player, _audioPlayer) {
     });
 }
 
-
 async function closeFullscreenOverlay() {
     if (UIRenderer.instance?.dismissFullscreenCover) {
         await UIRenderer.instance.dismissFullscreenCover({ animate: false });
@@ -571,12 +569,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     await MusicAPI.initialize(apiSettings);
 
-    if (monochromePlaybackSettings.isEnabled()) {
-        MusicAPI.instance.tidalAPI.getMonochromePlaybackSession().catch(() => null);
-    }
-
-    if (amazonMusicSettings.isEnabled() && !amazonMusicSettings.getTurnstileBypassToken().trim()) {
-        MusicAPI.instance.tidalAPI.getTurnstileJwt().catch(() => null);
+    if (unifiedPlaybackSettings.isEnabled() && unifiedPlaybackSettings.getApiToken().trim()) {
+        MusicAPI.instance.tidalAPI.getUnifiedTurnstileJwt().catch(() => null);
     }
 
     const audioPlayer = document.getElementById('audio-player');
@@ -1089,7 +1083,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Auto-update lyrics when track changes
     let previousTrackId = null;
-    audioPlayer.addEventListener('play', async () => {
+    const handleActiveAudioPlay = async (event) => {
+        if (Player.instance.activeElement !== event.currentTarget) return;
         if (!Player.instance.currentTrack) return;
 
         // Update UI with current track info for theme
@@ -1135,7 +1130,8 @@ document.addEventListener('DOMContentLoaded', async () => {
                 Player.instance.activeElement
             );
         }
-    });
+    };
+    Player.instance.audioElements.forEach((element) => element.addEventListener('play', handleActiveAudioPlay));
 
     document.addEventListener('click', async (e) => {
         if (e.target.closest('#play-album-btn')) {

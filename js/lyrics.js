@@ -1282,8 +1282,14 @@ function setupSync(track, audioPlayer, amLyrics, lyricsManager) {
                 return;
             }
 
-            audioPlayer.currentTime = e.detail.timestamp / 1000;
-            audioPlayer.play();
+            const seekRequest = new CustomEvent('exact-seek-request', {
+                cancelable: true,
+                detail: { time: e.detail.timestamp / 1000, resume: true },
+            });
+            if (audioPlayer.dispatchEvent(seekRequest)) {
+                audioPlayer.currentTime = e.detail.timestamp / 1000;
+                audioPlayer.play();
+            }
         }
     };
 

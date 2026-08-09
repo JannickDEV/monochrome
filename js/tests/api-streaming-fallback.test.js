@@ -18,6 +18,11 @@ vi.mock('../storage.js', () => ({
     devModeSettings: { isEnabled: vi.fn(() => false), getUrl: vi.fn(() => '') },
     monochromePlaybackSettings: { isEnabled: vi.fn(() => false) },
     amazonMusicSettings: { isEnabled: vi.fn(() => false) },
+    unifiedPlaybackSettings: {
+        isEnabled: vi.fn(() => false),
+        getApiBaseUrl: vi.fn(() => 'https://unified.example'),
+        getApiToken: vi.fn(() => ''),
+    },
     deezerFallbackSettings: { isEnabled: vi.fn(() => false), getApiBaseUrl: vi.fn(() => '') },
 }));
 
@@ -48,6 +53,7 @@ vi.mock('../platform-detection.js', () => ({
     isSafari: false,
     isChrome: true,
     canUseNativeAmazonCenc: false,
+    getAmazonDecrypterCodec: vi.fn(() => 'flac'),
 }));
 vi.mock('../container-classes.js', () => ({
     TrackAlbum: class {},
@@ -93,19 +99,11 @@ describe('LosslessAPI HiFi streaming fallback', () => {
         });
     });
 
-    test('falls back to HiFi streaming APIs when Qobuz returns no URL and streaming instances exist', async () => {
-        const result = await api.getStreamUrl('123', 'LOSSLESS');
-
-        expect(result).toEqual({
-            url: 'https://audio.example/fallback.flac',
-            rgInfo: {
-                trackReplayGain: -4,
-                trackPeakAmplitude: 0.9,
-                albumReplayGain: -5,
-                albumPeakAmplitude: 0.95,
-            },
-        });
-        expect(api.getTrack).toHaveBeenCalledWith('123', 'LOSSLESS', { adaptive: false });
+    test('reports failure when Amazon Music and ISRC fallbacks cannot resolve', async () => {
+        await expect(api.getStreamUrl('123', 'LOSSLESS')).rejects.toThrow(
+            'Could not resolve stream URL from Monochrome Playback, Amazon Music, Qobuz, Deezer, or HiFi streaming APIs'
+        );
+        expect(api.getTrack).not.toHaveBeenCalled();
     });
 
     test('uses Amazon Music before Qobuz when it resolves a stream URL', async () => {
@@ -162,7 +160,7 @@ describe('LosslessAPI HiFi streaming fallback', () => {
         settings.getInstances.mockResolvedValue([]);
 
         await expect(api.getStreamUrl('123', 'LOSSLESS')).rejects.toThrow(
-            'Could not resolve stream URL from Amazon Music, Qobuz, or HiFi streaming APIs'
+            'Could not resolve stream URL from Monochrome Playback, Amazon Music, Qobuz, Deezer, or HiFi streaming APIs'
         );
         expect(api.getTrack).not.toHaveBeenCalled();
     });
