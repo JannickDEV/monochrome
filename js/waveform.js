@@ -6,16 +6,85 @@ export class WaveformGenerator {
         this.sampleCache = new Map();
     }
 
+    generateWaveformPngFromSamples(samples, targetWidth = 1000, targetHeight = 28) {
+        if (!Array.isArray(samples) || samples.length === 0) return null;
+        if (typeof document === 'undefined') return null;
+
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = targetWidth;
+            canvas.height = targetHeight;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return null;
+
+            ctx.clearRect(0, 0, targetWidth, targetHeight);
+            ctx.fillStyle = '#000000';
+
+            const sampleCount = samples.length;
+            const barWidth = targetWidth / sampleCount;
+            const halfHeight = targetHeight / 2;
+
+            for (let i = 0; i < sampleCount; i++) {
+                const sampleVal = typeof samples[i] === 'number' ? samples[i] : 100;
+                const height = Math.max(2, (sampleVal / 255) * (targetHeight - 4));
+                const x = i * barWidth;
+                const y = halfHeight - height / 2;
+                ctx.fillRect(x, y, Math.max(1, barWidth - 0.5), height);
+            }
+
+            return this.createMaskImageUrl(canvas);
+        } catch (e) {
+            console.warn('Unable to generate PNG from samples:', e);
+            return null;
+        }
+    }
+
+    generateFallbackWaveform(trackId) {
+        if (!trackId) return null;
+        const seedString = String(trackId);
+        let hash = 0;
+        for (let i = 0; i < seedString.length; i++) {
+            hash = (hash << 5) - hash + seedString.charCodeAt(i);
+            hash |= 0;
+        }
+
+        const lcg = () => {
+            hash = (Math.imul(hash, 1664525) + 1013904223) | 0;
+            return ((hash >>> 0) % 10000) / 10000;
+        };
+
+        const sampleCount = 240;
+        const samples = new Array(sampleCount);
+
+        for (let i = 0; i < sampleCount; i++) {
+            const pos = i / sampleCount;
+            const envelope = Math.sin(pos * Math.PI);
+            const var1 = Math.sin(pos * 18 + lcg() * 2);
+            const var2 = Math.cos(pos * 42);
+            const rawAmp = 0.35 + 0.35 * var1 + 0.3 * var2;
+            const noise = 0.4 + 0.6 * lcg();
+            const val = Math.floor(Math.max(12, Math.min(255, rawAmp * noise * envelope * 230 + 20)));
+            samples[i] = val;
+        }
+
+        const pngUrl = this.generateWaveformPngFromSamples(samples);
+        return {
+            pngUrl,
+            jsonUrl: null,
+            samples,
+            durationSeconds: null,
+        };
+    }
+
     async loadWaveformData(waveformObj, trackId) {
-        if (!waveformObj) return null;
         if (trackId && this.sampleCache.has(trackId)) {
             return this.sampleCache.get(trackId);
         }
 
-        let samples = Array.isArray(waveformObj.samples) ? waveformObj.samples : null;
-        let pngUrl = waveformObj.png_url || waveformObj.pngUrl || null;
-        let jsonUrl = waveformObj.json_url || waveformObj.jsonUrl || null;
-        let durationMs = Number(waveformObj.duration_ms ?? waveformObj.durationMs) || null;
+        let samples = Array.isArray(waveformObj?.samples) ? waveformObj.samples : null;
+        let pngUrl = waveformObj?.png_url || waveformObj?.pngUrl || null;
+        let jsonUrl = waveformObj?.json_url || waveformObj?.jsonUrl || null;
+        let durationMs = Number(waveformObj?.duration_ms ?? waveformObj?.durationMs) || null;
 
         if (!samples && jsonUrl) {
             try {
@@ -29,6 +98,18 @@ export class WaveformGenerator {
                 }
             } catch (e) {
                 console.warn('Failed to load waveform JSON:', e);
+            }
+        }
+
+        if (samples && !pngUrl) {
+            pngUrl = this.generateWaveformPngFromSamples(samples);
+        }
+
+        if (!pngUrl && !samples && trackId) {
+            const fallback = this.generateFallbackWaveform(trackId);
+            if (fallback) {
+                this.sampleCache.set(trackId, fallback);
+                return fallback;
             }
         }
 

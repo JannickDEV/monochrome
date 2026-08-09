@@ -922,6 +922,8 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
                     if (geometryApplied) {
                         progressBar.classList.add('waveform-loaded');
                         if (playerControls) playerControls.classList.add('waveform-loaded');
+                    } else if (showWaveform) {
+                        clearWaveformGeometry(progressBar, playerControls);
                     }
                 }
             } catch (e) {
