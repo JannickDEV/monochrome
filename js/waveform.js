@@ -22,29 +22,33 @@ export class WaveformGenerator {
 
             const sampleCount = samples.length;
             const halfHeight = targetHeight / 2;
-            const step = targetWidth / (sampleCount - 1);
+            const amp = (i) => {
+                const sampleVal = typeof samples[i] === 'number' ? samples[i] : 100;
+                return Math.max(3, (sampleVal / 255) * (targetHeight - 4));
+            };
+            const xAt = (i) => (sampleCount === 1 ? 0 : (i / (sampleCount - 1)) * targetWidth);
 
+            // Smooth closed envelope (top then bottom) via mid-point curves.
             ctx.beginPath();
-            for (let i = 0; i < sampleCount; i++) {
-                const sampleVal = typeof samples[i] === 'number' ? samples[i] : 100;
-                const height = Math.max(3, (sampleVal / 255) * (targetHeight - 4));
-                const x = i * step;
-                const y = halfHeight - height / 2;
-                if (i === 0) {
-                    ctx.moveTo(x, y);
-                } else {
-                    ctx.lineTo(x, y);
-                }
+            ctx.moveTo(xAt(0), halfHeight - amp(0) / 2);
+            for (let i = 0; i < sampleCount - 1; i++) {
+                const x0 = xAt(i);
+                const x1 = xAt(i + 1);
+                const y0 = halfHeight - amp(i) / 2;
+                const y1 = halfHeight - amp(i + 1) / 2;
+                ctx.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
             }
-
-            for (let i = sampleCount - 1; i >= 0; i--) {
-                const sampleVal = typeof samples[i] === 'number' ? samples[i] : 100;
-                const height = Math.max(3, (sampleVal / 255) * (targetHeight - 4));
-                const x = i * step;
-                const y = halfHeight + height / 2;
-                ctx.lineTo(x, y);
+            const lastTopY = halfHeight - amp(sampleCount - 1) / 2;
+            ctx.lineTo(xAt(sampleCount - 1), lastTopY);
+            ctx.lineTo(xAt(sampleCount - 1), halfHeight + amp(sampleCount - 1) / 2);
+            for (let i = sampleCount - 1; i > 0; i--) {
+                const x0 = xAt(i);
+                const x1 = xAt(i - 1);
+                const y0 = halfHeight + amp(i) / 2;
+                const y1 = halfHeight + amp(i - 1) / 2;
+                ctx.quadraticCurveTo(x0, y0, (x0 + x1) / 2, (y0 + y1) / 2);
             }
-
+            ctx.lineTo(xAt(0), halfHeight + amp(0) / 2);
             ctx.closePath();
             ctx.fill();
 

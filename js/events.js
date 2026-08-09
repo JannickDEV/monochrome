@@ -823,33 +823,17 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
 
     const applyWaveformImage = (progressBar, pngUrl, targetTrackId) => {
         if (!pngUrl || !player.currentTrack || player.currentTrack.id !== targetTrackId) return false;
-        const progressFill = progressBar.querySelector('.progress-fill');
-        if (!progressFill) return false;
+        if (!progressBar.querySelector('.progress-fill')) return false;
 
         progressBar.querySelectorAll('.waveform-image, .waveform-geometry').forEach((element) => element.remove());
-        const createImage = (className) => {
-            const image = document.createElement('img');
-            image.className = `waveform-image ${className}`;
-            image.src = pngUrl;
-            image.alt = '';
-            image.draggable = false;
-            image.setAttribute('aria-hidden', 'true');
-            return image;
-        };
 
-        const unplayedImage = createImage('waveform-unplayed');
-        const playedImage = createImage('waveform-played');
-        progressBar.insertBefore(unplayedImage, progressFill);
-        progressFill.appendChild(playedImage);
+        const maskValue = `url("${pngUrl}")`;
+        progressBar.style.setProperty('--waveform-mask-image', maskValue);
 
-        // The played image lives inside the percentage-width progress fill. Give
-        // both copies the seekbar's fixed pixel width so the fill only clips the
-        // image instead of continuously rescaling it as playback advances.
         const syncWaveformWidth = () => {
             const geometryWidth = Math.max(1, Math.round(progressBar.getBoundingClientRect().width));
             progressBar.style.setProperty('--waveform-geometry-width', `${geometryWidth}px`);
-            unplayedImage.style.width = `${geometryWidth}px`;
-            playedImage.style.width = `${geometryWidth}px`;
+            progressBar.style.setProperty('--waveform-mask-width', `${geometryWidth}px`);
         };
         syncWaveformWidth();
         if (typeof ResizeObserver !== 'undefined') {

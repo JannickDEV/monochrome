@@ -3823,13 +3823,27 @@ input:checked + .slider::before {
 }
 
 .progress-bar.has-waveform.waveform-loaded {
-    height: 30px;
-    background: transparent !important;
+    height: 32px;
+    background: color-mix(in srgb, var(--foreground) 28%, transparent) !important;
     border-radius: 0 !important;
     box-shadow: none !important;
     overflow: hidden;
     position: relative;
     cursor: pointer;
+    -webkit-mask-image: var(--waveform-mask-image);
+    mask-image: var(--waveform-mask-image);
+    -webkit-mask-size: var(--waveform-mask-width, 100%) 100%;
+    mask-size: var(--waveform-mask-width, 100%) 100%;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: left center;
+    mask-position: left center;
+    -webkit-mask-mode: alpha;
+    mask-mode: alpha;
+}
+
+.progress-bar.has-waveform.waveform-loaded:hover {
+    background: color-mix(in srgb, var(--foreground) 40%, transparent) !important;
 }
 
 .progress-bar.has-waveform.waveform-loaded::before {
@@ -3842,42 +3856,18 @@ input:checked + .slider::before {
     height: 100%;
     transform: none;
     overflow: hidden;
-    background: transparent;
+    background: var(--foreground);
     border-radius: 0 !important;
     z-index: 1;
+    transition: none;
+}
+
+.progress-bar.has-waveform.waveform-loaded:hover .progress-fill {
+    background: var(--foreground);
 }
 
 .progress-bar.has-waveform.waveform-loaded .waveform-image {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: var(--waveform-geometry-width, 100%);
-    min-width: var(--waveform-geometry-width, 100%);
-    max-width: none;
-    height: 100%;
-    object-fit: fill;
-    pointer-events: none;
-    filter: invert(1);
-    user-select: none;
-    transition: opacity 0.15s ease;
-}
-
-.progress-bar.has-waveform.waveform-loaded > .waveform-unplayed {
-    opacity: 0.3;
-}
-
-.progress-bar.has-waveform.waveform-loaded:hover > .waveform-unplayed {
-    opacity: 0.45;
-}
-
-.progress-bar.has-waveform.waveform-loaded .waveform-played {
-    opacity: 0.95;
-    filter: invert(1);
-}
-
-.progress-bar.has-waveform.waveform-loaded:hover .waveform-played {
-    opacity: 1;
-    filter: invert(1);
+    display: none;
 }
 
 .progress-bar.has-waveform.waveform-loaded .progress-fill::after {
