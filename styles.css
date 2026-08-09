@@ -3823,7 +3823,7 @@ input:checked + .slider::before {
 }
 
 .progress-bar.has-waveform.waveform-loaded {
-    height: 32px;
+    height: 30px;
     background: transparent !important;
     border-radius: 0 !important;
     box-shadow: none !important;
@@ -3859,25 +3859,25 @@ input:checked + .slider::before {
     pointer-events: none;
     filter: invert(1);
     user-select: none;
-    transition: opacity 0.15s ease, filter 0.15s ease;
+    transition: opacity 0.15s ease;
 }
 
 .progress-bar.has-waveform.waveform-loaded > .waveform-unplayed {
-    opacity: 0.38;
+    opacity: 0.3;
 }
 
 .progress-bar.has-waveform.waveform-loaded:hover > .waveform-unplayed {
-    opacity: 0.65;
+    opacity: 0.45;
 }
 
 .progress-bar.has-waveform.waveform-loaded .waveform-played {
-    opacity: 1;
-    filter: invert(1) drop-shadow(0 0 1px rgba(255, 255, 255, 0.4));
+    opacity: 0.95;
+    filter: invert(1);
 }
 
 .progress-bar.has-waveform.waveform-loaded:hover .waveform-played {
     opacity: 1;
-    filter: invert(1) brightness(1.25) drop-shadow(0 0 2px rgba(255, 255, 255, 0.6));
+    filter: invert(1);
 }
 
 .progress-bar.has-waveform.waveform-loaded .progress-fill::after {

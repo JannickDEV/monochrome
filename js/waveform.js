@@ -6,7 +6,7 @@ export class WaveformGenerator {
         this.sampleCache = new Map();
     }
 
-    generateWaveformPngFromSamples(samples, targetWidth = 1000, targetHeight = 28) {
+    generateWaveformPngFromSamples(samples, targetWidth = 1000, targetHeight = 32) {
         if (!Array.isArray(samples) || samples.length === 0) return null;
         if (typeof document === 'undefined') return null;
 
@@ -21,16 +21,32 @@ export class WaveformGenerator {
             ctx.fillStyle = '#000000';
 
             const sampleCount = samples.length;
-            const barWidth = targetWidth / sampleCount;
             const halfHeight = targetHeight / 2;
+            const step = targetWidth / (sampleCount - 1);
 
+            ctx.beginPath();
             for (let i = 0; i < sampleCount; i++) {
                 const sampleVal = typeof samples[i] === 'number' ? samples[i] : 100;
-                const height = Math.max(2, (sampleVal / 255) * (targetHeight - 4));
-                const x = i * barWidth;
+                const height = Math.max(3, (sampleVal / 255) * (targetHeight - 4));
+                const x = i * step;
                 const y = halfHeight - height / 2;
-                ctx.fillRect(x, y, Math.max(1, barWidth - 0.5), height);
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
             }
+
+            for (let i = sampleCount - 1; i >= 0; i--) {
+                const sampleVal = typeof samples[i] === 'number' ? samples[i] : 100;
+                const height = Math.max(3, (sampleVal / 255) * (targetHeight - 4));
+                const x = i * step;
+                const y = halfHeight + height / 2;
+                ctx.lineTo(x, y);
+            }
+
+            ctx.closePath();
+            ctx.fill();
 
             return this.createMaskImageUrl(canvas);
         } catch (e) {
