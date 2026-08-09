@@ -3823,21 +3823,27 @@ input:checked + .slider::before {
 }
 
 .progress-bar.has-waveform.waveform-loaded {
-    height: 28px;
-    background: transparent;
+    height: 32px;
+    background: transparent !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
     overflow: hidden;
+    position: relative;
+    cursor: pointer;
 }
 
 .progress-bar.has-waveform.waveform-loaded::before {
-    display: none;
+    display: none !important;
 }
 
 .progress-bar.has-waveform.waveform-loaded .progress-fill {
     top: 0;
+    left: 0;
     height: 100%;
     transform: none;
     overflow: hidden;
     background: transparent;
+    border-radius: 0 !important;
     z-index: 1;
 }
 
@@ -3845,26 +3851,37 @@ input:checked + .slider::before {
     position: absolute;
     top: 0;
     left: 0;
-    width: var(--waveform-geometry-width);
-    min-width: var(--waveform-geometry-width);
+    width: var(--waveform-geometry-width, 100%);
+    min-width: var(--waveform-geometry-width, 100%);
     max-width: none;
     height: 100%;
     object-fit: fill;
     pointer-events: none;
     filter: invert(1);
     user-select: none;
+    transition: opacity 0.15s ease, filter 0.15s ease;
 }
 
 .progress-bar.has-waveform.waveform-loaded > .waveform-unplayed {
-    opacity: 0.16;
+    opacity: 0.38;
+}
+
+.progress-bar.has-waveform.waveform-loaded:hover > .waveform-unplayed {
+    opacity: 0.65;
 }
 
 .progress-bar.has-waveform.waveform-loaded .waveform-played {
-    opacity: 0.9;
+    opacity: 1;
+    filter: invert(1) drop-shadow(0 0 1px rgba(255, 255, 255, 0.4));
+}
+
+.progress-bar.has-waveform.waveform-loaded:hover .waveform-played {
+    opacity: 1;
+    filter: invert(1) brightness(1.25) drop-shadow(0 0 2px rgba(255, 255, 255, 0.6));
 }
 
 .progress-bar.has-waveform.waveform-loaded .progress-fill::after {
-    display: none;
+    display: none !important;
 }
 
 #waveform-canvas {
