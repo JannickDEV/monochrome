@@ -1,5 +1,5 @@
 // js/accounts/auth.js
-import { auth, AUTH_BASE_URL } from './config.js';
+import { pb, AUTH_BASE_URL } from './config.js';
 
 const LEGACY_AUTH_TOKEN_KEY = 'monochrome-auth-token';
 let authToken = localStorage.getItem(LEGACY_AUTH_TOKEN_KEY) || pb.authStore.token || '';
