@@ -904,7 +904,7 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
                         );
                     }
 
-                    const geometryApplied = showWaveform
+                    const geometryApplied = showWaveform && !waveData?.isFallback
                         ? applyWaveformImage(progressBar, waveData?.pngUrl, targetTrackId)
                         : false;
 
@@ -938,7 +938,7 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
                                     showWaveform &&
                                     applyWaveformImage(progressBar, realWaveform.pngUrl, targetTrackId)
                                 ) {
-                                    progressBar.classList.add('waveform-loaded');
+                                    progressBar.classList.add('has-waveform', 'waveform-loaded');
                                     if (playerControls) playerControls.classList.add('waveform-loaded');
                                 }
                             })
