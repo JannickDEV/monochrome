@@ -1971,20 +1971,18 @@ export class Player {
 
             console.error(`Could not play track: ${trackTitle}`, error);
 <<<<<<< HEAD
-            if (track && (track.provider === 'soundcloud' || track.isSoundCloud || String(track.id).startsWith('sc_'))) {
-                import('./soundcloud-api.js').then((m) => {
+            if (track && (track.provider === "soundcloud" || track.isSoundCloud || String(track.id).startsWith("sc_"))) {
+                import("./soundcloud-api.js").then((m) => {
                     if (m.notifySoundCloudSourceMissing) m.notifySoundCloudSourceMissing();
                 }).catch(() => {});
-            } else {
-                import('./downloads.js').then((m) => {
-                    m.showNotification(`Could not play track: ${trackTitle || 'Unknown'}`);
-                }).catch(() => {});
-=======
-            if (error?.code === 'UNSUPPORTED_PLAYBACK_CODEC' || error?.code === 'STRICT_QUALITY_UNAVAILABLE') {
-                import('./downloads.js')
+            } else if (error?.code === "UNSUPPORTED_PLAYBACK_CODEC" || error?.code === "STRICT_QUALITY_UNAVAILABLE") {
+                import("./downloads.js")
                     .then(({ showNotification }) => showNotification(error.message))
                     .catch(() => {});
->>>>>>> upstream/main
+            } else {
+                import("./downloads.js").then((m) => {
+                    m.showNotification(`Could not play track: ${trackTitle || "Unknown"}`);
+                }).catch(() => {});
             }
         } finally {
             if (this.playbackSequence === currentSequence) {
