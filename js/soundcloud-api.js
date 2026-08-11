@@ -78,6 +78,26 @@ export class SoundCloudAPI {
 
     async extractFreshClientId() {
         console.info('Attempting to automatically extract a fresh SoundCloud client_id...');
+        const now = Date.now();
+        if (this._lastExtractionAttempt && now - this._lastExtractionAttempt < 10000) {
+            console.warn('Skipping repeated client_id extraction (throttled).');
+            return null;
+        }
+        this._lastExtractionAttempt = now;
+
+        const fetchText = async (url) => {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 15000);
+            try {
+                const res = await fetch(url, { signal: controller.signal });
+                return res.ok ? await res.text() : null;
+            } catch {
+                return null;
+            } finally {
+                clearTimeout(timer);
+            }
+        };
+
         const getProxyUrls = (targetUrl) => [
             targetUrl === 'https://soundcloud.com' ? '/sc-web' : (targetUrl.startsWith('https://a-v2.sndcdn.com') ? targetUrl.replace('https://a-v2.sndcdn.com', '/sc-sndcdn') : null),
             `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`,
@@ -85,56 +105,74 @@ export class SoundCloudAPI {
             `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
         ].filter(Boolean);
 
-        for (const proxyUrl of getProxyUrls('https://soundcloud.com')) {
-            try {
-                const res = await fetch(proxyUrl);
-                if (!res.ok) continue;
-                const html = await res.text();
-
-                // Find all js asset scripts on soundcloud.com
-                const scriptMatches = [...html.matchAll(/src="(https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js)"/g)];
-                if (!scriptMatches.length) continue;
-
-                // Check the last few scripts where client_id is usually bundled
-                const scriptsToCheck = scriptMatches.slice(-5).map((m) => m[1]);
-                for (const scriptUrl of scriptsToCheck) {
-                    for (const scriptProxyUrl of getProxyUrls(scriptUrl)) {
-                        try {
-                            const scriptRes = await fetch(scriptProxyUrl);
-                            if (!scriptRes.ok) continue;
-                            const scriptText = await scriptRes.text();
-
-                            // Match 32-character client_id
-                            const idMatches = [...scriptText.matchAll(/client_id:["']([a-zA-Z0-9]{32})["']/g)];
-                            for (const idMatch of idMatches) {
-                                const candidateId = idMatch[1];
-                                if (REVOKED_CLIENT_IDS.has(candidateId)) continue;
-
-                                // Verify candidate ID against SoundCloud API
-                                const apiBase = this.getApiBase();
-                                let testRes;
-                                try {
-                                    testRes = await fetch(`${apiBase}/search/tracks?q=test&limit=1&client_id=${candidateId}`);
-                                } catch {}
-                                if (!testRes || !testRes.ok) {
-                                    try {
-                                        testRes = await fetch(`${FALLBACK_SC_API_BASE}/search/tracks?q=test&limit=1&client_id=${candidateId}`);
-                                    } catch {}
-                                }
-                                if (testRes && testRes.ok) {
-                                    console.info('Successfully extracted and verified fresh SoundCloud client_id:', candidateId);
-                                    this.clientId = candidateId;
-                                    try {
-                                        soundcloudSettings.setClientId(candidateId);
-                                    } catch {}
-                                    return candidateId;
-                                }
-                            }
-                        } catch {}
-                    }
+        const collectCandidateIds = (text, ids) => {
+            const patterns = [
+                // Plain: client_id:"<id>" or client_id:'<id>'
+                /client_id:["']([a-zA-Z0-9]{20,64})["']/g,
+                // Concatenated: client_id:"ab"+"cd"... (common obfuscation)
+                /client_id:["']([a-zA-Z0-9]{4,64}(?:["']\s*\+\s*["'][a-zA-Z0-9]{4,64})+["'])/g,
+                // Assignment form: client_id="<id>"
+                /client_id\s*=\s*["']([a-zA-Z0-9]{20,64})["']/g,
+                // camelCase variant used in newer bundles
+                /clientId:["']([a-zA-Z0-9]{20,64})["']/g,
+            ];
+            for (const re of patterns) {
+                for (const m of text.matchAll(re)) {
+                    const joined = m[1].replace(/[^a-zA-Z0-9]/g, '');
+                    if (/^[a-zA-Z0-9]{20,64}$/.test(joined)) ids.add(joined);
                 }
-            } catch {}
+            }
+        };
+
+        const candidateIds = new Set();
+        let scriptUrls = [];
+
+        // 1. Fetch the SoundCloud home page through the local proxy first, then CORS proxies
+        for (const proxyUrl of getProxyUrls('https://soundcloud.com')) {
+            const html = await fetchText(proxyUrl);
+            if (!html) continue;
+            collectCandidateIds(html, candidateIds);
+            const matches = [...html.matchAll(/src="(https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js)"/g)];
+            scriptUrls = scriptUrls.concat(matches.map((m) => m[1]));
+            if (scriptUrls.length) break;
         }
+
+        // 2. Fetch all asset scripts (deduped), stop once enough candidates are found
+        const seen = new Set();
+        for (const scriptUrl of scriptUrls) {
+            if (seen.has(scriptUrl) || candidateIds.size > 10) continue;
+            seen.add(scriptUrl);
+            for (const scriptProxyUrl of getProxyUrls(scriptUrl)) {
+                const text = await fetchText(scriptProxyUrl);
+                if (!text) continue;
+                collectCandidateIds(text, candidateIds);
+                if (candidateIds.size > 10) break;
+            }
+        }
+
+        // 3. Verify each candidate against the SoundCloud API
+        for (const candidateId of candidateIds) {
+            if (REVOKED_CLIENT_IDS.has(candidateId) || candidateId === this.clientId) continue;
+            const apiBase = this.getApiBase();
+            let testRes;
+            try {
+                testRes = await fetch(`${apiBase}/search/tracks?q=test&limit=1&client_id=${candidateId}`);
+            } catch {}
+            if (!testRes || !testRes.ok) {
+                try {
+                    testRes = await fetch(`${FALLBACK_SC_API_BASE}/search/tracks?q=test&limit=1&client_id=${candidateId}`);
+                } catch {}
+            }
+            if (testRes && testRes.ok) {
+                console.info('Successfully extracted and verified fresh SoundCloud client_id:', candidateId);
+                this.clientId = candidateId;
+                try {
+                    soundcloudSettings.setClientId(candidateId);
+                } catch {}
+                return candidateId;
+            }
+        }
+
         console.warn('Failed to extract fresh SoundCloud client_id via proxies.');
         return null;
     }
@@ -195,9 +233,8 @@ export class SoundCloudAPI {
 
             if ((response.status === 401 || response.status === 403 || response.status === 429) && retries > 0) {
                 console.warn(`SoundCloud client ID ${response.status}, rotating client ID...`);
-                if (retries === 1) {
-                    await this.extractFreshClientId();
-                } else {
+                const fresh = await this.extractFreshClientId();
+                if (!fresh) {
                     this.rotateClientId();
                 }
                 return this.fetchWithRetry(endpoint, options, retries - 1);
