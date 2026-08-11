@@ -1970,7 +1970,6 @@ export class Player {
             }
 
             console.error(`Could not play track: ${trackTitle}`, error);
-<<<<<<< HEAD
             if (track && (track.provider === "soundcloud" || track.isSoundCloud || String(track.id).startsWith("sc_"))) {
                 import("./soundcloud-api.js").then((m) => {
                     if (m.notifySoundCloudSourceMissing) m.notifySoundCloudSourceMissing();
@@ -3592,5 +3591,6 @@ export class Player {
         updateBtn(timerBtnDesktop);
     }
 }
+
 
 
