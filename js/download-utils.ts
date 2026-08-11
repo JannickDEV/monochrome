@@ -11,7 +11,7 @@ import {
 } from './ffmpegFormats';
 import { ffmpegInfo, ffmpegNewContainer, ffmpeg } from './ffmpeg';
 
-export function triggerDownload(blob: Blob, filename: string): void {
+export async function triggerDownload(blob: Blob, filename: string): Promise<void> {
     const dl = (
         window as unknown as { AndroidDownload?: { saveDownload: (b64: string, n: string, m: string) => void } }
     ).AndroidDownload;
@@ -25,6 +25,18 @@ export function triggerDownload(blob: Blob, filename: string): void {
         };
         r.readAsDataURL(blob);
         return;
+    }
+
+    // Mobile browsers don't reliably honor anchor downloads with blob URLs,
+    // so offer the file through the Web Share API when available.
+    const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
+    if (navigator.share && navigator.canShare?.({ files: [file] })) {
+        try {
+            await navigator.share({ files: [file] });
+            return;
+        } catch {
+            // Share cancelled/unavailable - fall through to anchor download
+        }
     }
 
     const url = URL.createObjectURL(blob);

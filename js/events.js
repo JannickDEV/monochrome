@@ -915,6 +915,36 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
                         clearWaveformGeometry(progressBar, playerControls);
                     }
                 }
+
+                if (waveData?.isFallback) {
+                    const streamUrl = player.currentStreamInfo?.url || null;
+                    if (streamUrl && player.currentTrack?.id === targetTrackId) {
+                        void waveformGenerator
+                            .generateWaveformFromAudioUrl(streamUrl, targetTrackId)
+                            .then((realWaveform) => {
+                                if (!realWaveform || player.currentTrack?.id !== targetTrackId) return;
+                                if (realWaveform.samples?.length) {
+                                    player.currentSilenceBoundaries = waveformGenerator.getSilenceBoundaries(
+                                        realWaveform.samples,
+                                        realWaveform.durationSeconds ||
+                                            player.currentTrack.duration ||
+                                            player.activeElement?.duration ||
+                                            0,
+                                        5,
+                                        crossfadeSettings.getDuration()
+                                    );
+                                }
+                                if (
+                                    showWaveform &&
+                                    applyWaveformImage(progressBar, realWaveform.pngUrl, targetTrackId)
+                                ) {
+                                    progressBar.classList.add('waveform-loaded');
+                                    if (playerControls) playerControls.classList.add('waveform-loaded');
+                                }
+                            })
+                            .catch(() => {});
+                    }
+                }
             } catch (e) {
                 console.error('Failed to load waveform:', e);
             }

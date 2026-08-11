@@ -1,9 +1,13 @@
 // js/waveform.js
 
+import { getProxyUrl } from './proxy-utils.js';
+
 export class WaveformGenerator {
     constructor() {
         this.cache = new Map();
         this.sampleCache = new Map();
+        this.pendingAudioWaveforms = new Map();
+        this.failedAudioWaveforms = new Set();
     }
 
     generateWaveformPngFromSamples(samples, targetWidth = 1000, targetHeight = 32) {
@@ -93,6 +97,7 @@ export class WaveformGenerator {
             jsonUrl: null,
             samples,
             durationSeconds: null,
+            isFallback: true,
         };
     }
 
@@ -301,24 +306,77 @@ export class WaveformGenerator {
     }
 
     async getWaveform(url, trackId) {
-        if (this.cache.has(trackId)) {
-            return this.cache.get(trackId);
+        const cacheKey = trackId ? `${trackId}_${url}` : url;
+        if (this.cache.has(cacheKey)) {
+            return this.cache.get(cacheKey);
+        }
+        if (trackId && this.failedAudioWaveforms.has(trackId)) {
+            return null;
         }
 
         try {
             const audioContext = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 1, 44100);
-            const response = await fetch(url);
+            const response = await fetch(getProxyUrl(url));
+            if (!response.ok) {
+                throw new Error(`Waveform fetch failed: HTTP ${response.status}`);
+            }
             const arrayBuffer = await response.arrayBuffer();
             const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
             const peaks = this.extractPeaks(audioBuffer);
             const result = { peaks, duration: audioBuffer.duration };
-            this.cache.set(trackId, result);
+            this.cache.set(cacheKey, result);
             return result;
         } catch (error) {
-            console.error('Waveform generation failed:', error);
+            if (trackId) {
+                this.failedAudioWaveforms.add(trackId);
+            }
+            console.warn('Waveform generation failed:', error);
             return null;
         }
+    }
+
+    async generateWaveformFromAudioUrl(url, trackId, targetWidth = 1000, targetHeight = 32) {
+        if (!url) return null;
+        if (trackId && this.pendingAudioWaveforms.has(trackId)) {
+            return this.pendingAudioWaveforms.get(trackId);
+        }
+
+        const pending = (async () => {
+            try {
+                const decoded = await this.getWaveform(url, trackId);
+                if (!decoded?.peaks) return null;
+
+                const samples = new Array(decoded.peaks.length);
+                for (let i = 0; i < decoded.peaks.length; i++) {
+                    samples[i] = Math.max(3, Math.round(decoded.peaks[i] * 255));
+                }
+                const pngUrl = this.generateWaveformPngFromSamples(samples, targetWidth, targetHeight);
+                const result = {
+                    pngUrl,
+                    jsonUrl: null,
+                    samples,
+                    durationSeconds: decoded.duration || null,
+                    isFallback: false,
+                };
+                if (trackId) {
+                    this.sampleCache.set(trackId, result);
+                }
+                return result;
+            } catch (error) {
+                console.warn('Failed to generate waveform from audio:', error);
+                return null;
+            } finally {
+                if (trackId) {
+                    this.pendingAudioWaveforms.delete(trackId);
+                }
+            }
+        })();
+
+        if (trackId) {
+            this.pendingAudioWaveforms.set(trackId, pending);
+        }
+        return pending;
     }
 
     extractPeaks(audioBuffer) {
