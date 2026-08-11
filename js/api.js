@@ -1,4 +1,4 @@
-﻿//js/api.js
+//js/api.js
 import {
     RATE_LIMIT_ERROR_MESSAGE,
     deriveTrackQuality,
@@ -29,12 +29,8 @@ import { DownloadProgress } from './progressEvents.js';
 import { resolveDownloadTotalBytes } from './downloadProgressUtils.js';
 import { readableStreamIterator } from './readableStreamIterator.js';
 import { HiFiClient, TidalResponse } from './HiFi.ts';
-<<<<<<< HEAD
-import { QobuzClient, QobuzProvider, TidalProvider, FallbackProvider } from './services/index.js';
-import { canUseNativeAmazonCenc, getAmazonDecrypterCodec } from './platform-detection.js';
-=======
-import { canUseNativeAmazonCenc, getAmazonDecrypterCodec, canBrowserStreamAtmosQuality } from './platform-detection.js';
->>>>>>> upstream/main
+import { QobuzClient, QobuzProvider, TidalProvider, FallbackProvider } from "./services/index.js";
+import { canUseNativeAmazonCenc, getAmazonDecrypterCodec, canBrowserStreamAtmosQuality } from "./platform-detection.js";
 import {
     TrackAlbum,
     EnrichedAlbum,
@@ -2861,7 +2857,6 @@ export class LosslessAPI {
         }
     }
 
-<<<<<<< HEAD
     async getStreamUrl(id, quality = 'LOSSLESS', options = {}) {
         if (String(id).startsWith('sc_')) {
             const { soundCloudAPI } = await import('./soundcloud-api.js');
@@ -2870,19 +2865,7 @@ export class LosslessAPI {
         if (devModeSettings.isEnabled() && !options._fromProvider) {
             return await this.getFallbackProvider(true).getStreamUrl(id, quality);
         }
-=======
-    async getStreamUrl(id, quality = 'LOSSLESS') {
-        quality = normalizeQualityToken(quality) || quality || 'LOSSLESS';
-        if (isAtmosQuality(quality) && !canBrowserStreamAtmosQuality(quality)) {
-            const codecName = isAc4AtmosQuality(quality) ? 'AC-4' : 'E-AC-3';
-            const error = new Error(
-                `${codecName} streaming is not supported by this browser. Choose another playable quality to stream; ${codecName} remains available for downloads.`
-            );
-            error.code = UNSUPPORTED_PLAYBACK_CODEC_CODE;
-            throw error;
-        }
 
->>>>>>> upstream/main
         const cacheKey = `stream_info_${id}_${quality}`;
 
         if (this.streamCache.has(cacheKey)) {
@@ -3640,3 +3623,4 @@ export class LosslessAPI {
         };
     }
 }
+
