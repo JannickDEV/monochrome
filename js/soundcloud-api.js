@@ -7,6 +7,7 @@ const FALLBACK_SC_API_BASE = 'https://api-v2.soundcloud.com';
 
 // Known working public client IDs as immediate fallback
 const FALLBACK_CLIENT_IDS = [
+    'pJ6Fj6roW2KRzWAOwGj6kkQ8VRBJjyBD',
     '6bs1QjDBWrmh7FpcKrIDvzodJ2ZZpRwe',
     'd3d2c6e6d11b31542f7c006b52a1c22b',
 ];
