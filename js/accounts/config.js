@@ -1,22 +1,23 @@
 // js/accounts/config.js
-import PocketBase from 'pocketbase';
-
-const DEFAULT_POCKETBASE_URL = 'https://pb-data.bitperfect.dedyn.io';
+import { createAuthClient } from 'better-auth/client';
 
 const getBaseURL = () => {
-    return (
-        window.__POCKETBASE_URL__ ||
-        localStorage.getItem('monochrome-pocketbase-url') ||
-        localStorage.getItem('monochrome-auth-url') ||
-        DEFAULT_POCKETBASE_URL
-    );
+    const local = localStorage.getItem('monochrome-auth-url');
+    if (local) return local;
+
+    if (window.__AUTH_URL__) return window.__AUTH_URL__;
+
+    const hostname = window.location.hostname;
+    if (hostname.endsWith('monochrome.tf') || hostname === 'monochrome.tf') {
+        return 'https://auth.monochrome.tf';
+    }
+    return 'https://auth.samidy.com';
 };
 
 export const AUTH_BASE_URL = getBaseURL();
-export const POCKETBASE_URL = AUTH_BASE_URL;
 
-console.log('[PocketBase Config] Using URL:', POCKETBASE_URL);
+export const authClient = createAuthClient({
+    baseURL: AUTH_BASE_URL,
+});
 
-export const pb = new PocketBase(POCKETBASE_URL);
-pb.autoCancellation(false);
-
+export { authClient as auth };

@@ -142,6 +142,8 @@
                 }
             })();
         </script>
+        <script type="module" src="/js/discord-presence-bridge.js"></script>
+        <script type="module" src="/js/app.js"></script>
         <link rel="stylesheet" href="/styles.css" />
     </head>
 
@@ -401,6 +403,7 @@
                                     </button>
                                     <div id="fs-volume-bar" class="fs-volume-bar">
                                         <div id="fs-volume-fill" class="fs-volume-fill"></div>
+                                        <span id="fs-volume-tooltip" class="volume-tooltip"></span>
                                     </div>
                                 </div>
                             </div>
@@ -1269,7 +1272,7 @@
                     </button>
                 </div>
                 <p style="font-size: 0.9rem; color: var(--muted-foreground); margin-bottom: 1rem">
-                    Configure custom PocketBase instance. Leave empty to use defaults.
+                    Configure custom PocketBase and Appwrite instances. Leave empty to use defaults.
                     <br />
                     A Guide To Set This Up Can Be Found
                     <a
@@ -1280,7 +1283,25 @@
                 </p>
                 <div style="margin-bottom: 1rem">
                     <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem">PocketBase URL</label>
-                    <input type="url" id="custom-pb-url" class="template-input" placeholder="https://pb-data.bitperfect.dedyn.io" />
+                    <input type="url" id="custom-pb-url" class="template-input" placeholder="https://data.samidy.xyz" />
+                </div>
+                <div style="margin-bottom: 1rem">
+                    <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem">Appwrite Endpoint</label>
+                    <input
+                        type="url"
+                        id="custom-appwrite-endpoint"
+                        class="template-input"
+                        placeholder="https://auth.samidy.com/v1"
+                    />
+                </div>
+                <div style="margin-bottom: 1rem">
+                    <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem">Appwrite Project ID</label>
+                    <input
+                        type="text"
+                        id="custom-appwrite-project"
+                        class="template-input"
+                        placeholder="auth-for-monochrome"
+                    />
                 </div>
                 <div class="modal-actions">
                     <button id="custom-db-cancel" class="btn-secondary">Cancel</button>
@@ -1789,8 +1810,8 @@
                                     </li>
                                     <li class="nav-item" id="sidebar-nav-mobile">
                                         <a href="/mobile">
-                                            <use svg="!lucide/smartphone.svg" size="24" />
-                                            <span>Mobile</span>
+                                            <use svg="!lucide/download.svg" size="24" />
+                                            <span>Download</span>
                                         </a>
                                     </li>
                                     <li class="nav-item" id="sidebar-nav-discordbtn">
@@ -2176,8 +2197,8 @@
                         <button class="search-tab" data-tab="albums">Albums</button>
                         <button class="search-tab" data-tab="artists">Artists</button>
                         <button class="search-tab" data-tab="playlists">Playlists</button>
+                        <button class="search-tab" data-tab="community-playlists">YT Music Playlists (BETA)</button>
                         <button class="search-tab" data-tab="podcasts">Podcasts</button>
-                        <button class="search-tab" data-tab="soundcloud">SoundCloud</button>
                     </div>
                     <div class="search-tab-content active" id="search-tab-tracks">
                         <div class="track-list" id="search-tracks-container"></div>
@@ -2191,11 +2212,11 @@
                     <div class="search-tab-content" id="search-tab-playlists">
                         <div class="card-grid" id="search-playlists-container"></div>
                     </div>
+                    <div class="search-tab-content" id="search-tab-community-playlists">
+                        <div class="card-grid" id="search-community-playlists-container"></div>
+                    </div>
                     <div class="search-tab-content" id="search-tab-podcasts">
                         <div class="card-grid" id="search-podcasts-container"></div>
-                    </div>
-                    <div class="search-tab-content" id="search-tab-soundcloud">
-                        <div class="track-list" id="search-soundcloud-container"></div>
                     </div>
                 </div>
 
@@ -4195,16 +4216,44 @@
                                 <div class="setting-item">
                                     <div class="info">
                                         <span class="label">Streaming Quality</span>
-                                        <span class="description">Default playback quality for streams</span>
+                                        <span class="description" id="streaming-quality-sources"
+                                            >Default playback quality for streams</span
+                                        >
                                     </div>
                                     <select id="streaming-quality-setting">
-                                        <option value="auto">Auto (Adaptive)</option>
-                                        <option value="DOLBY_ATMOS">Dolby Atmos</option>
-                                        <option value="HI_RES_LOSSLESS">Hi-Res Lossless (24-bit)</option>
-                                        <option value="LOSSLESS">Lossless (16-bit)</option>
-                                        <option value="HIGH">AAC 320kbps</option>
-                                        <option value="LOW">AAC 96kbps</option>
+                                        <option value="auto" data-sources="Amazon and Mono">Auto (Adaptive)</option>
+                                        <option value="DOLBY_ATMOS_EAC3_HIGH" data-sources="Amazon and Tidal">
+                                            Dolby Atmos — E-AC-3 High
+                                        </option>
+                                        <option value="DOLBY_ATMOS_EAC3_LOW" data-sources="Amazon">
+                                            Dolby Atmos — E-AC-3 Low
+                                        </option>
+                                        <option value="DOLBY_ATMOS_AC4_HIGH" data-sources="Amazon">
+                                            Dolby Atmos — AC-4 High
+                                        </option>
+                                        <option value="DOLBY_ATMOS_AC4_LOW" data-sources="Amazon">
+                                            Dolby Atmos — AC-4 Low
+                                        </option>
+                                        <option value="HI_RES_LOSSLESS" data-sources="Amazon and Mono">
+                                            Hi-Res Lossless (24-bit)
+                                        </option>
+                                        <option value="LOSSLESS" data-sources="Amazon and Mono">
+                                            Lossless (16-bit)
+                                        </option>
+                                        <option value="HIGH" data-sources="Amazon">High</option>
+                                        <option value="LOW" data-sources="Amazon">Low</option>
                                     </select>
+                                </div>
+                                <div
+                                    class="setting-item codec-warning"
+                                    id="atmos-streaming-warning"
+                                    role="status"
+                                    aria-live="polite"
+                                    style="display: none"
+                                >
+                                    <div class="info setting-details">
+                                        <span class="description" id="atmos-streaming-warning-text"></span>
+                                    </div>
                                 </div>
                                 <div class="setting-item">
                                     <div class="info">
@@ -5477,14 +5526,31 @@
                                     <div class="setting-item">
                                         <div class="info">
                                             <span class="label">Download Quality</span>
-                                            <span class="description">Quality for track downloads</span>
+                                            <span class="description" id="download-quality-sources"
+                                                >Quality for track downloads</span
+                                            >
                                         </div>
                                         <select id="download-quality-setting">
-                                            <option value="DOLBY_ATMOS">Dolby Atmos</option>
-                                            <option value="HI_RES_LOSSLESS">Hi-Res Lossless (24-bit)</option>
-                                            <option value="LOSSLESS">Lossless (16-bit)</option>
-                                            <option value="HIGH">AAC 320kbps</option>
-                                            <option value="LOW">AAC 96kbps</option>
+                                            <option value="DOLBY_ATMOS_EAC3_HIGH" data-sources="Amazon and Tidal">
+                                                Dolby Atmos — E-AC-3 High
+                                            </option>
+                                            <option value="DOLBY_ATMOS_EAC3_LOW" data-sources="Amazon">
+                                                Dolby Atmos — E-AC-3 Low
+                                            </option>
+                                            <option value="DOLBY_ATMOS_AC4_HIGH" data-sources="Amazon">
+                                                Dolby Atmos — AC-4 High
+                                            </option>
+                                            <option value="DOLBY_ATMOS_AC4_LOW" data-sources="Amazon">
+                                                Dolby Atmos — AC-4 Low
+                                            </option>
+                                            <option value="HI_RES_LOSSLESS" data-sources="Amazon and Mono">
+                                                Hi-Res Lossless (24-bit)
+                                            </option>
+                                            <option value="LOSSLESS" data-sources="Amazon and Mono">
+                                                Lossless (16-bit)
+                                            </option>
+                                            <option value="HIGH" data-sources="Amazon">High</option>
+                                            <option value="LOW" data-sources="Amazon">Low</option>
                                         </select>
                                     </div>
                                     <div class="setting-item" id="hi-res-download-warning" style="display: none">
@@ -5763,15 +5829,15 @@
                                         <span class="slider"></span>
                                     </label>
                                 </div>
-                                <div class="setting-item" id="dev-mode-url-setting">
+                                <div class="setting-item" id="dev-mode-url-setting" style="display: none">
                                     <div class="info">
-                                        <span class="label">Dev Mode API URL (HiFi / Tidal)</span>
+                                        <span class="label">Dev Mode API URL</span>
                                         <span class="description">The URL of your local Tidal HiFi API instance</span>
                                     </div>
                                     <input
                                         type="text"
                                         id="dev-mode-url-input"
-                                        placeholder="https://hf-core.bitperfect.dedyn.io"
+                                        placeholder="http://127.0.0.1:8000"
                                         style="
                                             width: 220px;
                                             padding: 0.35rem 0.5rem;
@@ -5782,84 +5848,6 @@
                                             font-size: 0.8rem;
                                         "
                                     />
-                                </div>
-                                <div class="setting-item" id="dev-mode-qobuz-url-setting">
-                                    <div class="info">
-                                        <span class="label">Qobuz API URL</span>
-                                        <span class="description">The URL of your local Qobuz proxy instance</span>
-                                    </div>
-                                    <input
-                                        type="text"
-                                        id="dev-mode-qobuz-url-input"
-                                        placeholder="https://qz-api.bitperfect.dedyn.io"
-                                        style="
-                                            width: 220px;
-                                            padding: 0.35rem 0.5rem;
-                                            border: 1px solid var(--border);
-                                            border-radius: var(--radius-md);
-                                            background: var(--card);
-                                            color: var(--foreground);
-                                            font-size: 0.8rem;
-                                        "
-                                    />
-                                </div>
-                                <div class="setting-item" id="dev-mode-qobuz-userid-setting">
-                                    <div class="info">
-                                        <span class="label">Qobuz User ID</span>
-                                        <span class="description">Your Qobuz account user ID</span>
-                                    </div>
-                                    <input
-                                        type="text"
-                                        id="dev-mode-qobuz-userid-input"
-                                        placeholder="2759740"
-                                        style="
-                                            width: 220px;
-                                            padding: 0.35rem 0.5rem;
-                                            border: 1px solid var(--border);
-                                            border-radius: var(--radius-md);
-                                            background: var(--card);
-                                            color: var(--foreground);
-                                            font-size: 0.8rem;
-                                        "
-                                    />
-                                </div>
-                                <div class="setting-item" id="dev-mode-qobuz-token-setting">
-                                    <div class="info">
-                                        <span class="label">Qobuz User Auth Token</span>
-                                        <span class="description">Your Qobuz user authentication token</span>
-                                    </div>
-                                    <input
-                                        type="password"
-                                        id="dev-mode-qobuz-token-input"
-                                        placeholder="nIZdVRJBsP..."
-                                        style="
-                                            width: 220px;
-                                            padding: 0.35rem 0.5rem;
-                                            border: 1px solid var(--border);
-                                            border-radius: var(--radius-md);
-                                            background: var(--card);
-                                            color: var(--foreground);
-                                            font-size: 0.8rem;
-                                        "
-                                    />
-                                </div>
-                                <div class="setting-item" id="dev-mode-qobuz-test-setting">
-                                    <div class="info">
-                                        <span class="label">Test Qobuz Connection</span>
-                                        <span class="description">Validate credentials against the proxy server</span>
-                                    </div>
-                                    <button
-                                        id="test-qobuz-connection-btn"
-                                        style="
-                                            padding: 0.4rem 0.8rem;
-                                            border: 1px solid var(--border);
-                                            border-radius: var(--radius-md);
-                                            background: var(--primary);
-                                            color: var(--primary-foreground, #fff);
-                                            font-size: 0.8rem;
-                                            cursor: pointer;
-                                        "
-                                    >Test Connection</button>
                                 </div>
                             </div>
 
@@ -5937,33 +5925,26 @@
                             <div class="settings-group">
                                 <div class="setting-item">
                                     <div class="info">
-                                        <span class="label">SoundCloud API Base / Proxy URL</span>
-                                        <span class="description">Proxy path or URL for SoundCloud API (defaults to /sc-api)</span>
+                                        <span class="label">Deezer Fallback</span>
+                                        <span class="description"
+                                            >Last-resort source when the primary and other fallback providers fail. Tops
+                                            out at 16-bit lossless (FLAC).</span
+                                        >
                                     </div>
-                                    <input
-                                        type="text"
-                                        id="soundcloud-api-base-url"
-                                        placeholder="/sc-api (or https://api-v2.soundcloud.com)"
-                                        style="
-                                            width: 220px;
-                                            padding: 0.35rem 0.5rem;
-                                            border: 1px solid var(--border);
-                                            border-radius: var(--radius-md);
-                                            background: var(--card);
-                                            color: var(--foreground);
-                                            font-size: 0.8rem;
-                                        "
-                                    />
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="deezer-fallback-toggle" checked />
+                                        <span class="slider"></span>
+                                    </label>
                                 </div>
                                 <div class="setting-item">
                                     <div class="info">
-                                        <span class="label">SoundCloud Custom Client ID</span>
-                                        <span class="description">Optional custom 32-character Client ID for SoundCloud API</span>
+                                        <span class="label">Deezer Fallback API URL</span>
+                                        <span class="description">The Deezer fallback API endpoint</span>
                                     </div>
                                     <input
                                         type="text"
-                                        id="soundcloud-custom-client-id"
-                                        placeholder="Paste Client ID..."
+                                        id="deezer-fallback-api-base-url"
+                                        placeholder="https://dzr.tabs-vs-spaces.wtf"
                                         style="
                                             width: 220px;
                                             padding: 0.35rem 0.5rem;
@@ -6642,7 +6623,7 @@
                                 sharing with friends!
                             </p>
                             <a
-                                href="https://github.com/JannickDEV/monochrome"
+                                href="https://github.com/monochrome-music/monochrome"
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 class="btn-secondary donate-github-btn"
@@ -6653,65 +6634,148 @@
                     </div>
                 </div>
                 <div id="page-mobile" class="page">
-                    <div
-                        class="mobile-download-container"
+                    <table
                         style="
-                            text-align: center;
-                            max-width: 600px;
-                            margin: 0 auto;
-                            padding: var(--space-8) var(--space-4);
+                            left: 50%;
+                            margin: 0 0 0 50%;
+                            transform: translate(-50%, 0);
+                            width: 100%;
+                            max-width: 1500px;
                         "
                     >
-                        <h2 class="section-title" style="margin-bottom: var(--space-4)">Monochrome Mobile</h2>
-                        <p style="color: var(--muted-foreground); margin-bottom: var(--space-8)">
-                            Download the app for your device.
-                        </p>
-
-                        <div
-                            style="
-                                display: flex;
-                                flex-wrap: wrap;
-                                gap: var(--space-4);
-                                justify-content: center;
-                                margin-bottom: var(--space-8);
-                            "
-                        >
-                            <a
-                                href="https://github.com/JannickDEV/monochrome/releases/latest/download/monochrome-android.apk"
-                                class="btn-primary"
-                                style="display: inline-flex; align-items: center; gap: 8px"
-                            >
-                                <use svg="!lucide/download.svg" size="18" />
-                                Download for Android
-                            </a>
-                            <a
-                                href="#"
-                                class="btn-primary"
-                                style="display: inline-flex; align-items: center; gap: 8px; opacity: 0.7; cursor: not-allowed"
-                                onclick="event.preventDefault(); window.showNotification ? window.showNotification('iOS (IPA) version is Coming Soon!') : alert('iOS (IPA) version is Coming Soon!');"
-                            >
-                                <use svg="!lucide/clock.svg" size="18" />
-                                Download for iOS (Coming Soon)
-                            </a>
-                        </div>
-
-                        <p style="color: var(--muted-foreground); margin-bottom: var(--space-3)">
-                            The iOS app must be sideloaded when it comes out. If you need help getting started, check out this
-                            <a
-                                href="https://fmhy.net/mobile#ios-sideloading"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                style="color: var(--primary); text-decoration: underline"
-                                >iOS sideloading guide</a
-                            >.
-                        </p>
-                        <p style="color: var(--color-warning); margin: 0">
-                            We don't offer support for sideloading. Please do your own research if you run into issues.
-                        </p>
-                        <p style="color: var(--muted-foreground); margin-top: var(--space-6); margin-bottom: 0">
-                            Downloaded songs are saved to <b>Downloads/Monochrome</b> on your device.
-                        </p>
-                    </div>
+                        <tr>
+                            <td valign="top">
+                                <div
+                                    class="mobile-download-container"
+                                    style="
+                                        text-align: center;
+                                        max-width: 600px;
+                                        margin: 0 auto;
+                                        padding: var(--space-8) var(--space-4);
+                                    "
+                                >
+                                    <h2 class="section-title" style="margin-bottom: var(--space-4)">
+                                        Monochrome Mobile
+                                    </h2>
+                                    <p style="color: var(--muted-foreground); margin-bottom: var(--space-8)">
+                                        Download the app for your device.
+                                    </p>
+                                    <div
+                                        style="
+                                            display: flex;
+                                            flex-wrap: wrap;
+                                            gap: var(--space-4);
+                                            justify-content: center;
+                                            margin-bottom: var(--space-8);
+                                        "
+                                    >
+                                        <a
+                                            href="https://downloads.samidy.com/android.apk"
+                                            class="btn-primary"
+                                            style="display: inline-flex; align-items: center; gap: 8px"
+                                        >
+                                            <use svg="!lucide/download.svg" size="18" />
+                                            Download for Android
+                                        </a>
+                                        <a
+                                            href="https://downloads.samidy.com/iOS.ipa"
+                                            class="btn-primary"
+                                            style="display: inline-flex; align-items: center; gap: 8px"
+                                        >
+                                            <use svg="!lucide/download.svg" size="18" />
+                                            Download for iOS
+                                        </a>
+                                    </div>
+                                    <p style="color: var(--muted-foreground); margin-bottom: var(--space-3)">
+                                        The iOS app must be sideloaded. If you need help getting started, check out this
+                                        <a
+                                            href="https://fmhy.net/mobile#ios-sideloading"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            style="color: var(--primary); text-decoration: underline"
+                                            >iOS sideloading guide</a
+                                        >.
+                                    </p>
+                                    <p style="color: var(--color-warning); margin: 0">
+                                        We don't offer support for sideloading. Please do your own research if you run
+                                        into issues.
+                                    </p>
+                                    <p
+                                        style="
+                                            color: var(--muted-foreground);
+                                            margin-top: var(--space-6);
+                                            margin-bottom: 0;
+                                        "
+                                    >
+                                        Downloaded songs are saved to <b>Downloads/Monochrome</b> on your device.
+                                    </p>
+                                </div>
+                            </td>
+                            <td valign="top">
+                                <div
+                                    class="desktop-download-container"
+                                    style="
+                                        text-align: center;
+                                        max-width: 600px;
+                                        margin: 0 auto;
+                                        padding: var(--space-8) var(--space-4);
+                                    "
+                                >
+                                    <h2 class="section-title" style="margin-bottom: var(--space-4)">
+                                        Monochrome Desktop
+                                    </h2>
+                                    <p style="color: var(--muted-foreground); margin-bottom: var(--space-8)">
+                                        Download the app for your desktop device.
+                                    </p>
+                                    <div
+                                        style="
+                                            display: flex;
+                                            flex-wrap: wrap;
+                                            gap: var(--space-4);
+                                            justify-content: center;
+                                            margin-bottom: var(--space-8);
+                                        "
+                                    >
+                                        <a
+                                            href="https://github.com/monochrome-music/desktop-app/releases"
+                                            class="btn-primary"
+                                            style="display: inline-flex; align-items: center; gap: 8px"
+                                        >
+                                            <use svg="!lucide/download.svg" size="18" />
+                                            Download from Github
+                                        </a>
+                                    </div>
+                                    <p style="color: var(--muted-foreground); margin-bottom: var(--space-3)">
+                                        Please note that this application is not maintained by us and is a third-party
+                                        project. Please be aware that we cannot be held responsible for any issues that
+                                        may arise from using this application.
+                                        <b>Use at your own risk.</b>
+                                    </p>
+                                    <p style="color: var(--muted-foreground)">
+                                        If you need any help with the desktop app, please reach out to the developer of
+                                        the application. You can find their contact information on the GitHub page
+                                        linked above or contact them directly on discord in our server's
+                                        <a
+                                            href="https://discord.com/channels/1457628745589456910/1457633716049543208"
+                                            style="color: var(--primary); text-decoration: underline"
+                                            ><i>Help Channel</i></a
+                                        >.
+                                    </p>
+                                    <p
+                                        style="
+                                            color: var(--color-warning);
+                                            margin: 0;
+                                            margin-top: var(--space-6);
+                                            margin-bottom: 0;
+                                        "
+                                    >
+                                        This application is currently in beta and may have bugs or issues. Please report
+                                        any problems you encounter to the developer so they can be addressed.
+                                    </p>
+                                </div>
+                            </td>
+                        </tr>
+                    </table>
                 </div>
                 <div id="page-reset-password" class="page">
                     <div
@@ -6929,6 +6993,7 @@
                         <button id="volume-btn" title="Mute"></button>
                         <div id="volume-bar" class="volume-bar">
                             <div id="volume-fill" class="volume-fill"></div>
+                            <span id="volume-tooltip" class="volume-tooltip"></span>
                         </div>
                         <button id="sleep-timer-btn-desktop" title="Sleep Timer">
                             <use svg="!lucide/clock.svg" size="20" />
@@ -6937,7 +7002,5 @@
                 </div>
             </footer>
         </div>
-        <script type="module" src="/js/discord-presence-bridge.js"></script>
-        <script type="module" src="/js/app.js"></script>
     </body>
 </html>
