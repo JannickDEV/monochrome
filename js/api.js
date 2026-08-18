@@ -12,12 +12,7 @@ import {
     getTrackCoverId,
     getCoverBlob,
 } from './utils.js';
-import {
-    preferDolbyAtmosSettings,
-    trackDateSettings,
-    devModeSettings,
-    unifiedPlaybackSettings,
-} from './storage.js';
+import { preferDolbyAtmosSettings, trackDateSettings, devModeSettings, unifiedPlaybackSettings } from './storage.js';
 import { APICache } from './cache.js';
 import { DashDownloader } from './dash-downloader.ts';
 import { HlsDownloader } from './hls-downloader.js';
@@ -29,8 +24,8 @@ import { DownloadProgress } from './progressEvents.js';
 import { resolveDownloadTotalBytes } from './downloadProgressUtils.js';
 import { readableStreamIterator } from './readableStreamIterator.js';
 import { HiFiClient, TidalResponse } from './HiFi.ts';
-import { QobuzClient, QobuzProvider, TidalProvider, FallbackProvider } from "./services/index.js";
-import { canUseNativeAmazonCenc, getAmazonDecrypterCodec, canBrowserStreamAtmosQuality } from "./platform-detection.js";
+import { QobuzClient, QobuzProvider, TidalProvider, FallbackProvider } from './services/index.js';
+import { canUseNativeAmazonCenc, getAmazonDecrypterCodec, canBrowserStreamAtmosQuality } from './platform-detection.js';
 import {
     TrackAlbum,
     EnrichedAlbum,
@@ -91,6 +86,8 @@ export class LosslessAPI {
 
     getFallbackProvider(isStreaming = false) {
         const qobuzUrl = devModeSettings.getQobuzUrl();
+        const qobuzAppId = devModeSettings.getQobuzAppId();
+        const qobuzAppSecret = devModeSettings.getQobuzAppSecret();
         const qobuzToken = devModeSettings.getQobuzToken();
         const qobuzUserId = devModeSettings.getQobuzUserId();
         const tidalUrl = devModeSettings.getUrl();
@@ -99,11 +96,15 @@ export class LosslessAPI {
             !this._metadataProvider ||
             !this._streamingProvider ||
             this._lastQobuzUrl !== qobuzUrl ||
+            this._lastQobuzAppId !== qobuzAppId ||
+            this._lastQobuzAppSecret !== qobuzAppSecret ||
             this._lastQobuzToken !== qobuzToken ||
             this._lastQobuzUserId !== qobuzUserId ||
             this._lastTidalUrl !== tidalUrl
         ) {
             this._lastQobuzUrl = qobuzUrl;
+            this._lastQobuzAppId = qobuzAppId;
+            this._lastQobuzAppSecret = qobuzAppSecret;
             this._lastQobuzToken = qobuzToken;
             this._lastQobuzUserId = qobuzUserId;
             this._lastTidalUrl = tidalUrl;
@@ -1244,7 +1245,7 @@ export class LosslessAPI {
         try {
             const searchUrl = `https://musicbrainz.org/ws/2/artist/?query=artist:${encodeURIComponent(artistName)}&fmt=json`;
             const searchRes = await fetch(searchUrl, {
-                headers: { 'User-Agent': 'Monochrome/2.0.0 ( https://github.com/monochrome-music/monochrome )' },
+                headers: { 'User-Agent': 'Monochrome/2.0.0 ( https://github.com/JannickDEV/monochrome )' },
             });
             const searchData = await searchRes.json();
 
@@ -1255,7 +1256,7 @@ export class LosslessAPI {
 
             const detailsUrl = `https://musicbrainz.org/ws/2/artist/${mbid}?inc=url-rels&fmt=json`;
             const detailsRes = await fetch(detailsUrl, {
-                headers: { 'User-Agent': 'Monochrome/2.0.0 ( https://github.com/monochrome-music/monochrome )' },
+                headers: { 'User-Agent': 'Monochrome/2.0.0 ( https://github.com/JannickDEV/monochrome )' },
             });
             const detailsData = await detailsRes.json();
 
@@ -3089,7 +3090,37 @@ export class LosslessAPI {
         if (isVideo) {
             lookup = await this.getVideo(id);
         } else if (devModeSettings.isEnabled()) {
-            lookup = new PlaybackInfo(await this.getTrackFromDevMode(id, cleanQuality));
+            let fallbackStream = null;
+            try {
+                const fallbackProvider = this.getFallbackProvider(true);
+                if (fallbackProvider) {
+                    if (track?.isrc) fallbackProvider.isrcCache?.set(String(id), track.isrc);
+                    if (track) fallbackProvider.metaCache?.set(String(id), track);
+                    fallbackStream = await fallbackProvider.getTrackForDownload(id, cleanQuality);
+                }
+            } catch (err) {
+                console.debug(
+                    '[DevMode Download] Fallback download lookup failed, falling back to TIDAL Dev Mode:',
+                    err
+                );
+            }
+
+            if (fallbackStream && fallbackStream.url && fallbackStream.provider === 'qobuz') {
+                externalStreamUrl = fallbackStream.url;
+                externalProvider = 'qobuz';
+                externalSourceUrl = fallbackStream.url;
+                lookup = {
+                    info: {
+                        audioQuality: fallbackStream.quality || cleanQuality,
+                        trackReplayGain: fallbackStream.rgInfo?.trackReplayGain ?? 0,
+                        trackPeakAmplitude: fallbackStream.rgInfo?.trackPeakAmplitude ?? 1,
+                        albumReplayGain: fallbackStream.rgInfo?.albumReplayGain ?? 0,
+                        albumPeakAmplitude: fallbackStream.rgInfo?.albumPeakAmplitude ?? 1,
+                    },
+                };
+            } else {
+                lookup = new PlaybackInfo(await this.getTrackFromDevMode(id, cleanQuality));
+            }
         } else {
             let unifiedResult = null;
             let deezerResult = null;
@@ -3636,4 +3667,3 @@ export class LosslessAPI {
         };
     }
 }
-

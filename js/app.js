@@ -531,14 +531,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Populate commit info
     {
-        const repo = 'https://github.com/monochrome-music/monochrome';
+        const repo = 'https://github.com/JannickDEV/monochrome';
         // eslint-disable-next-line no-undef
         const hash = typeof __COMMIT_HASH__ !== 'undefined' ? __COMMIT_HASH__ : 'dev';
         const commitLink =
             hash !== 'dev' && hash !== 'unknown'
                 ? `<a href="${repo}/commit/${hash}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">${hash}</a>`
                 : hash;
-        const repoLink = `<a href="${repo}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">monochrome-music/monochrome</a>`;
+        const repoLink = `<a href="${repo}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">JannickDEV/monochrome</a>`;
         const html = `Commit ${commitLink} · ${repoLink}`;
         const aboutEl = document.getElementById('about-commit-info');
         const settingsEl = document.getElementById('settings-commit-info');
@@ -3014,7 +3014,14 @@ function escapeHtml(text) {
 
 function trackNeedsEnrichment(track) {
     if (!track || !track.id) return false;
-    if (track.isPodcast || track.isTracker || track.isSoundCloud || track.provider === 'soundcloud' || (track.id && String(track.id).startsWith('sc_'))) return false;
+    if (
+        track.isPodcast ||
+        track.isTracker ||
+        track.isSoundCloud ||
+        track.provider === 'soundcloud' ||
+        (track.id && String(track.id).startsWith('sc_'))
+    )
+        return false;
     return !track.isrc || !track.album?.title || !track.album?.artist?.name || track.trackNumber == null;
 }
 

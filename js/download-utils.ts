@@ -33,18 +33,6 @@ export async function triggerDownload(blob: Blob, filename: string): Promise<voi
         return;
     }
 
-    // Mobile browsers don't reliably honor anchor downloads with blob URLs,
-    // so offer the file through the Web Share API when available.
-    const file = new File([blob], filename, { type: blob.type || 'application/octet-stream' });
-    if (navigator.share && navigator.canShare?.({ files: [file] })) {
-        try {
-            await navigator.share({ files: [file] });
-            return;
-        } catch {
-            // Share cancelled/unavailable - fall through to anchor download
-        }
-    }
-
     downloadBlobViaAnchor(blob, filename);
 }
 

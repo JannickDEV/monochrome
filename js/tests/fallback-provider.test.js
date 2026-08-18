@@ -12,6 +12,7 @@ describe('FallbackProvider', () => {
             id: 'qobuz',
             name: 'Qobuz',
             search: vi.fn(),
+            searchTracks: vi.fn().mockResolvedValue({ items: [{ id: 'q:123', isrc: 'US123' }] }),
             getTrack: vi.fn(),
             getStreamUrl: vi.fn(),
             getCoverUrl: vi.fn((id, size) => `https://qobuz.img/${id}/${size}`),
@@ -20,6 +21,7 @@ describe('FallbackProvider', () => {
             id: 'tidal',
             name: 'TIDAL',
             search: vi.fn(),
+            searchTracks: vi.fn().mockResolvedValue({ items: [{ id: 't:123', isrc: 'US123' }] }),
             getTrack: vi.fn(),
             getStreamUrl: vi.fn(),
             getCoverUrl: vi.fn((id, size) => `https://tidal.img/${id}/${size}`),
@@ -42,6 +44,7 @@ describe('FallbackProvider', () => {
     });
 
     test('falls back to second provider when first provider throws an error', async () => {
+        fallback.isrcCache.set('q:123', 'US123');
         qobuzMock.getStreamUrl.mockRejectedValueOnce(new Error('Stream unavailable'));
         tidalMock.getStreamUrl.mockResolvedValueOnce({
             url: 'https://tidal.stream/1.flac',
@@ -49,7 +52,7 @@ describe('FallbackProvider', () => {
             quality: 'LOSSLESS',
         });
 
-        const res = await fallback.getStreamUrl('123', 'LOSSLESS');
+        const res = await fallback.getStreamUrl('q:123', 'LOSSLESS');
 
         expect(res.url).toBe('https://tidal.stream/1.flac');
         expect(qobuzMock.getStreamUrl).toHaveBeenCalledTimes(1);

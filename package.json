@@ -5,7 +5,7 @@
     "workspaces": [
         "bot"
     ],
-    "description": "[<img src=\"https://github.com/monochrome-music/monochrome/blob/main/assets/512.png?raw=true\" alt=\"Monochrome Logo\">](https://monochrome.tf)",
+    "description": "[<img src=\"https://github.com/JannickDEV/monochrome/blob/main/assets/512.png?raw=true\" alt=\"Monochrome Logo\">](https://monochrome.tf)",
     "scripts": {
         "dev": "vite",
         "test": "vitest run --config=vite.config.ts",
@@ -26,7 +26,7 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/monochrome-music/monochrome.git"
+        "url": "git+https://github.com/JannickDEV/monochrome.git"
     },
     "keywords": [
         "music"
@@ -34,9 +34,9 @@
     "author": "",
     "license": "Apache-2.0",
     "bugs": {
-        "url": "https://github.com/monochrome-music/monochrome/issues"
+        "url": "https://github.com/JannickDEV/monochrome/issues"
     },
-    "homepage": "https://github.com/monochrome-music/monochrome#readme",
+    "homepage": "https://github.com/JannickDEV/monochrome#readme",
     "devDependencies": {
         "@capacitor/assets": "^3.0.5",
         "@capacitor/cli": "^8.2.0",

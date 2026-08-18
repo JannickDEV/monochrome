@@ -44,13 +44,15 @@ export class QobuzClient {
     private queue: RequestQueue;
     private customUrl?: string;
     private customAppId?: string;
+    private customAppSecret?: string;
     private customToken?: string;
     private customUserId?: string;
 
-    constructor(options: { url?: string; appId?: string; token?: string; userId?: string; maxConcurrency?: number } = {}) {
+    constructor(options: { url?: string; appId?: string; appSecret?: string; token?: string; userId?: string; maxConcurrency?: number } = {}) {
         this.queue = new RequestQueue(options.maxConcurrency ?? 2);
         this.customUrl = options.url;
         this.customAppId = options.appId;
+        this.customAppSecret = options.appSecret;
         this.customToken = options.token;
         this.customUserId = options.userId;
     }
@@ -67,6 +69,14 @@ export class QobuzClient {
         if (this.customAppId) return this.customAppId;
         if (typeof devModeSettings !== 'undefined' && typeof devModeSettings.getQobuzAppId === 'function') {
             return devModeSettings.getQobuzAppId() || '';
+        }
+        return '';
+    }
+
+    getAppSecret(): string {
+        if (this.customAppSecret) return this.customAppSecret;
+        if (typeof devModeSettings !== 'undefined' && typeof devModeSettings.getQobuzAppSecret === 'function') {
+            return devModeSettings.getQobuzAppSecret() || '';
         }
         return '';
     }
@@ -106,6 +116,7 @@ export class QobuzClient {
         return this.queue.add(async () => {
             const baseUrl = this.getBaseUrl();
             const appId = this.getAppId();
+            const appSecret = this.getAppSecret();
             const token = this.getToken();
             const userId = this.getUserId();
 
@@ -124,6 +135,7 @@ export class QobuzClient {
                 'Accept': 'application/json',
             };
             if (appId) headers['X-App-Id'] = appId;
+            if (appSecret) headers['X-App-Secret'] = appSecret;
             if (token) headers['X-User-Auth-Token'] = token;
             if (userId) headers['X-User-Id'] = userId;
 

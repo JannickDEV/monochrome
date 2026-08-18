@@ -438,7 +438,7 @@ export class FallbackProvider implements Provider {
                 }
                 return null;
             },
-            res => !res
+            res => !res || !res.url
         );
     }
 

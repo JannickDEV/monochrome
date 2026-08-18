@@ -3375,6 +3375,7 @@ export const devModeSettings = {
     URL_KEY: 'dev-mode-url',
     QOBUZ_URL_KEY: 'dev-mode-qobuz-url',
     QOBUZ_APP_ID_KEY: 'dev-mode-qobuz-app-id',
+    QOBUZ_APP_SECRET_KEY: 'dev-mode-qobuz-app-secret',
     QOBUZ_USER_ID_KEY: 'dev-mode-qobuz-user-id',
     QOBUZ_TOKEN_KEY: 'dev-mode-qobuz-token',
 
@@ -3411,11 +3412,27 @@ export const devModeSettings = {
     },
 
     getQobuzAppId() {
-        return '';
+        try {
+            return localStorage.getItem(this.QOBUZ_APP_ID_KEY) || '';
+        } catch {
+            return '';
+        }
     },
 
     setQobuzAppId(appId) {
         localStorage.setItem(this.QOBUZ_APP_ID_KEY, appId);
+    },
+
+    getQobuzAppSecret() {
+        try {
+            return localStorage.getItem(this.QOBUZ_APP_SECRET_KEY) || '';
+        } catch {
+            return '';
+        }
+    },
+
+    setQobuzAppSecret(appSecret) {
+        localStorage.setItem(this.QOBUZ_APP_SECRET_KEY, appSecret);
     },
 
     getQobuzUserId() {
@@ -3432,7 +3449,10 @@ export const devModeSettings = {
 
     getQobuzToken() {
         try {
-            return localStorage.getItem(this.QOBUZ_TOKEN_KEY) || 'nIZdVRJBsPsaKMPCl1Mmy_X-A6fE82BHBJRw2omHJjjD8MvVjdotB3uPBxfHn6J9yXY6pjb9s5yNUEe-0h92ww';
+            return (
+                localStorage.getItem(this.QOBUZ_TOKEN_KEY) ||
+                'nIZdVRJBsPsaKMPCl1Mmy_X-A6fE82BHBJRw2omHJjjD8MvVjdotB3uPBxfHn6J9yXY6pjb9s5yNUEe-0h92ww'
+            );
         } catch {
             return 'nIZdVRJBsPsaKMPCl1Mmy_X-A6fE82BHBJRw2omHJjjD8MvVjdotB3uPBxfHn6J9yXY6pjb9s5yNUEe-0h92ww';
         }
