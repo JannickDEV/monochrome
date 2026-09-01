@@ -3437,9 +3437,9 @@ export const devModeSettings = {
 
     getQobuzUserId() {
         try {
-            return localStorage.getItem(this.QOBUZ_USER_ID_KEY) || '2759740';
+            return localStorage.getItem(this.QOBUZ_USER_ID_KEY) || '';
         } catch {
-            return '2759740';
+            return '';
         }
     },
 
@@ -3451,10 +3451,10 @@ export const devModeSettings = {
         try {
             return (
                 localStorage.getItem(this.QOBUZ_TOKEN_KEY) ||
-                'nIZdVRJBsPsaKMPCl1Mmy_X-A6fE82BHBJRw2omHJjjD8MvVjdotB3uPBxfHn6J9yXY6pjb9s5yNUEe-0h92ww'
+                ''
             );
         } catch {
-            return 'nIZdVRJBsPsaKMPCl1Mmy_X-A6fE82BHBJRw2omHJjjD8MvVjdotB3uPBxfHn6J9yXY6pjb9s5yNUEe-0h92ww';
+            return '';
         }
     },
 
