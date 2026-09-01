@@ -288,7 +288,9 @@ export function normalizeAppleTrack(resource, type = 'track') {
     const artist = appleArtist(attributes.artistName, attributes.artistUrl);
     const cover = artworkUrl(attributes.artwork);
     const albumResource = resource?.relationships?.albums?.data?.[0];
+    const albumAttributes = albumResource?.attributes || {};
     const albumId = albumResource?.id || idFromAppleUrl(attributes.url, 'album');
+    const genres = (attributes.genreNames || albumAttributes.genreNames || []).filter((g) => g && g !== 'Music');
     return {
         id: `apple:${type}:${resource.id}`,
         appleMusicId: resource.id,
@@ -301,12 +303,23 @@ export function normalizeAppleTrack(resource, type = 'track') {
         url: attributes.url || '',
         artist,
         artists: [artist],
+        genres,
+        composer: attributes.composerName || undefined,
+        copyright: attributes.copyright || albumAttributes.copyright || undefined,
+        bpm: attributes.bpm || undefined,
         album: {
             id: albumId ? `apple:album:${albumId}` : '',
             appleMusicId: albumId || '',
-            title: attributes.albumName || '',
+            title: attributes.albumName || albumAttributes.name || '',
+            artist: appleArtist(albumAttributes.artistName || attributes.artistName, albumAttributes.artistUrl),
             cover,
-            releaseDate: attributes.releaseDate,
+            releaseDate: albumAttributes.releaseDate || attributes.releaseDate,
+            copyright: albumAttributes.copyright || undefined,
+            label: albumAttributes.recordLabel || undefined,
+            genres: (albumAttributes.genreNames || []).filter((g) => g && g !== 'Music'),
+            upc: albumAttributes.upc || undefined,
+            numberOfTracks: albumAttributes.trackCount || undefined,
+            type: albumAttributes.isSingle ? 'SINGLE' : albumAttributes.isCompilation ? 'COMPILATION' : undefined,
         },
         cover,
         image: cover,

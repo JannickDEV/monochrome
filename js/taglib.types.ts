@@ -24,6 +24,10 @@ export interface TagLibMetadata {
     totalTracks?: number;
     discNumber?: number;
     totalDiscs?: number;
+    genre?: string | string[];
+    composer?: string | string[];
+    label?: string;
+    comment?: string;
     bpm?: number;
     replayGain?: {
         albumReplayGain?: string;

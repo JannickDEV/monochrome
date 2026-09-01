@@ -48,6 +48,10 @@ export async function addMetadataToAudio(message: _AddMetadataMessage): Promise<
         totalTracks,
         discNumber,
         totalDiscs,
+        genre,
+        composer,
+        label,
+        comment,
         bpm,
         replayGain,
         cover,
@@ -85,6 +89,10 @@ export async function addMetadataToAudio(message: _AddMetadataMessage): Promise<
 
     const artistArray = Array.isArray(artist) ? artist : artist ? [artist] : [];
     const supportsMultiValuedArtist = writeArtistsSeparately && (isFlac || isOgg || isMp4);
+    const supportsMultiValued = isFlac || isOgg || isMp4;
+
+    const genreArray = (Array.isArray(genre) ? genre : genre ? [genre] : []).filter(Boolean);
+    const composerArray = (Array.isArray(composer) ? composer : composer ? [composer] : []).filter(Boolean);
 
     doTimed('Tagging file', () => {
         const props = ref.properties();
@@ -112,6 +120,15 @@ export async function addMetadataToAudio(message: _AddMetadataMessage): Promise<
         if (!needsCombinedTrackDisc && totalDiscs) {
             props.replace('DISCTOTAL', [String(totalDiscs)]);
         }
+
+        if (genreArray.length) {
+            props.replace('GENRE', supportsMultiValued ? genreArray : [genreArray.join('; ')]);
+        }
+        if (composerArray.length) {
+            props.replace('COMPOSER', supportsMultiValued ? composerArray : [composerArray.join('; ')]);
+        }
+        if (label) props.replace('LABEL', [label]);
+        if (comment) props.replace('COMMENT', [comment]);
 
         if (bpm != null && Number.isFinite(bpm)) {
             props.replace('BPM', [String(Math.round(bpm))]);
@@ -248,6 +265,13 @@ export async function getMetadataFromAudio(message: _GetMetadataMessage): Promis
     data.copyright = props.get('COPYRIGHT')?.[0] || undefined;
     data.lyrics = props.get('LYRICS')?.[0] || undefined;
     data.releaseDate = props.get('DATE')?.[0] || undefined;
+
+    const genreValues = props.get('GENRE') || [];
+    data.genre = genreValues.length > 1 ? genreValues : genreValues[0] || undefined;
+    const composerValues = props.get('COMPOSER') || [];
+    data.composer = composerValues.length > 1 ? composerValues : composerValues[0] || undefined;
+    data.label = props.get('LABEL')?.[0] || undefined;
+    data.comment = props.get('COMMENT')?.[0] || undefined;
 
     const replayGain: TagLibMetadata['replayGain'] = {};
     const albumGain = props.get('REPLAYGAIN_ALBUM_GAIN')?.[0];

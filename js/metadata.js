@@ -56,16 +56,42 @@ export async function addMetadataToAudio(audioBlob, track, _api, _quality, prefe
         data.discNumber = track.volumeNumber ?? track.discNumber;
         data.totalTracks = track.album?.numberOfTracksOnDisc ?? track.album?.numberOfTracks;
         data.totalDiscs = track.album?.totalDiscs;
-        data.copyright = track.copyright;
+        data.copyright = track.copyright || track.album?.copyright;
         data.isrc = track.isrc;
         data.upc = track.album?.upc;
         data.explicit = Boolean(track.explicit);
         data.stik = track.type?.toLowerCase().includes('video') ? Mp4Stik.MusicVideo : Mp4Stik.Normal;
+
+        const genres = Array.isArray(track.genres)
+            ? track.genres
+            : track.genre
+              ? [track.genre]
+              : Array.isArray(track.album?.genres)
+                ? track.album.genres
+                : [];
+        data.genre = genres.filter(Boolean);
+
+        const composers = Array.isArray(track.composers)
+            ? track.composers.map((c) => c?.name || c).filter(Boolean)
+            : track.composer
+              ? [track.composer]
+              : [];
+        data.composer = composers;
+
+        data.label = track.label || track.album?.label || undefined;
+
+        const releaseTypeRaw = (track.album?.type || track.releaseType || '').toString().toLowerCase();
+        const releaseType = ['single', 'album', 'ep', 'compilation'].includes(releaseTypeRaw)
+            ? releaseTypeRaw
+            : undefined;
+
         const providerName = (track.provider || track.source || 'TIDAL').toLowerCase();
-        const sourceLabel = providerName === 'qobuz' ? 'Qobuz' :
-                            providerName === 'amazon' ? 'Amazon Music' :
-                            providerName === 'deezer' ? 'Deezer' :
-                            providerName === 'soundcloud' ? 'SoundCloud' : 'TIDAL';
+        const sourceLabel =
+            providerName === 'qobuz' ? 'Qobuz' :
+            providerName === 'amazon' ? 'Amazon Music' :
+            providerName === 'deezer' ? 'Deezer' :
+            providerName === 'soundcloud' ? 'SoundCloud' :
+            providerName === 'apple' || providerName === 'applemusic' ? 'Apple Music' : 'TIDAL';
 
         data.extra = {
             SOURCE: sourceLabel,
@@ -75,6 +101,7 @@ export async function addMetadataToAudio(audioBlob, track, _api, _quality, prefe
             TIDAL_TRACK_URL: track.url?.trim() || undefined,
             TIDAL_ALBUM_URL: track.album?.url?.trim() || undefined,
             ALBUM_RELEASE_DATE: track.album?.releaseDate?.trim() || undefined,
+            RELEASETYPE: releaseType,
         };
 
         if (track.bpm != null) {
