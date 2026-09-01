@@ -2,13 +2,15 @@
 // pass-through proxy (js/proxy-utils.js -> PROXY_BASE_URL).
 //
 // Request shape:  GET /proxy/?url=<percent-encoded absolute http(s) URL>
-// js_set $proxy_target proxy.target;  ->  used as `proxy_pass $proxy_target;`
 //
-// Returns "" for anything that must not be proxied (missing/invalid url,
-// non-http(s) scheme, or a host that looks internal). nginx then returns 400.
+// nginx wiring:
+//   js_content proxy.handle;                 on  location = /proxy/
+//   js_set     $proxy_target proxy.target;   on  the internal @upstream location
+//
+// handle() answers CORS preflight itself and internal-redirects real GET/HEAD
+// requests to the upstream location. No `if` blocks in nginx -> no "if is evil".
 
-function target(r) {
-    var raw = r.variables.arg_url;
+function validTarget(raw) {
     if (!raw) {
         return '';
     }
@@ -45,4 +47,35 @@ function target(r) {
     return url;
 }
 
-export default { target };
+// js_set target -> $proxy_target, consumed by `proxy_pass $proxy_target;`
+function target(r) {
+    return validTarget(r.variables.arg_url);
+}
+
+// js_content on `location = /proxy/`
+function handle(r) {
+    if (r.method === 'OPTIONS') {
+        r.headersOut['Access-Control-Allow-Origin'] = '*';
+        r.headersOut['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS';
+        r.headersOut['Access-Control-Allow-Headers'] =
+            r.headersIn['Access-Control-Request-Headers'] || 'Range, Content-Type, Authorization';
+        r.headersOut['Access-Control-Max-Age'] = '86400';
+        r.headersOut['Content-Length'] = '0';
+        r.return(204);
+        return;
+    }
+
+    if (r.method !== 'GET' && r.method !== 'HEAD') {
+        r.return(405, 'method not allowed\n');
+        return;
+    }
+
+    if (!validTarget(r.variables.arg_url)) {
+        r.return(400, 'bad or missing url\n');
+        return;
+    }
+
+    r.internalRedirect('@monochrome_proxy_upstream');
+}
+
+export default { target, handle };
