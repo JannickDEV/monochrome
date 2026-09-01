@@ -99,19 +99,24 @@ Override files can extend existing services (add labels, env vars, networks) and
 
 The application is configured via environment variables. Copy `.env.example` to `.env` and edit it to match your setup.
 
-### Authentication (Appwrite)
+### Authentication (PocketBase)
 
-Monochrome uses Appwrite for user authentication. While it defaults to official instances, you can use your own self-hosted Appwrite instance:
+Monochrome uses PocketBase for both user authentication and data storage. It
+defaults to the official instance; to use your own, run the bundled `pocketbase`
+profile (see below) and point the app at it:
 
-1. Create a project in Appwrite.
-2. Enable the **Google** or **Email/Password** providers in the Appwrite Console.
-3. Set these variables in your `.env`:
-    - `APPWRITE_ENDPOINT`: Your Appwrite API endpoint (e.g., `https://auth.yourdomain.com/v1`).
-    - `APPWRITE_PROJECT_ID`: Your Appwrite project ID (e.g., `auth-for-monochrome`).
+1. Start PocketBase (`docker compose --profile pocketbase up -d`) and open its
+   admin UI.
+2. Import [`database/pb_schema.json`](database/pb_schema.json) into the instance.
+3. Under **Collections > users**, enable the auth methods you want: email/password
+   and/or the **Google**, **GitHub**, and **Discord** OAuth2 providers (fill in
+   each provider's client ID/secret).
+4. Set `POCKETBASE_URL` in your `.env` to your instance URL (e.g.
+   `https://pb.yourdomain.com`). Leave it unset to use the default instance.
 
 ### Database (PocketBase)
 
-Monochrome uses PocketBase to store user data (playlists, favorites, profiles, etc.). You can run it alongside Monochrome using the `pocketbase` profile:
+The same PocketBase instance stores user data (playlists, favorites, profiles, etc.). You can run it alongside Monochrome using the `pocketbase` profile:
 
 ```bash
 docker compose --profile pocketbase up -d

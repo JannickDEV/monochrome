@@ -6203,42 +6203,10 @@ img[src=''] {
     filter: brightness(1.1);
 }
 
-.appwrite-settings-wrapper {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    width: 100%;
-    max-width: 400px;
-}
-
-.custom-appwrite-endpoint,
-.custom-appwrite-project {
-    display: none;
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-    width: 100%;
-}
-
-.custom-appwrite-endpoint.visible,
-.custom-appwrite-project.visible {
-    display: flex;
-}
-
 .config-help-text {
     font-size: 0.8rem;
     opacity: 0.7;
     margin-bottom: 0.25rem;
-}
-
-.appwrite-controls-container {
-    display: flex;
-    gap: 0.5rem;
-    width: 100%;
-}
-
-#toggle-auth-config-btn {
-    width: fit-content;
 }
 
 .account-content {
