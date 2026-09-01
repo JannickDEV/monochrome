@@ -53,6 +53,7 @@ export async function addMetadataToAudio(message: _AddMetadataMessage): Promise<
         label,
         comment,
         bpm,
+        key,
         replayGain,
         cover,
         releaseDate,
@@ -133,6 +134,7 @@ export async function addMetadataToAudio(message: _AddMetadataMessage): Promise<
         if (bpm != null && Number.isFinite(bpm)) {
             props.replace('BPM', [String(Math.round(bpm))]);
         }
+        if (key) props.replace('INITIALKEY', [key]);
 
         if (replayGain) {
             const { albumReplayGain, albumPeakAmplitude, trackReplayGain, trackPeakAmplitude } = replayGain;
@@ -262,6 +264,7 @@ export async function getMetadataFromAudio(message: _GetMetadataMessage): Promis
     }
 
     data.bpm = Number(props.get('BPM')?.[0] || 0) || undefined;
+    data.key = props.get('INITIALKEY')?.[0] || props.get('KEY')?.[0] || undefined;
     data.copyright = props.get('COPYRIGHT')?.[0] || undefined;
     data.lyrics = props.get('LYRICS')?.[0] || undefined;
     data.releaseDate = props.get('DATE')?.[0] || undefined;

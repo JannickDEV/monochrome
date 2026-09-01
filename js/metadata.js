@@ -106,9 +106,17 @@ export async function addMetadataToAudio(audioBlob, track, _api, _quality, prefe
 
         if (track.bpm != null) {
             const bpm = Number(track.bpm);
-            if (Number.isFinite(bpm)) {
+            if (Number.isFinite(bpm) && bpm > 0) {
                 data.bpm = Math.round(bpm);
             }
+        }
+
+        // Musical key (TIDAL: key = "Bb", keyScale = "MAJOR" | "MINOR")
+        if (track.key) {
+            const scale = String(track.keyScale || '').toLowerCase();
+            const suffix = scale.startsWith('min') ? ' minor' : scale.startsWith('maj') ? ' major' : '';
+            const key = `${String(track.key).trim()}${suffix}`.trim();
+            if (key) data.key = key;
         }
 
         if (track.replayGain) {

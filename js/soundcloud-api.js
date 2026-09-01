@@ -472,6 +472,10 @@ export class SoundCloudAPI {
         }
 
         const durationSec = Math.floor((scTrack.duration || 0) / 1000);
+        const pm = scTrack.publisher_metadata || {};
+        const releaseDate = (scTrack.release_date || scTrack.display_date || scTrack.created_at || '').split('T')[0] || undefined;
+        const copyright = [pm.p_line, pm.c_line].filter(Boolean).join(' ') || undefined;
+        const bpm = Number(scTrack.bpm) || undefined;
 
         return {
             id,
@@ -480,14 +484,22 @@ export class SoundCloudAPI {
             artists: [{ id: artistId, name: artistName }],
             album: {
                 id: null,
-                title, // In SoundCloud, track title often acts as single release title
+                title: pm.album_title || title, // In SoundCloud, track title often acts as single release title
                 cover: artwork,
+                releaseDate,
             },
             duration: durationSec,
-            explicit: false, // SoundCloud API does not provide standard explicit flag
+            explicit: Boolean(pm.explicit),
             provider: 'soundcloud',
             isSoundCloud: true,
             audioQuality: 'HIGH',
+            bpm,
+            genres: scTrack.genre ? [scTrack.genre] : [],
+            isrc: pm.isrc || scTrack.isrc || '',
+            composer: pm.writer_composer || undefined,
+            label: pm.publisher || scTrack.label_name || undefined,
+            copyright,
+            releaseDate,
             dateAdded: scTrack.created_at || new Date().toISOString(),
             permalinkUrl: scTrack.permalink_url || '',
             description: scTrack.description || '',

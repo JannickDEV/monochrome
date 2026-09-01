@@ -29,6 +29,7 @@ export interface TagLibMetadata {
     label?: string;
     comment?: string;
     bpm?: number;
+    key?: string;
     replayGain?: {
         albumReplayGain?: string;
         albumPeakAmplitude?: number;
