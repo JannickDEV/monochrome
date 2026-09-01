@@ -2,6 +2,7 @@
 // SoundCloud API v2 integration for Monochrome Music
 
 import { soundcloudSettings } from './storage.js';
+import { toProxyUrl } from './proxy-utils.js';
 
 const FALLBACK_SC_API_BASE = 'https://api-v2.soundcloud.com';
 
@@ -100,9 +101,7 @@ export class SoundCloudAPI {
 
         const getProxyUrls = (targetUrl) => [
             targetUrl === 'https://soundcloud.com' ? '/sc-web' : (targetUrl.startsWith('https://a-v2.sndcdn.com') ? targetUrl.replace('https://a-v2.sndcdn.com', '/sc-sndcdn') : null),
-            `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`,
-            `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
-            `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+            toProxyUrl(targetUrl),
         ].filter(Boolean);
 
         const collectCandidateIds = (text, ids) => {
@@ -178,21 +177,12 @@ export class SoundCloudAPI {
     }
 
     async fetchViaProxy(url, signal) {
-        const proxyFetchers = [
-            (targetUrl) => `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
-            (targetUrl) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
-            (targetUrl) => `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
-        ];
-
-        for (const buildProxyUrl of proxyFetchers) {
-            try {
-                const proxyUrl = buildProxyUrl(url);
-                const res = await fetch(proxyUrl, { method: 'GET', signal });
-                if (res.ok) {
-                    return res;
-                }
-            } catch {}
-        }
+        try {
+            const res = await fetch(toProxyUrl(url), { method: 'GET', signal });
+            if (res.ok) {
+                return res;
+            }
+        } catch {}
         return null;
     }
 

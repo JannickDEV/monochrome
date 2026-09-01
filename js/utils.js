@@ -2,6 +2,7 @@
 import { modernSettings } from './ModernSettings.js';
 import { SVG_ATMOS } from './icons.js';
 import { qualityBadgeSettings, coverArtSizeSettings, trackDateSettings } from './storage.js';
+import { toProxyUrl } from './proxy-utils.js';
 
 export const QUALITY = 'LOSSLESS';
 
@@ -765,8 +766,7 @@ export async function getCoverBlob(api, coverId) {
 
     const fetchWithProxy = async (url) => {
         try {
-            const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(url)}`;
-            const response = await fetch(proxyUrl);
+            const response = await fetch(toProxyUrl(url));
             if (response.ok) return await response.blob();
         } catch (e) {
             console.warn('Proxy fetch failed:', e);

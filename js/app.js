@@ -1,4 +1,5 @@
 //js/app.js
+import { installGlobalProxy } from './proxy-utils.js';
 import './sentry.js';
 import discordSvg from '../images/discord.svg?svg&size=22';
 import googleSvg from '../images/google.svg?svg&size=22';
@@ -59,7 +60,11 @@ import {
 } from './icons.js';
 import { HiFiClient } from './HiFi.js';
 
-const AMAZON_DECRYPTER_SW_VERSION = '2026-08-09-atmos-v11';
+const AMAZON_DECRYPTER_SW_VERSION = '2026-09-01-proxy-v12';
+
+// Route all third-party (non-infrastructure) GET/HEAD traffic through the
+// self-hosted VPS proxy before any other module issues a request.
+installGlobalProxy();
 
 // Capture real iOS state before spoofing (needed for background audio)
 if (typeof window !== 'undefined') {

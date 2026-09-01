@@ -27,9 +27,14 @@ RUN bun run build
 # Serve with nginx
 FROM nginx:1.28.2-alpine
 
+# njs powers the /proxy/ pass-through location in nginx.conf.
+RUN apk add --no-cache nginx-module-njs \
+    && sed -i '1i load_module modules/ngx_http_js_module.so;' /etc/nginx/nginx.conf
+
 COPY --from=builder /app/dist /usr/share/nginx/html
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker/njs/monochrome-proxy.js /etc/nginx/njs/monochrome-proxy.js
 
 # Expose the nginx port
 EXPOSE 4173

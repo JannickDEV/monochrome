@@ -1,5 +1,29 @@
-self.__AMAZON_SW_DECRYPTER_VERSION__ = '2026-08-09-atmos-v11';
+self.__AMAZON_SW_DECRYPTER_VERSION__ = '2026-09-01-proxy-v12';
 console.log(`[SW Decrypter] Loaded ${self.__AMAZON_SW_DECRYPTER_VERSION__}`);
+
+// Route raw upstream stream URLs through the self-hosted VPS proxy, mirroring
+// js/proxy-utils.js (the SW can't import the ES module). Only third-party hosts
+// are wrapped; our own *.bitperfect.dedyn.io infrastructure stays direct.
+const PROXY_BASE_URL = 'https://audio.bitperfect.dedyn.io/proxy/?url=';
+const DIRECT_HOST_SUFFIXES = ['.bitperfect.dedyn.io', '.ingest.sentry.io', '.localhost'];
+const DIRECT_HOSTS = new Set(['bitperfect.dedyn.io', 'sentry.io', 'localhost', '127.0.0.1']);
+
+function toProxyUrl(url) {
+    if (!url || typeof url !== 'string') return url;
+    if (url.startsWith(PROXY_BASE_URL) || url.startsWith('https://audio.bitperfect.dedyn.io/proxy-audio/?url=')) return url;
+    if (url.startsWith('blob:') || url.startsWith('data:')) return url;
+    let parsed;
+    try {
+        parsed = new URL(url);
+    } catch {
+        return url;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return url;
+    if (parsed.origin === self.location.origin) return url;
+    const host = parsed.hostname.toLowerCase();
+    if (DIRECT_HOSTS.has(host) || DIRECT_HOST_SUFFIXES.some((s) => host.endsWith(s))) return url;
+    return `${PROXY_BASE_URL}${encodeURIComponent(url)}`;
+}
 
 // A native HLS media element asks for the playlist more than once while it is
 // preparing. Keep the parsed MP4 index in this worker so preloading the handoff
@@ -19,7 +43,7 @@ self.addEventListener('fetch', (event) => {
     if (url.pathname === '/api/decrypt-stream') {
         event.stopImmediatePropagation();
 
-        const streamUrl = url.searchParams.get('url');
+        const streamUrl = toProxyUrl(url.searchParams.get('url'));
         const keyHex = url.searchParams.get('key');
         const targetCodec = url.searchParams.get('codec') || 'flac';
 

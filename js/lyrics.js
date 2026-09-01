@@ -103,7 +103,8 @@ class GeniusManager {
         const token = this.getToken();
 
         const url = `https://api.genius.com/search?q=${query}&access_token=${token}`;
-        const response = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
+        // Cross-origin GET; routed through the VPS proxy by the global fetch wrapper.
+        const response = await fetch(url);
 
         if (!response.ok) throw new Error('Failed to search Genius');
 
@@ -127,7 +128,8 @@ class GeniusManager {
     async getReferents(songId) {
         const token = this.getToken();
         const url = `https://api.genius.com/referents?song_id=${songId}&text_format=plain&per_page=50&access_token=${token}`;
-        const response = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`);
+        // Cross-origin GET; routed through the VPS proxy by the global fetch wrapper.
+        const response = await fetch(url);
 
         if (!response.ok) throw new Error('Failed to fetch annotations');
 
