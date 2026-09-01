@@ -461,7 +461,12 @@ export class LosslessAPI {
 
         const albumIdsToFetch = [];
         for (const track of tracks) {
-            if (!track.album?.releaseDate && track.album?.id && !albumIdsToFetch.includes(track.album.id)) {
+            if (
+                !track.album?.releaseDate &&
+                track.album?.id &&
+                this.canQueryAlbumId(track.album.id) &&
+                !albumIdsToFetch.includes(track.album.id)
+            ) {
                 albumIdsToFetch.push(track.album.id);
             }
         }
@@ -504,7 +509,12 @@ export class LosslessAPI {
 
         const albumIdsToFetch = [];
         for (const track of tracks) {
-            if (!track?.album?.cover && track?.album?.id && !albumIdsToFetch.includes(track.album.id)) {
+            if (
+                !track?.album?.cover &&
+                track?.album?.id &&
+                this.canQueryAlbumId(track.album.id) &&
+                !albumIdsToFetch.includes(track.album.id)
+            ) {
                 albumIdsToFetch.push(track.album.id);
             }
         }
@@ -967,6 +977,15 @@ export class LosslessAPI {
             await this.cache.set('video', id, result);
         }
         return result;
+    }
+
+    // This client only understands native (numeric) album ids. Ids carrying a
+    // foreign provider prefix (Apple, SoundCloud) would 422 against the API, so
+    // enrichment paths skip them instead of making a doomed request.
+    canQueryAlbumId(albumId) {
+        if (albumId == null || albumId === '') return false;
+        const s = String(albumId);
+        return !s.startsWith('apple:') && !s.startsWith('sc_');
     }
 
     async getAlbum(id) {
@@ -3331,6 +3350,7 @@ export class LosslessAPI {
 
         if (
             track.album?.id &&
+            this.canQueryAlbumId(track.album.id) &&
             (track.album?.totalDiscs == null || track.album?.numberOfTracksOnDisc == null || !track.album?.cover)
         ) {
             try {
