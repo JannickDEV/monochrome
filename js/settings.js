@@ -7297,7 +7297,7 @@ function setupSettingsSearch() {
 
     searchInput.addEventListener('input', () => {
         updateClearButton();
-        filterSettings(searchInput.value.toLowerCase().trim());
+        filterSettings((searchInput.value || '').toLowerCase().trim());
     });
 
     searchInput.addEventListener('focus', updateClearButton);

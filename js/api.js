@@ -49,11 +49,48 @@ const UNIFIED_TURNSTILE_JWT_KEY = 'unified-playback-turnstile-jwt';
 const UNIFIED_TURNSTILE_EXPIRY_KEY = 'unified-playback-turnstile-expiry';
 const UNIFIED_TURNSTILE_SITE_KEY = '0x4AAAAAADgxqF6QVMm0GLHH';
 const UNIFIED_TURNSTILE_EXPIRY_LEEWAY_SECONDS = 15;
-function notifyAudioSourceMissing() {
+
+function createAudioSourceReportDetails(track, fallbackId, quality, intent, unifiedPlayback) {
+    const artistNames = Array.isArray(track?.artists)
+        ? track.artists.map((artist) => artist?.name || (typeof artist === 'string' ? artist : null)).filter(Boolean)
+        : [];
+    const artist =
+        artistNames.join(', ') ||
+        track?.artist?.name ||
+        (typeof track?.artist === 'string' ? track.artist : null) ||
+        null;
+    return {
+        track: {
+            id: track?.id ?? fallbackId ?? null,
+            title: track?.title || track?.name || null,
+            artist,
+            album:
+                track?.album?.title ||
+                track?.album?.name ||
+                (typeof track?.album === 'string' ? track.album : null) ||
+                null,
+            isrc: track?.isrc || null,
+            provider:
+                track?.provider || (String(track?.id ?? fallbackId ?? '').startsWith('apple:') ? 'apple' : 'tidal'),
+        },
+        requestedQuality: quality || null,
+        intent,
+        unifiedPlayback,
+    };
+}
+
+function notifyAudioSourceMissing(details = null) {
     const now = Date.now();
     if (now - lastAudioSourceMissingNotifyAt < 3000) return;
     lastAudioSourceMissingNotifyAt = now;
-    import('./downloads.js').then((m) => m.showNotification('Could not find Audio Source')).catch(() => {});
+    import('./downloads.js')
+        .then((m) =>
+            m.showNotification('Could not find Audio Source', {
+                type: 'error',
+                details,
+            })
+        )
+        .catch(() => {});
 }
 
 export class LosslessAPI {
@@ -65,7 +102,9 @@ export class LosslessAPI {
         });
         this.streamCache = new Map();
         this.unifiedPlaybackRequests = new Map();
+        this.unifiedPlaybackFailures = new Map();
         this.turnstileLoadPromise = null;
+        this._combinedSearchUnavailable = false;
 
         setInterval(
             async () => {
@@ -581,8 +620,8 @@ export class LosslessAPI {
                 if (manifest.urls && Array.isArray(manifest.urls)) {
                     const priorityKeywords = ['flac', 'lossless', 'hi-res', 'high'];
                     const sortedUrls = [...manifest.urls].sort((a, b) => {
-                        const aLow = a.toLowerCase();
-                        const bLow = b.toLowerCase();
+                        const aLow = String(a ?? '').toLowerCase();
+                        const bLow = String(b ?? '').toLowerCase();
                         const aScore = priorityKeywords.findIndex((k) => aLow.includes(k));
                         const bScore = priorityKeywords.findIndex((k) => bLow.includes(k));
 
@@ -610,8 +649,8 @@ export class LosslessAPI {
                 if (parsed?.urls && Array.isArray(parsed.urls)) {
                     const priorityKeywords = ['flac', 'lossless', 'hi-res', 'high'];
                     const sortedUrls = [...parsed.urls].sort((a, b) => {
-                        const aLow = a.toLowerCase();
-                        const bLow = b.toLowerCase();
+                        const aLow = String(a ?? '').toLowerCase();
+                        const bLow = String(b ?? '').toLowerCase();
                         const aScore = priorityKeywords.findIndex((k) => aLow.includes(k));
                         const bScore = priorityKeywords.findIndex((k) => bLow.includes(k));
                         const finalAScore = aScore === -1 ? 999 : aScore;
@@ -671,78 +710,83 @@ export class LosslessAPI {
         const cached = await this.cache.get('search_all', query);
         if (cached) return cached;
 
-        try {
-            const response = await this.fetchWithRetry(`/search/?q=${encodeURIComponent(query)}`, options);
-            const data = await response.json();
+        if (!this._combinedSearchUnavailable) {
+            try {
+                const response = await this.fetchWithRetry(`/search/?q=${encodeURIComponent(query)}`, options);
+                const data = await response.json();
 
-            const extractSection = (key) => this.normalizeSearchResponse(data, key);
+                const extractSection = (key) => this.normalizeSearchResponse(data, key);
 
-            const tracksData = extractSection('tracks');
-            const artistsData = extractSection('artists');
-            const albumsData = extractSection('albums');
-            const playlistsData = extractSection('playlists');
-            const videosData = extractSection('videos');
+                const tracksData = extractSection('tracks');
+                const artistsData = extractSection('artists');
+                const albumsData = extractSection('albums');
+                const playlistsData = extractSection('playlists');
+                const videosData = extractSection('videos');
 
-            const preparedTracks = tracksData.items.map((t) => this.prepareTrack(t));
-            const preparedArtists = artistsData.items.map((a) => this.prepareArtist(a));
+                const preparedTracks = tracksData.items.map((t) => this.prepareTrack(t));
+                const preparedArtists = artistsData.items.map((a) => this.prepareArtist(a));
 
-            const [enrichedTracks, enrichedArtists] = await Promise.all([
-                this.enrichTracksWithAlbumCover(preparedTracks),
-                options.enrichArtists === false
-                    ? Promise.resolve(preparedArtists)
-                    : this.enrichArtistsWithPicture(preparedArtists),
-            ]);
+                const [enrichedTracks, enrichedArtists] = await Promise.all([
+                    this.enrichTracksWithAlbumCover(preparedTracks),
+                    options.enrichArtists === false
+                        ? Promise.resolve(preparedArtists)
+                        : this.enrichArtistsWithPicture(preparedArtists),
+                ]);
 
-            const results = {
-                tracks: {
-                    ...tracksData,
-                    items: enrichedTracks,
-                },
-                artists: {
-                    ...artistsData,
-                    items: enrichedArtists,
-                },
-                albums: {
-                    ...albumsData,
-                    items: albumsData.items.map((a) => this.prepareAlbum(a)),
-                },
-                playlists: playlistsData
-                    ? {
-                          ...playlistsData,
-                          items: playlistsData.items.map((p) => this.preparePlaylist(p)),
-                      }
-                    : { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 },
-                videos: {
-                    ...videosData,
-                    items: videosData.items.map((v) => this.prepareTrack(v)),
-                },
-            };
+                const results = {
+                    tracks: {
+                        ...tracksData,
+                        items: enrichedTracks,
+                    },
+                    artists: {
+                        ...artistsData,
+                        items: enrichedArtists,
+                    },
+                    albums: {
+                        ...albumsData,
+                        items: albumsData.items.map((a) => this.prepareAlbum(a)),
+                    },
+                    playlists: playlistsData
+                        ? {
+                              ...playlistsData,
+                              items: playlistsData.items.map((p) => this.preparePlaylist(p)),
+                          }
+                        : { items: [], limit: 0, offset: 0, totalNumberOfItems: 0 },
+                    videos: {
+                        ...videosData,
+                        items: videosData.items.map((v) => this.prepareTrack(v)),
+                    },
+                };
 
-            await this.cache.set('search_all', query, results);
+                await this.cache.set('search_all', query, results);
 
-            return results;
-        } catch (error) {
-            if (import.meta.env.DEV) {
-                console.warn('[search] combined search failed, using HiFi scoped fallback', error);
+                return results;
+            } catch (error) {
+                if (error.name === 'AbortError') throw error;
+
+                this._combinedSearchUnavailable = true;
+
+                if (import.meta.env.DEV) {
+                    console.warn('[search] combined search failed, using HiFi scoped fallback', error);
+                }
             }
-
-            // Final fallback: hifi-api-compatible scoped searches (?s, ?a, ?al, ?v, ?p)
-            const [tracks, videos, artists, albums, playlists] = await Promise.all([
-                this.searchTracks(query, options).catch(() => ({ items: [] })),
-                this.searchVideos(query, options).catch(() => ({ items: [] })),
-                this.searchArtists(query, options).catch(() => ({ items: [] })),
-                this.searchAlbums(query, options).catch(() => ({ items: [] })),
-                this.searchPlaylists(query, options).catch(() => ({ items: [] })),
-            ]);
-
-            return {
-                tracks,
-                videos,
-                artists,
-                albums,
-                playlists,
-            };
         }
+
+        const [tracks, videos, artists, albums, playlists] = await Promise.all([
+            this.searchTracks(query, options).catch(() => ({ items: [] })),
+            this.searchVideos(query, options).catch(() => ({ items: [] })),
+            this.searchArtists(query, options).catch(() => ({ items: [] })),
+            this.searchAlbums(query, options).catch(() => ({ items: [] })),
+            this.searchPlaylists(query, options).catch(() => ({ items: [] })),
+        ]);
+
+        return {
+            tracks,
+            videos,
+            artists,
+            albums,
+            playlists,
+        };
     }
 
     async searchTracks(query, options = {}) {
@@ -754,8 +798,7 @@ export class LosslessAPI {
             const data = await response.json();
             const normalized = this.normalizeSearchResponse(data, 'tracks');
             const preparedTracks = normalized.items.map((t) => this.prepareTrack(t));
-            const dateEnriched = await this.enrichTracksWithAlbumDates(preparedTracks);
-            const enrichedTracks = await this.enrichTracksWithAlbumCover(dateEnriched);
+            const enrichedTracks = await this.enrichTracksWithAlbumCover(preparedTracks);
             const result = {
                 ...normalized,
                 items: enrichedTracks,
@@ -785,8 +828,7 @@ export class LosslessAPI {
             const data = await response.json();
             const normalized = this.normalizeSearchResponse(data, 'tracks');
             const preparedTracks = normalized.items.map((t) => this.prepareTrack(t));
-            const dateEnriched = await this.enrichTracksWithAlbumDates(preparedTracks);
-            const enrichedTracks = await this.enrichTracksWithAlbumCover(dateEnriched);
+            const enrichedTracks = await this.enrichTracksWithAlbumCover(preparedTracks);
             const result = {
                 ...normalized,
                 items: enrichedTracks,
@@ -2602,38 +2644,58 @@ export class LosslessAPI {
                     envelope = await response.json();
                 } catch {}
 
+                const failureKey = String(track?.id || 'unknown');
+                const rememberFailure = (reason) => {
+                    this.unifiedPlaybackFailures.set(failureKey, {
+                        reason,
+                        status: response.status,
+                        statusText: response.statusText,
+                        response: envelope,
+                    });
+                    if (this.unifiedPlaybackFailures.size > 20) {
+                        this.unifiedPlaybackFailures.delete(this.unifiedPlaybackFailures.keys().next().value);
+                    }
+                };
+
                 if ((response.status === 401 || response.status === 428) && attempt === 0) {
                     this.clearUnifiedTurnstileJwt();
                     continue;
                 }
                 if (response.status === 429) {
+                    rememberFailure('rate limited');
                     this.setUnifiedPlaybackRateLimited(response);
                     return null;
                 }
                 if (response.status === 404 || response.status === 502) {
+                    rememberFailure('track could not be resolved');
                     console.warn('Unified Playback could not resolve the track:', envelope?.sources || envelope);
                     return null;
                 }
                 if (response.status === 401 || response.status === 403 || response.status === 428) {
+                    rememberFailure('authorization failed');
                     throw new Error(`Unified Playback API authorization failed: ${response.status}`);
                 }
                 if (!response.ok) {
+                    rememberFailure('request failed');
                     throw new Error(`Unified Playback API failed: ${response.status}`);
                 }
 
                 const schemaMajor = String(envelope?.schema_version || '').split('.')[0];
                 if (schemaMajor !== '1' && schemaMajor !== '2') {
+                    rememberFailure('unsupported schema version');
                     throw new Error(
                         `Unsupported Unified Playback schema version: ${envelope?.schema_version || 'missing'}`
                     );
                 }
                 if (!Array.isArray(envelope.playback) || envelope.playback.length === 0) {
+                    rememberFailure('response contained no playable resources');
                     console.warn(
                         'Unified Playback response contained no playable resources:',
                         envelope?.sources || envelope
                     );
                     return null;
                 }
+                this.unifiedPlaybackFailures.delete(failureKey);
                 return envelope;
             }
             return null;
@@ -2726,14 +2788,19 @@ export class LosslessAPI {
     }
 
     async getUnifiedPlaybackStreamUrl(tidalTrackId, quality = 'LOSSLESS', options = {}) {
+        let track = null;
+        let envelope = null;
         try {
-            const track =
-                options.track || (tidalTrackId ? await this.getTrackMetadata(tidalTrackId).catch(() => null) : null);
+            track =
+                options.track ||
+                (tidalTrackId && !String(tidalTrackId).startsWith('apple:')
+                    ? await this.getTrackMetadata(tidalTrackId).catch(() => null)
+                    : null);
             if (!track) return null;
 
             const intent = options.intent || 'stream';
             const canonicalQuality = normalizeQualityToken(quality) || quality || 'HI_RES_LOSSLESS';
-            const envelope = await this.fetchUnifiedPlaybackEnvelope(track, canonicalQuality, { ...options, intent });
+            envelope = await this.fetchUnifiedPlaybackEnvelope(track, canonicalQuality, { ...options, intent });
             if (!envelope) return null;
 
             const resource = this.getUnifiedPlaybackResource(envelope);
@@ -2866,6 +2933,13 @@ export class LosslessAPI {
                 mimeType: resource.mime_type || 'audio/mp4',
             };
         } catch (error) {
+            const failureKey = String(track?.id || tidalTrackId || 'unknown');
+            const previousFailure = this.unifiedPlaybackFailures.get(failureKey);
+            this.unifiedPlaybackFailures.set(failureKey, {
+                ...previousFailure,
+                reason: error?.message || String(error),
+                response: previousFailure?.response || envelope,
+            });
             console.warn(`Unified Playback failed for track ${tidalTrackId}:`, error);
             return null;
         }
@@ -2912,13 +2986,20 @@ export class LosslessAPI {
             return result;
         }
 
-        const track = await this.getTrackMetadata(id);
-        const needsProxyDecryption = !canUseNativeAmazonCenc;
-        let unifiedResult = null;
+        const inputTrack = options?.track || null;
+        const isApple = inputTrack?.provider === 'apple' || String(id || '').startsWith('apple:');
+        const track = inputTrack || (id && !isApple ? await this.getTrackMetadata(id).catch(() => null) : null);
+
+        const canPlayAmazonCenc = canUseNativeAmazonCenc;
+        const needsProxyDecryption = !canPlayAmazonCenc;
+
+        let actualQuality = quality;
 
         const exactAtmosQuality = isAtmosQuality(quality) ? quality : null;
         const preferredAtmosQuality = preferDolbyAtmosSettings.isEnabled() ? 'DOLBY_ATMOS_EAC3_HIGH' : null;
         const atmosQuality = exactAtmosQuality || preferredAtmosQuality;
+
+        let unifiedResult = null;
 
         if (atmosQuality) {
             try {
@@ -3007,7 +3088,15 @@ export class LosslessAPI {
             return result;
         }
 
-        notifyAudioSourceMissing();
+        notifyAudioSourceMissing(
+            createAudioSourceReportDetails(
+                track,
+                id,
+                quality,
+                'stream',
+                this.unifiedPlaybackFailures.get(String(track?.id || id)) || null
+            )
+        );
         throw new Error(
             track?.isrc
                 ? 'Could not resolve stream URL from Unified Playback or Deezer'
@@ -3067,10 +3156,11 @@ export class LosslessAPI {
 
         const id = input?.id || input;
         const inputTrack = typeof input === 'object' ? input : null;
-        const metadataTrack = id ? await this.getTrackMetadata(id).catch(() => null) : null;
+        const isApple = inputTrack?.provider === 'apple' || String(id || '').startsWith('apple:');
+        const metadataTrack = id && !isApple ? await this.getTrackMetadata(id).catch(() => null) : null;
         const track = metadataTrack
             ? this.prepareTrack({ ...(inputTrack || {}), ...metadataTrack })
-            : inputTrack?.isrc
+            : inputTrack?.isrc || isApple
               ? inputTrack
               : await this.getTrackMetadata(id);
         const isVideo = track?.type?.toLowerCase().includes('video');
@@ -3209,7 +3299,15 @@ export class LosslessAPI {
                         },
                     };
                 } else {
-                    notifyAudioSourceMissing();
+                    notifyAudioSourceMissing(
+                        createAudioSourceReportDetails(
+                            track,
+                            id,
+                            cleanQuality,
+                            'download',
+                            this.unifiedPlaybackFailures.get(String(track?.id || id)) || null
+                        )
+                    );
                     throw new Error(
                         track?.isrc
                             ? 'Could not resolve audio stream from Unified Playback or Deezer'
@@ -3658,6 +3756,7 @@ export class LosslessAPI {
     async clearCache() {
         await this.cache.clear();
         this.streamCache.clear();
+        this.unifiedPlaybackFailures.clear();
     }
 
     getCacheStats() {

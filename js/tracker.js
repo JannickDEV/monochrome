@@ -125,7 +125,7 @@ function artistPictureHTML(name, imgAttrs = '') {
         <picture style="display: contents;">
             <source srcset="${artistImageUrl(name, 'jxl')}" type="image/jxl">
             <source srcset="${artistImageUrl(name, 'webp')}" type="image/webp">
-            <img crossorigin="anonymous" referrerpolicy="no-referrer" src="${artistImageUrl(name, 'jpg')}" alt="${escapeHtml(name)}" ${imgAttrs} onerror="this.src='assets/logo.svg'">
+            <img crossorigin="anonymous" referrerpolicy="no-referrer" src="${artistImageUrl(name, 'jpg')}" alt="${escapeHtml(name)}" ${imgAttrs} onerror="this.src='images/monochrome_logo.svg'">
         </picture>
     `;
 }
@@ -151,7 +151,7 @@ function setArtistHeaderImage(imgEl, name) {
     imgEl.onerror = function () {
         picture.querySelectorAll('source').forEach((s) => s.remove());
         this.onerror = null;
-        this.src = 'assets/logo.svg';
+        this.src = 'images/monochrome_logo.svg';
     };
     imgEl.src = artistImageUrl(name, 'jpg');
 }
@@ -339,11 +339,11 @@ export function createProjectCardHTML(era, _artist, sheetId, trackCount) {
     return `
         <div class="card" data-tracker-project-id="${encodeURIComponent(era.name)}" data-sheet-id="${sheetId}" style="cursor: pointer;">
             <div class="card-image-wrapper">
-                <img crossorigin="anonymous" referrerpolicy="no-referrer" src="${era.cover_art || 'assets/logo.svg'}"
+                <img crossorigin="anonymous" referrerpolicy="no-referrer" src="${era.cover_art || 'images/monochrome_logo.svg'}"
                      alt="${escapeHtml(era.name)}"
                      class="card-image"
                      loading="lazy"
-                     onerror="this.src='assets/logo.svg'">
+                     onerror="this.src='images/monochrome_logo.svg'">
                 <button class="like-btn card-like-btn" data-action="toggle-like" data-type="tracker-project" title="Add to Liked">
                     ${SVG_HEART(20)}
                 </button>
@@ -491,7 +491,7 @@ export async function renderTrackerArtistPage(sheetId, container) {
     // Add search functionality
     const searchInput = document.getElementById('unreleased-search-input');
     searchInput.addEventListener('input', (e) => {
-        const query = e.target.value.toLowerCase().trim();
+        const query = (e.target.value || '').toLowerCase().trim();
         if (!query) {
             // Reset view
             projectsContainer.style.display = '';
@@ -605,10 +605,10 @@ export async function renderTrackerProjectPage(sheetId, projectName, container, 
     const addToPlaylistBtn = document.getElementById('add-album-to-playlist-btn');
 
     // Set album page content
-    imageEl.src = era.cover_art || 'assets/logo.svg';
+    imageEl.src = era.cover_art || 'images/monochrome_logo.svg';
     imageEl.style.backgroundColor = '';
     imageEl.onerror = function () {
-        this.src = 'assets/logo.svg';
+        this.src = 'images/monochrome_logo.svg';
     };
 
     titleEl.textContent = era.name;
@@ -781,7 +781,7 @@ export async function renderUnreleasedPage(container) {
         const artistCard = document.createElement('div');
         artistCard.className = 'card';
         artistCard.style.cursor = 'pointer';
-        artistCard.dataset.artistName = artist.name.toLowerCase();
+        artistCard.dataset.artistName = (artist.name || '').toLowerCase();
 
         artistCard.innerHTML = `
             <div class="card-image-wrapper">
@@ -809,7 +809,7 @@ export async function renderUnreleasedPage(container) {
     // Setup search functionality
     if (searchInput) {
         searchInput.addEventListener('input', (e) => {
-            const query = e.target.value.toLowerCase().trim();
+            const query = (e.target.value || '').toLowerCase().trim();
             let visibleCount = 0;
 
             allArtistCards.forEach((card) => {
@@ -891,10 +891,10 @@ export async function renderTrackerTrackPage(trackId, container, _ui) {
     const tracklistContainer = document.getElementById('album-detail-tracklist');
     const playBtn = document.getElementById('play-album-btn');
 
-    imageEl.src = era.cover_art || 'assets/logo.svg';
+    imageEl.src = era.cover_art || 'images/monochrome_logo.svg';
     imageEl.style.backgroundColor = '';
     imageEl.onerror = function () {
-        this.src = 'assets/logo.svg';
+        this.src = 'images/monochrome_logo.svg';
     };
 
     titleEl.textContent = currentTrack.title;

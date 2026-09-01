@@ -25,3 +25,6 @@ Caddyfile
 dev-dist
 bun.lock
 load-balancer
+# We already have bun.lock, bun.lockb is redundant
+bun.lockb
+.wrangler

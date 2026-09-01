@@ -62,7 +62,7 @@
                 "url": "https://monochrome.tf/",
                 "applicationCategory": "MusicApplication",
                 "operatingSystem": "Web Browser",
-                "image": "https://monochrome.tf/assets/logo.svg",
+                "image": "https://monochrome.tf/images/monochrome_logo.svg",
                 "description": "Stream and download millions of Hi-Res FLACs, unreleased songs and music videos, all for free on Monochrome."
             }
         </script>
@@ -78,9 +78,9 @@
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 
-        <link rel="apple-touch-icon" href="/assets/logo.svg" />
+        <link rel="apple-touch-icon" href="/images/monochrome_logo.svg" />
         <link rel="manifest" href="/manifest.json" />
-        <link rel="icon" href="/assets/logo.svg" type="image/svg+xml" />
+        <link rel="icon" href="/images/monochrome_logo.svg" type="image/svg+xml" />
         <link
             rel="preload"
             as="style"
@@ -334,8 +334,13 @@
                             <div class="fullscreen-track-info">
                                 <div class="fullscreen-track-text">
                                     <h2 id="fullscreen-track-title"></h2>
-                                    <h3 id="fullscreen-track-album"></h3>
-                                    <h3 id="fullscreen-track-artist"></h3>
+                                    <div style="display: flex; align-items: center">
+                                        <h3 id="fullscreen-track-album"></h3>
+                                        <h3 style="font-size: 0.9rem; position: relative; top: -0.15rem">
+                                            &nbsp;&#9886;&nbsp;
+                                        </h3>
+                                        <h3 id="fullscreen-track-artist"></h3>
+                                    </div>
                                 </div>
                                 <div class="fullscreen-actions">
                                     <button id="fs-like-btn" class="btn-icon like-btn" title="Like">
@@ -346,9 +351,6 @@
                                     </button>
                                     <button id="fs-download-btn" class="btn-icon" title="Download">
                                         <use svg="!lucide/download.svg" size="24" />
-                                    </button>
-                                    <button id="fs-cast-btn" class="btn-icon" title="Cast">
-                                        <use svg="!lucide/cast.svg" size="24" />
                                     </button>
                                     <button id="fs-queue-btn" class="btn-icon" title="Queue">
                                         <use svg="!lucide/list.svg" size="24" />
@@ -1736,7 +1738,7 @@
                 <div class="sidebar-content">
                     <div class="sidebar-logo">
                         <a href="./" class="sidebar-logo-link">
-                            <use svg="./images/monochrome-logo.svg" size="200" class="app-logo" />
+                            <use svg="./images/monochrome_logo.svg" size="200" class="app-logo" />
                             <span>Monochrome</span>
                         </a>
                         <button
@@ -1849,6 +1851,8 @@
                             autocorrect="off"
                             autocapitalize="off"
                             spellcheck="false"
+                            aria-autocomplete="list"
+                            aria-controls="search-history"
                         />
                         <button
                             type="button"
@@ -6409,49 +6413,120 @@
                     </div>
                 </div>
                 <div id="page-mobile" class="page">
-                    <div
-                        class="mobile-download-container"
+                    <table
                         style="
-                            text-align: center;
-                            max-width: 600px;
-                            margin: 0 auto;
-                            padding: var(--space-8) var(--space-4);
+                            left: 50%;
+                            margin: 0 0 0 50%;
+                            transform: translate(-50%, 0);
+                            width: 100%;
+                            max-width: 1500px;
                         "
                     >
-                        <h2 class="section-title" style="margin-bottom: var(--space-4)">
-                            Monochrome Mobile
-                        </h2>
-                        <p style="color: var(--muted-foreground); margin-bottom: var(--space-8)">
-                            Download the Android app for your device.
-                        </p>
-                        <div
-                            style="
-                                display: flex;
-                                flex-wrap: wrap;
-                                gap: var(--space-4);
-                                justify-content: center;
-                                margin-bottom: var(--space-8);
-                            "
-                        >
-                            <a
-                                href="https://github.com/JannickDEV/monochrome/releases/latest/download/monochrome-android.apk"
-                                class="btn-primary"
-                                style="display: inline-flex; align-items: center; gap: 8px"
-                            >
-                                <use svg="!lucide/download.svg" size="18" />
-                                Download for Android
-                            </a>
-                        </div>
-                        <p
-                            style="
-                                color: var(--muted-foreground);
-                                margin-top: var(--space-6);
-                                margin-bottom: 0;
-                            "
-                        >
-                            Downloaded songs are saved to <b>Downloads/Monochrome</b> on your device.
-                        </p>
-                    </div>
+                        <tr>
+                            <td valign="top">
+                                <div
+                                    class="mobile-download-container"
+                                    style="
+                                        text-align: center;
+                                        max-width: 600px;
+                                        margin: 0 auto;
+                                        padding: var(--space-8) var(--space-4);
+                                    "
+                                >
+                                    <h2 class="section-title" style="margin-bottom: var(--space-4)">
+                                        Monochrome Mobile
+                                    </h2>
+                                    <p style="color: var(--muted-foreground); margin-bottom: var(--space-8)">
+                                        Download the Android app for your device.
+                                    </p>
+                                    <div
+                                        style="
+                                            display: flex;
+                                            flex-wrap: wrap;
+                                            gap: var(--space-4);
+                                            justify-content: center;
+                                            margin-bottom: var(--space-8);
+                                        "
+                                    >
+                                        <a
+                                            href="https://github.com/JannickDEV/monochrome/releases/latest/download/monochrome-android.apk"
+                                            class="btn-primary"
+                                            style="display: inline-flex; align-items: center; gap: 8px"
+                                        >
+                                            <use svg="!lucide/download.svg" size="18" />
+                                            Download for Android
+                                        </a>
+                                    </div>
+                                    <p
+                                        style="
+                                            color: var(--muted-foreground);
+                                            margin-top: var(--space-6);
+                                            margin-bottom: 0;
+                                        "
+                                    >
+                                        Downloaded songs are saved to <b>Downloads/Monochrome</b> on your device.
+                                    </p>
+                                </div>
+                            </td>
+                            <td valign="top">
+                                <div
+                                    class="desktop-download-container"
+                                    style="
+                                        text-align: center;
+                                        max-width: 600px;
+                                        margin: 0 auto;
+                                        padding: var(--space-8) var(--space-4);
+                                    "
+                                >
+                                    <h2 class="section-title" style="margin-bottom: var(--space-4)">
+                                        Monochrome Desktop
+                                    </h2>
+                                    <p style="color: var(--muted-foreground); margin-bottom: var(--space-8)">
+                                        Download the app for your desktop device.
+                                    </p>
+                                    <div
+                                        style="
+                                            display: flex;
+                                            flex-wrap: wrap;
+                                            gap: var(--space-4);
+                                            justify-content: center;
+                                            margin-bottom: var(--space-8);
+                                        "
+                                    >
+                                        <a
+                                            href="https://github.com/monochrome-music/desktop-app/releases"
+                                            class="btn-primary"
+                                            style="display: inline-flex; align-items: center; gap: 8px"
+                                        >
+                                            <use svg="!lucide/download.svg" size="18" />
+                                            Download from Github
+                                        </a>
+                                    </div>
+                                    <p style="color: var(--muted-foreground)">
+                                        If you need any help with the desktop app, please reach out to the developer of
+                                        the application. You can find their contact information on the GitHub page
+                                        linked above or contact them directly on discord in our server's
+                                        <a
+                                            href="https://discord.com/channels/1457628745589456910/1457633716049543208"
+                                            style="color: var(--primary); text-decoration: underline"
+                                            ><i>Help Channel</i></a
+                                        >.
+                                    </p>
+                                    <p
+                                        style="
+                                            color: var(--color-warning);
+                                            margin: 0;
+                                            margin-top: var(--space-6);
+                                            margin-bottom: 0;
+                                        "
+                                    >
+                                        This application is currently in beta and may have bugs or issues. Please report
+                                        any problems you encounter to the developer so they can be addressed.
+                                    </p>
+                                </div>
+                            </td>
+                        </tr>
+                    </table>
                 </div>
                 <div id="page-reset-password" class="page">
                     <div
@@ -6632,25 +6707,12 @@
                             <use svg="!lucide/list-plus.svg" size="20" />
                         </button>
 
-                        <button
-                            id="now-playing-mix-btn"
-                            class="mix-btn"
-                            data-action="track-mix"
-                            title="Track Mix"
-                            style="display: none"
-                        >
-                            <use svg="./images/mix.svg" size="20" />
-                        </button>
                         <button id="toggle-lyrics-btn" title="Lyrics" style="display: none" aria-label="Lyrics">
                             <use svg="!lucide/mic-vocal.svg" size="20" />
                         </button>
                         <button id="download-current-btn" title="Download current track" class="desktop-only">
                             <use svg="!lucide/download.svg" size="20" />
                         </button>
-                        <button id="cast-btn" title="Cast">
-                            <use svg="!lucide/cast.svg" size="20" />
-                        </button>
-
                         <button
                             id="mobile-add-playlist-btn"
                             class="mobile-only"

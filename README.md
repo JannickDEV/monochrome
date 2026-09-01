@@ -160,6 +160,15 @@ For development mode and advanced setups, see [DOCKER.md](DOCKER.md).
 - [Bun](https://bun.sh/) (Preferred) or [Node.js](https://nodejs.org/) (Version 20+ or 22+ recommended)
 - [Git](https://git-scm.com/)
 
+#### Apple Music Search
+
+Monochrome requests an Apple Music developer token from `https://am-mint.binimum.org/token` in the browser and caches
+it locally until the JWT expires. Apple Music supplies catalog ordering and autocomplete suggestions; when token minting,
+Apple's API, or CORS is unavailable, Monochrome automatically uses its existing search ordering.
+
+When Apple exposes editorial motion artwork for a matched album, Monochrome also uses its square HLS video cover on
+album and now-playing surfaces, with the static cover retained as the fallback.
+
 #### PocketBase Schema
 
 The current PocketBase collection schema is stored in [`database/pb_schema.json`](database/pb_schema.json). Import this schema into a fresh PocketBase instance when setting up account data storage.
@@ -275,10 +284,10 @@ We welcome contributions from the community! Please see our [Contributing Guide]
 
 ## Star History
 
-<a href="https://www.star-history.com/#monochrome-music/monochrome&type=date&logscale&legend=top-left">
+<a href="https://star-history.dera.page/#monochrome-music/monochrome&type=date&logscale&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=monochrome-music/monochrome&type=date&theme=dark&logscale&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=monochrome-music/monochrome&type=date&logscale&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=monochrome-music/monochrome&type=date&logscale&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=monochrome-music/monochrome&type=date&theme=dark&logscale&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=monochrome-music/monochrome&type=date&logscale&legend=top-left" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=monochrome-music/monochrome&type=date&logscale&legend=top-left" />
  </picture>
 </a>
