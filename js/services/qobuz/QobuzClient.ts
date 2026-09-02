@@ -92,9 +92,9 @@ export class QobuzClient {
     getUserId(): string {
         if (this.customUserId !== undefined) return this.customUserId;
         if (typeof devModeSettings !== 'undefined' && typeof devModeSettings.getQobuzUserId === 'function') {
-            return devModeSettings.getQobuzUserId() || '2759740';
+            return devModeSettings.getQobuzUserId() || '';
         }
-        return '2759740';
+        return '';
     }
 
     async fetchWithRetry(url: string, options: any = {}, maxRetries = 3): Promise<Response> {
