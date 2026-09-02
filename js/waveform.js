@@ -314,9 +314,20 @@ export class WaveformGenerator {
             return null;
         }
 
+        // Decoding a waveform means downloading the whole (often multi-MB, Hi-Res)
+        // file. On a metered/slow link that starves the actual audio stream, so
+        // skip it there and keep the estimated waveform. Not marked as failed, so
+        // it retries once the connection is better.
+        const conn = typeof navigator !== 'undefined' ? navigator.connection : null;
+        if (conn && (conn.saveData || conn.effectiveType === 'slow-2g' || conn.effectiveType === '2g')) {
+            return null;
+        }
+
         try {
             const audioContext = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 1, 44100);
-            const response = await fetch(getProxyUrl(url));
+            // `priority: 'low'` lets the browser keep the <audio> element's own
+            // range requests ahead of this bulk download.
+            const response = await fetch(getProxyUrl(url), { priority: 'low' });
             if (!response.ok) {
                 throw new Error(`Waveform fetch failed: HTTP ${response.status}`);
             }

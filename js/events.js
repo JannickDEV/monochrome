@@ -497,6 +497,25 @@ async function handleSelectionAction(action) {
     }
 }
 
+// Resolves once `trackId` has been playing steadily for a short head-start
+// window, or after `maxWaitMs`. Used to hold back the whole-file waveform
+// download so the audio stream gets bandwidth first. Never rejects.
+function waitForSteadyPlayback(player, trackId, { settleMs = 4000, maxWaitMs = 20000 } = {}) {
+    return new Promise((resolve) => {
+        const start = Date.now();
+        const tick = () => {
+            if (player.currentTrack?.id !== trackId) return resolve();
+            const el = player.activeElement;
+            const playing = el && !el.paused && !el.ended && el.readyState >= 3 && el.currentTime > 0;
+            if ((playing && Date.now() - start >= settleMs) || Date.now() - start >= maxWaitMs) {
+                return resolve();
+            }
+            setTimeout(tick, 500);
+        };
+        tick();
+    });
+}
+
 export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui) {
     if (homeStartRadioBtn) {
         homeStartRadioBtn.addEventListener('click', async () => {
@@ -920,8 +939,14 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
                 if (waveData?.isFallback) {
                     const streamUrl = player.currentStreamInfo?.url || null;
                     if (streamUrl && player.currentTrack?.id === targetTrackId) {
-                        void waveformGenerator
-                            .generateWaveformFromAudioUrl(streamUrl, targetTrackId)
+                        // Building an accurate waveform downloads the whole file.
+                        // Hold off until audio is actually flowing so the stream
+                        // gets bandwidth priority, then fetch it at low priority.
+                        void waitForSteadyPlayback(player, targetTrackId)
+                            .then(() => {
+                                if (player.currentTrack?.id !== targetTrackId) return null;
+                                return waveformGenerator.generateWaveformFromAudioUrl(streamUrl, targetTrackId);
+                            })
                             .then((realWaveform) => {
                                 if (!realWaveform || player.currentTrack?.id !== targetTrackId) return;
                                 if (realWaveform.samples?.length) {
