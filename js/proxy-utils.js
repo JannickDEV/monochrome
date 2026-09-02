@@ -34,6 +34,9 @@ const DIRECT_HOSTS = new Set([
     '[::1]',
     '0.0.0.0',
 ]);
+// Qobuz stream URLs are signed + delivery-restricted (IP/UA bound); routing them
+// through the proxy breaks playback, so they stay direct.
+const DIRECT_HOST_PATTERNS = [/^streaming-qobuz-[a-z0-9-]+\.akamaized\.net$/];
 
 const getLocationHref = () => (typeof location !== 'undefined' ? location.href : undefined);
 const getLocationOrigin = () => (typeof location !== 'undefined' ? location.origin : undefined);
@@ -66,6 +69,7 @@ export const shouldProxy = (url) => {
     const host = parsed.hostname.toLowerCase();
     if (DIRECT_HOSTS.has(host)) return false;
     if (DIRECT_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix))) return false;
+    if (DIRECT_HOST_PATTERNS.some((re) => re.test(host))) return false;
 
     return true;
 };

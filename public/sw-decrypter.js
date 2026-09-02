@@ -1,4 +1,4 @@
-self.__AMAZON_SW_DECRYPTER_VERSION__ = '2026-09-01-proxy-v12';
+self.__AMAZON_SW_DECRYPTER_VERSION__ = '2026-09-02-proxy-v13';
 console.log(`[SW Decrypter] Loaded ${self.__AMAZON_SW_DECRYPTER_VERSION__}`);
 
 // Route raw upstream stream URLs through the self-hosted VPS proxy, mirroring
@@ -7,6 +7,8 @@ console.log(`[SW Decrypter] Loaded ${self.__AMAZON_SW_DECRYPTER_VERSION__}`);
 const PROXY_BASE_URL = 'https://audio.bitperfect.dedyn.io/proxy/?url=';
 const DIRECT_HOST_SUFFIXES = ['.bitperfect.dedyn.io', '.ingest.sentry.io', '.localhost'];
 const DIRECT_HOSTS = new Set(['bitperfect.dedyn.io', 'sentry.io', 'localhost', '127.0.0.1']);
+// Qobuz stream URLs are signed + delivery-restricted; keep them direct.
+const DIRECT_HOST_PATTERNS = [/^streaming-qobuz-[a-z0-9-]+\.akamaized\.net$/];
 
 function toProxyUrl(url) {
     if (!url || typeof url !== 'string') return url;
@@ -22,6 +24,7 @@ function toProxyUrl(url) {
     if (parsed.origin === self.location.origin) return url;
     const host = parsed.hostname.toLowerCase();
     if (DIRECT_HOSTS.has(host) || DIRECT_HOST_SUFFIXES.some((s) => host.endsWith(s))) return url;
+    if (DIRECT_HOST_PATTERNS.some((re) => re.test(host))) return url;
     return `${PROXY_BASE_URL}${encodeURIComponent(url)}`;
 }
 

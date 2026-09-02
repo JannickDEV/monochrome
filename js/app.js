@@ -60,7 +60,7 @@ import {
 } from './icons.js';
 import { HiFiClient } from './HiFi.js';
 
-const AMAZON_DECRYPTER_SW_VERSION = '2026-09-01-proxy-v12';
+const AMAZON_DECRYPTER_SW_VERSION = '2026-09-02-proxy-v13';
 
 // Route all third-party (non-infrastructure) GET/HEAD traffic through the
 // self-hosted VPS proxy before any other module issues a request.

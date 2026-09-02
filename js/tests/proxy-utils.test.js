@@ -41,6 +41,15 @@ describe('proxy-utils', () => {
         expect(shouldProxy('https://o123.ingest.sentry.io/api/456/envelope/')).toBe(false);
     });
 
+    test('leaves Qobuz signed stream URLs direct', () => {
+        const q = 'https://streaming-qobuz-std.akamaized.net/file?eid=1&fmt=27&hierarchy=1&sig=abc&t=123';
+        expect(shouldProxy(q)).toBe(false);
+        expect(getProxyUrl(q)).toBe(q);
+        expect(shouldProxy('https://streaming-qobuz-web.akamaized.net/x')).toBe(false);
+        // a non-Qobuz akamaized host is still proxied
+        expect(shouldProxy('https://example.akamaized.net/x')).toBe(true);
+    });
+
     test('does not double-wrap an already-proxied URL', () => {
         const once = toProxyUrl('https://cdn.example.com/a.mp4');
         expect(toProxyUrl(once)).toBe(once);
