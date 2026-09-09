@@ -5,7 +5,11 @@ import { defaultSearchProvider, tidalProvider, qobuzProvider } from '../api/devM
 import { SoundCloudProvider } from '../api/soundcloud.js';
 import { config } from '../config.js';
 
-const { getTracks: getSpotifyTracks } = spotifyUrlInfo(fetch);
+// spotify-url-info's default export is a factory (inject fetch); its shipped
+// types don't model that, so call through `any`.
+const { getTracks: getSpotifyTracks } = (spotifyUrlInfo as any)(fetch) as {
+    getTracks: (url: string) => Promise<any[]>;
+};
 const scProvider = new SoundCloudProvider();
 
 type Raw = any;

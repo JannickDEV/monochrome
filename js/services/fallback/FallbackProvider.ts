@@ -103,7 +103,7 @@ export class FallbackProvider implements Provider {
         }
 
         if (!isrc && meta && meta.isrc) {
-            isrc = meta.isrc;
+            isrc = String(meta.isrc);
             this.isrcCache.set(strId, isrc);
         }
 

@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import {
     AudioPlayer,
     AudioPlayerStatus,
@@ -16,7 +16,9 @@ import { SoundCloudProvider } from '../api/soundcloud.js';
 import { updateDashboard } from '../ui/dashboard.js';
 import { config } from '../config.js';
 
-const FFMPEG_BIN = config.ffmpegPath || ffmpegStatic || 'ffmpeg';
+// ffmpeg-static's default export is a path string at runtime, but its type
+// resolves to a namespace, so coerce it.
+const FFMPEG_BIN: string = config.ffmpegPath || (ffmpegStatic as unknown as string) || 'ffmpeg';
 
 export interface Track {
     id: string;
@@ -57,7 +59,7 @@ export class MusicPlayer {
     /** Bumped on every skip/stop/track-change; a resolve in flight for a stale
      *  token is discarded instead of being played. */
     private playToken = 0;
-    private currentFfmpeg: ChildProcessWithoutNullStreams | null = null;
+    private currentFfmpeg: ChildProcess | null = null;
     private pumping = false;
     private idleTimer: NodeJS.Timeout | null = null;
 
@@ -259,11 +261,11 @@ export class MusicPlayer {
                 this.killFfmpeg();
                 this.currentFfmpeg = ffmpeg;
 
-                ffmpeg.stderr.on('data', (d) => console.log(`[ffmpeg] ${d.toString().trim()}`));
-                ffmpeg.on('error', (err) => console.error('[MusicPlayer] ffmpeg spawn error:', err));
+                ffmpeg.stderr.on('data', (d: Buffer) => console.log(`[ffmpeg] ${d.toString().trim()}`));
+                ffmpeg.on('error', (err: Error) => console.error('[MusicPlayer] ffmpeg spawn error:', err));
 
                 const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.WebmOpus });
-                resource.playStream.on('error', (err) => console.error('[MusicPlayer] stream error:', err));
+                resource.playStream.on('error', (err: Error) => console.error('[MusicPlayer] stream error:', err));
 
                 this.player.play(resource);
                 this.refreshDashboard();
