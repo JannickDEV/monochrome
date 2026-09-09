@@ -67,9 +67,13 @@ function normalizeItem(item: any, type: string): any {
 
 const cleanId = (id: string | number): string => String(id).replace(/^q:/, '');
 
+/** Any spelling of a Dolby Atmos quality token (DOLBY_ATMOS, DOLBY_ATMOS_EAC3_HIGH, …, EAC3_JOC). */
+const isAtmosQualityToken = (quality?: string): boolean => !!quality && /ATMOS|EAC3[_-]?JOC|AC[_-]?4/i.test(quality);
+
 export class QobuzProvider implements Provider {
     readonly id = 'qobuz';
     readonly name = 'Qobuz';
+    readonly supportsAtmos = false;
     private client: QobuzClient;
 
     constructor(client?: QobuzClient) {
@@ -180,7 +184,7 @@ export class QobuzProvider implements Provider {
     }
 
     async getStreamUrl(id: string | number, quality?: string): Promise<StreamInfo> {
-        if (quality === 'DOLBY_ATMOS') {
+        if (isAtmosQualityToken(quality)) {
             throw new ProviderError('Qobuz does not support Dolby Atmos', this.id, 'getStreamUrl');
         }
         // Reject raw numeric IDs that look like TIDAL IDs — these should never reach Qobuz.
@@ -212,7 +216,7 @@ export class QobuzProvider implements Provider {
     }
 
     async getTrackForDownload(id: string | number, quality?: string): Promise<StreamInfo> {
-        if (quality === 'DOLBY_ATMOS') {
+        if (isAtmosQualityToken(quality)) {
             throw new ProviderError('Qobuz does not support Dolby Atmos', this.id, 'getTrackForDownload');
         }
         // Reject raw numeric IDs that look like TIDAL IDs

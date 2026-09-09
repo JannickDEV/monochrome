@@ -42,6 +42,8 @@ export interface StreamInfo {
 export interface Provider {
     readonly id: string;
     readonly name: string;
+    /** True if this provider can deliver Dolby Atmos (E-AC-3 JOC / AC-4) streams. */
+    readonly supportsAtmos?: boolean;
 
     // Search operations
     search(query: string, options?: SearchOptions): Promise<SearchResults>;

@@ -59,6 +59,34 @@ describe('FallbackProvider', () => {
         expect(tidalMock.getStreamUrl).toHaveBeenCalledTimes(1);
     });
 
+    test('Atmos quality skips providers that cannot serve Atmos', async () => {
+        qobuzMock.supportsAtmos = false;
+        tidalMock.supportsAtmos = true;
+        tidalMock.getStreamUrl.mockResolvedValueOnce({
+            url: 'https://tidal.stream/atmos.mpd',
+            provider: 'tidal',
+            quality: 'DOLBY_ATMOS_EAC3_HIGH',
+        });
+
+        const res = await fallback.getStreamUrl('123', 'DOLBY_ATMOS');
+
+        expect(res.url).toBe('https://tidal.stream/atmos.mpd');
+        expect(qobuzMock.getStreamUrl).not.toHaveBeenCalled();
+        expect(tidalMock.getStreamUrl).toHaveBeenCalledTimes(1);
+    });
+
+    test('Atmos quality still tries every provider when none advertise Atmos support', async () => {
+        // No supportsAtmos flags set — must not strand the request.
+        fallback.isrcCache.set('123', 'US123');
+        qobuzMock.getStreamUrl.mockRejectedValueOnce(new Error('Qobuz does not support Dolby Atmos'));
+        tidalMock.getStreamUrl.mockResolvedValueOnce({ url: 'https://tidal.stream/x.mpd', provider: 'tidal' });
+
+        const res = await fallback.getStreamUrl('123', 'DOLBY_ATMOS_EAC3_HIGH');
+
+        expect(res.url).toBe('https://tidal.stream/x.mpd');
+        expect(qobuzMock.getStreamUrl).toHaveBeenCalledTimes(1);
+    });
+
     test('falls back to second provider when first provider returns empty search results', async () => {
         qobuzMock.search.mockResolvedValueOnce({
             tracks: { items: [] },

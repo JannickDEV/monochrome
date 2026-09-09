@@ -6,6 +6,7 @@ const cleanId = (id: string | number): string => String(id).replace(/^t:/, '');
 export class TidalProvider implements Provider {
     readonly id = 'tidal';
     readonly name = 'Tidal';
+    readonly supportsAtmos = true;
     private api: any;
 
     constructor(losslessApiInstance: any) {

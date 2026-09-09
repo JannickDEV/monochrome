@@ -1,6 +1,9 @@
 import type { Provider, SearchOptions, SearchResults, StreamInfo } from '../types.js';
 import { ProviderError } from '../types.js';
 
+/** Any spelling of a Dolby Atmos quality token (DOLBY_ATMOS, DOLBY_ATMOS_EAC3_HIGH, …, EAC3_JOC, AC-4). */
+const isAtmosQualityToken = (quality?: string): boolean => !!quality && /ATMOS|EAC3[_-]?JOC|AC[_-]?4/i.test(quality);
+
 export class FallbackProvider implements Provider {
     readonly id = 'fallback';
     readonly name = 'Fallback';
@@ -200,17 +203,31 @@ export class FallbackProvider implements Provider {
         return match.id;
     }
 
+    /**
+     * The providers to try for a stream/download at `quality`, in order. For an
+     * Atmos quality, only Atmos-capable providers (e.g. Tidal) — asking Qobuz for
+     * Atmos just yields a silent stereo fallback. Falls back to every provider if
+     * none advertise Atmos support, so nothing regresses.
+     */
+    private providersForQuality(quality?: string): Provider[] {
+        if (!isAtmosQualityToken(quality)) return this.providers;
+        const atmosCapable = this.providers.filter(p => p.supportsAtmos);
+        return atmosCapable.length ? atmosCapable : this.providers;
+    }
+
     private async executeWithFallback<T>(
         operation: string,
         args: any[],
         fn: (provider: Provider) => Promise<T>,
-        isEmptyResult?: (res: T) => boolean
+        isEmptyResult?: (res: T) => boolean,
+        providersOverride?: Provider[]
     ): Promise<T> {
-        if (!this.providers.length) {
+        const providers = providersOverride ?? this.providers;
+        if (!providers.length) {
             throw new ProviderError('No providers configured in FallbackProvider', 'fallback', operation);
         }
         const errors: Error[] = [];
-        for (const provider of this.providers) {
+        for (const provider of providers) {
             try {
                 const res = await fn(provider);
                 if (isEmptyResult && isEmptyResult(res)) {
@@ -419,7 +436,8 @@ export class FallbackProvider implements Provider {
                 }
                 return p.getStreamUrl(targetId, quality);
             },
-            res => !res || !res.url
+            res => !res || !res.url,
+            this.providersForQuality(quality)
         );
     }
 
@@ -438,7 +456,8 @@ export class FallbackProvider implements Provider {
                 }
                 return null;
             },
-            res => !res || !res.url
+            res => !res || !res.url,
+            this.providersForQuality(quality)
         );
     }
 
