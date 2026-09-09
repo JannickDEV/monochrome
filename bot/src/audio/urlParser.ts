@@ -250,7 +250,16 @@ export async function spotifyAccessToken(): Promise<string | null> {
     }
 }
 
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Why the last Web API attempt gave up — lets the caller message accurately. */
+let lastWebApiFailure: 'ratelimited' | 'forbidden' | 'other' | null = null;
+export function spotifyWebApiFailure() {
+    return lastWebApiFailure;
+}
+
 async function spotifyViaWebApi(url: string): Promise<SpotifyName[] | null> {
+    lastWebApiFailure = null;
     const m = url.match(/open\.spotify\.com\/(playlist|album)\/([a-zA-Z0-9]+)/);
     if (!m) return null;
     const [, kind, id] = m;
@@ -266,11 +275,22 @@ async function spotifyViaWebApi(url: string): Promise<SpotifyName[] | null> {
     let gotAPage = false;
 
     while (next && out.length < config.maxQueueAdd) {
-        const res = await fetch(next, { headers: { Authorization: `Bearer ${token}` } });
+        let res = await fetch(next, { headers: { Authorization: `Bearer ${token}` } });
+
+        // 429s here are almost always transient (a burst of refreshes/pages).
+        // Honour Retry-After for a couple of short retries before giving up.
+        for (let attempt = 0; res.status === 429 && attempt < 3; attempt++) {
+            const wait = Math.min((Number(res.headers.get('retry-after')) || 1) * 1000, 6000);
+            console.warn(`[spotify] 429 on ${kind} ${id} — waiting ${wait}ms (retry ${attempt + 1}/3)`);
+            await sleep(wait + 250);
+            res = await fetch(next, { headers: { Authorization: `Bearer ${token}` } });
+        }
+
         if (!res.ok) {
+            const detail = (await res.text().catch(() => '')).slice(0, 300);
+            console.warn(`[spotify] Web API ${res.status} for ${kind} ${id}: ${detail || '(no body)'}`);
+            lastWebApiFailure = res.status === 429 ? 'ratelimited' : res.status === 403 ? 'forbidden' : 'other';
             if (!gotAPage) {
-                const detail = (await res.text().catch(() => '')).slice(0, 300);
-                console.warn(`[spotify] Web API ${res.status} for ${kind} ${id}: ${detail || '(no body)'}`);
                 console.warn('[spotify] falling back to the scraper');
                 return null;
             }
@@ -447,14 +467,20 @@ const handlers: UrlHandler[] = [
                 return [];
             }
 
-            // The Web API path is dead for playlist reads (Spotify's Nov-2024
-            // lockdown 403s every non-Extended-Quota app), so long playlists
-            // come from the embed scraper, which Spotify caps near 100.
-            const capNote =
-                scraped && names.length >= 100
-                    ? `Note: Spotify only exposes the first ~${names.length} tracks of this ` +
-                      `playlist to third-party apps — that's a Spotify-side limit.`
-                    : '';
+            // Explain a short list only when it's actually capped by the scraper.
+            let capNote = '';
+            if (scraped && names.length >= 100) {
+                const why = spotifyWebApiFailure();
+                capNote =
+                    why === 'ratelimited'
+                        ? `Note: Spotify rate-limited the full read — got the first ~${names.length} via ` +
+                          `fallback. Try again in a minute for the whole list.`
+                        : why === 'forbidden'
+                          ? `Note: this token can't read the full playlist (Spotify 403) — showing the ` +
+                            `first ~${names.length}.`
+                          : `Note: only the first ~${names.length} tracks of this playlist are exposed ` +
+                            `without a first-party Spotify token.`;
+            }
 
             const out = await matchOnTidal(names, i, capNote);
             if (out.length === 0) await i.editReply('Could not match any of those tracks.');

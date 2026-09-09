@@ -55,7 +55,7 @@ async function checkSpotify(): Promise<void> {
     console.log(
         `spotify .......... OK  [${
             tier === 'first-party'
-                ? 'first-party / keymaster — playlists read in full'
+                ? 'first-party / keymaster — reads playlists via the Web API'
                 : 'dev app — albums only, playlists via ~100-track scraper'
         }]`
     );
