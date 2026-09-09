@@ -16,6 +16,13 @@ type Raw = any;
 
 const PAGE = 100; // per-request page size for playlist/album pagination
 
+// Spotify's first-party desktop ("keymaster") client id — the same one
+// librespot and OnTheSpot use. A refresh token issued for THIS client mints
+// official-client access tokens, which read playlists in full and are not
+// subject to the Nov-2024 developer-app restrictions. Public client (PKCE),
+// so there is no secret to go with it.
+const SPOTIFY_KEYMASTER_CLIENT_ID = '65b708073fc0480ea92a077233ca87bd';
+
 /** Tidal image ids come back as `xxxx-xxxx-...`; Qobuz already gives full URLs. */
 function resolveCover(raw: unknown): string | null {
     if (typeof raw !== 'string' || !raw) return null;
@@ -108,17 +115,63 @@ interface SpotifyName {
     artist: string;
 }
 
-let cachedSpotifyToken: { value: string; expires: number } | null = null;
+let cachedSpotifyToken: { value: string; expires: number; firstParty: boolean } | null = null;
 let warnedScopes = false;
 
 /**
- * A Spotify access token. Prefers the refresh-token (user) grant — the only one
- * that can read playlist tracks now — and falls back to client-credentials
- * (albums only). Cached until ~1 min before expiry.
+ * A Spotify access token.
+ *
+ * 1. If SPOTIFY_FIRSTPARTY_REFRESH_TOKEN is set, refresh it against Spotify's
+ *    own desktop client id (no secret). These tokens read playlists in full.
+ * 2. Otherwise fall back to the self-registered dev app: refresh-token grant if
+ *    a user token is configured, else client-credentials (albums only — dev-app
+ *    playlist reads 403 since Nov 2024).
+ *
+ * Cached until ~1 min before expiry.
  */
 async function spotifyAccessToken(): Promise<string | null> {
-    if (!config.spotifyClientId || !config.spotifyClientSecret) return null;
     if (cachedSpotifyToken && cachedSpotifyToken.expires > Date.now()) return cachedSpotifyToken.value;
+
+    // --- 1. first-party (keymaster) refresh token -----------------------------
+    if (config.spotifyFpRefreshToken) {
+        try {
+            const res = await fetch('https://accounts.spotify.com/api/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    grant_type: 'refresh_token',
+                    refresh_token: config.spotifyFpRefreshToken,
+                    client_id: SPOTIFY_KEYMASTER_CLIENT_ID,
+                }).toString(),
+            });
+            if (res.ok) {
+                const j: Raw = await res.json();
+                if (j.access_token) {
+                    if (j.refresh_token && j.refresh_token !== config.spotifyFpRefreshToken) {
+                        console.warn(
+                            '[spotify] first-party refresh token rotated — update ' +
+                                `SPOTIFY_FIRSTPARTY_REFRESH_TOKEN in bot/.env to: ${j.refresh_token}`
+                        );
+                    }
+                    cachedSpotifyToken = {
+                        value: j.access_token,
+                        expires: Date.now() + (j.expires_in ?? 3600) * 1000 - 60_000,
+                        firstParty: true,
+                    };
+                    return j.access_token;
+                }
+            } else {
+                const detail = (await res.text().catch(() => '')).slice(0, 200);
+                console.warn(`[spotify] first-party token refresh failed (${res.status}): ${detail || '(no body)'}`);
+            }
+        } catch (e) {
+            console.warn('[spotify] first-party token refresh error:', e);
+        }
+        // fall through to the dev-app path if the first-party refresh failed
+    }
+
+    // --- 2. self-registered dev app -----------------------------------------
+    if (!config.spotifyClientId || !config.spotifyClientSecret) return null;
 
     const auth = btoa(`${config.spotifyClientId}:${config.spotifyClientSecret}`);
     const body = config.spotifyRefreshToken
@@ -138,7 +191,11 @@ async function spotifyAccessToken(): Promise<string | null> {
             warnedScopes = true;
             console.log(`[spotify] user token scopes: ${j.scope || '(none)'}`);
         }
-        cachedSpotifyToken = { value: j.access_token, expires: Date.now() + (j.expires_in ?? 3600) * 1000 - 60_000 };
+        cachedSpotifyToken = {
+            value: j.access_token,
+            expires: Date.now() + (j.expires_in ?? 3600) * 1000 - 60_000,
+            firstParty: false,
+        };
         return j.access_token;
     } catch {
         return null;

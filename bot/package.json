@@ -10,7 +10,8 @@
     "start:node": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "probe": "bun run scripts/probe.ts",
-    "spotify-auth": "bun run scripts/spotify-auth.ts"
+    "spotify-auth": "bun run scripts/spotify-auth.ts",
+    "spotify-auth-fp": "bun run scripts/spotify-auth.ts --firstparty"
   },
   "dependencies": {
     "@discordjs/voice": "^0.19.2",

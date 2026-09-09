@@ -33,12 +33,39 @@ const interaction = {
 } as any;
 
 async function checkSpotify(): Promise<void> {
+    // First-party (keymaster) refresh token — reads playlists in full.
+    if (config.spotifyFpRefreshToken) {
+        try {
+            const res = await fetch('https://accounts.spotify.com/api/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    grant_type: 'refresh_token',
+                    refresh_token: config.spotifyFpRefreshToken,
+                    client_id: '65b708073fc0480ea92a077233ca87bd',
+                }).toString(),
+            });
+            const body: any = await res.json().catch(() => ({}));
+            console.log(
+                `spotify .......... ${
+                    res.ok && body.access_token
+                        ? 'OK  [first-party / keymaster — playlists read in full]'
+                        : `FAILED (${res.status}) ${JSON.stringify(body)}`
+                }`
+            );
+            return;
+        } catch (e) {
+            console.log('spotify .......... ERROR (first-party)', e);
+            return;
+        }
+    }
+
     if (!config.spotifyClientId || !config.spotifyClientSecret) {
-        console.log('spotify .......... no id/secret  (albums + playlists via ~100-track scraper)');
+        console.log('spotify .......... no creds  (albums + playlists via ~100-track scraper)');
         return;
     }
-    // Either grant reads albums fine; neither reads playlists since Spotify's
-    // Nov-2024 lockdown, so playlists always use the ~100-track scraper.
+    // Dev app: reads albums fine; does NOT read playlists since Spotify's
+    // Nov-2024 lockdown, so playlists fall back to the ~100-track scraper.
     const grant = config.spotifyRefreshToken ? 'refresh_token (user)' : 'client_credentials';
     try {
         const auth = btoa(`${config.spotifyClientId}:${config.spotifyClientSecret}`);
@@ -52,7 +79,7 @@ async function checkSpotify(): Promise<void> {
         });
         const body: any = await res.json().catch(() => ({}));
         console.log(
-            `spotify .......... ${res.ok && body.access_token ? `OK  [${grant}]` : `FAILED (${res.status}) ${JSON.stringify(body)}`}`
+            `spotify .......... ${res.ok && body.access_token ? `OK  [dev app: ${grant} — albums only]` : `FAILED (${res.status}) ${JSON.stringify(body)}`}`
         );
     } catch (e) {
         console.log('spotify .......... ERROR', e);

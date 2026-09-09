@@ -28,16 +28,24 @@ export const config = {
     qobuzUrl: (process.env.QOBUZ_URL || 'https://qz-api.bitperfect.dedyn.io').replace(/\/+$/, ''),
 
     /**
-     * Optional Spotify app credentials. With just id+secret, only ALBUM tracks
-     * are readable (client-credentials). Reading PLAYLISTS now needs a user
-     * token: run `bun scripts/spotify-auth.ts` once and paste the resulting
-     * SPOTIFY_REFRESH_TOKEN here. Without any of this the bot uses the
-     * ~100-track embed scraper.
+     * Optional Spotify app credentials (a self-registered developer app).
+     * id+secret alone reads ALBUM tracks (client-credentials). A user
+     * SPOTIFY_REFRESH_TOKEN does NOT unlock playlists — since Spotify's
+     * Nov-2024 lockdown every non-Extended-Quota app 403s on playlist reads.
      */
     spotifyClientId: process.env.SPOTIFY_CLIENT_ID || null,
     spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET || null,
     spotifyRefreshToken: process.env.SPOTIFY_REFRESH_TOKEN || null,
     spotifyRedirectUri: process.env.SPOTIFY_REDIRECT_URI || 'http://127.0.0.1:8888/callback',
+    /**
+     * Opt-in: a refresh token for Spotify's *first-party* desktop client id
+     * (the one librespot / OnTheSpot use). Tokens minted from it are the
+     * official-client identity and read playlists in full, past 100, with no
+     * developer app involved. Public client — no secret. Get one with
+     * `bun run spotify-auth-fp`. ToS-gray; use on a private instance only.
+     * When set it takes precedence over the dev-app creds.
+     */
+    spotifyFpRefreshToken: process.env.SPOTIFY_FIRSTPARTY_REFRESH_TOKEN || null,
 
     /** ffmpeg binary. Falls back to ffmpeg-static, then the system `ffmpeg`. */
     ffmpegPath: process.env.FFMPEG_PATH || null,
