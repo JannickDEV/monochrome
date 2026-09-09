@@ -6,6 +6,8 @@ dist
 .claude
 # Docker
 .env
+# bot: rotated Spotify first-party refresh token (persisted across restarts)
+.spotify-fp-refresh-token
 # Neutralino
 .tmp/
 .vitest-attachments/

@@ -45,6 +45,13 @@ Play/Pause · Skip · Shuffle · Stop buttons.
      100**, straight from the Web API. This is the official-client identity, so
      it isn't subject to the developer-app restrictions. Get the token once
      with `bun run spotify-auth-fp`. ToS-gray — private instances only.
+
+     Spotify **rotates** this refresh token on every use, so `.env` only seeds
+     the first refresh — after that the bot keeps the current token in
+     `bot/.spotify-fp-refresh-token` (gitignored) and reads that first. Don't
+     run `probe` against a Spotify URL while the bot is live: both processes
+     would race to rotate the same token and one loses it. If it ever ends up
+     revoked, re-run `bun run spotify-auth-fp`.
   2. **Dev app** — `SPOTIFY_CLIENT_ID` + `SPOTIFY_CLIENT_SECRET` read **albums**
      fully. They do **not** read playlists: since Spotify's Nov-2024 lockdown
      `GET /playlists/{id}/tracks` returns a bare `403` for any app not in

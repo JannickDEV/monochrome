@@ -16,6 +16,7 @@
  */
 import { createInterface } from 'node:readline';
 import { config } from '../src/config.js';
+import { saveRefreshToken, SPOTIFY_FP_TOKEN_STORE_PATH } from '../src/spotify-token-store.js';
 
 const KEYMASTER_CLIENT_ID = '65b708073fc0480ea92a077233ca87bd';
 const firstParty = process.argv.includes('--firstparty');
@@ -109,13 +110,21 @@ ${
         }
 
         const envVar = firstParty ? 'SPOTIFY_FIRSTPARTY_REFRESH_TOKEN' : 'SPOTIFY_REFRESH_TOKEN';
+
+        if (firstParty) {
+            // Spotify rotates this token on every refresh; the bot persists the
+            // latest one here. Seed it now so a re-run supersedes a stale one
+            // even before the bot restarts.
+            saveRefreshToken(j.refresh_token);
+        }
+
         console.log(`
 Granted scopes: ${j.scope || '(none!)'}
 
 Add this line to bot/.env and restart the bot:
 
 ${envVar}=${j.refresh_token}
-`);
+${firstParty ? `\n(also written to ${SPOTIFY_FP_TOKEN_STORE_PATH} — the bot reads that first and\nkeeps it updated as Spotify rotates the token.)\n` : ''}`);
         process.exit(0);
     });
 }

@@ -5,6 +5,8 @@ import { Readable } from 'stream';
 import { config, isProxyableUrl } from './config.js';
 import { commands, commandMap } from './commands/index.js';
 import { getPlayer } from './audio/musicPlayer.js';
+import { spotifyAccessToken, spotifyTokenTier } from './audio/urlParser.js';
+import { loadStoredRefreshToken } from './spotify-token-store.js';
 
 const client = new Client({
     intents: [
@@ -178,12 +180,31 @@ async function registerCommands() {
     console.log(`[bot] Registered ${body.length} command(s) ${config.guildId ? `to guild ${config.guildId}` : 'globally'}`);
 }
 
+async function reportSpotify() {
+    const configured =
+        !!config.spotifyFpRefreshToken ||
+        !!loadStoredRefreshToken() ||
+        !!config.spotifyClientId ||
+        !!config.spotifyRefreshToken;
+    if (!configured) return;
+    try {
+        const ok = await spotifyAccessToken();
+        const tier = spotifyTokenTier();
+        if (!ok) console.warn('[spotify] no usable token — playlists will use the ~100-track scraper');
+        else if (tier === 'first-party') console.log('[spotify] first-party token OK — playlists read in full');
+        else console.log('[spotify] dev-app token OK — albums only, playlists via the ~100-track scraper');
+    } catch {
+        /* non-fatal */
+    }
+}
+
 async function bootstrap() {
     try {
         await registerCommands();
     } catch (err) {
         console.error('[bot] Failed to register commands:', err);
     }
+    await reportSpotify();
     await client.login(config.discordToken);
 }
 

@@ -8,7 +8,8 @@
  * them — but they are never contacted here).
  */
 import { config } from '../src/config.js';
-import { resolveQueryToTracks } from '../src/audio/urlParser.js';
+import { resolveQueryToTracks, spotifyAccessToken, spotifyTokenTier } from '../src/audio/urlParser.js';
+import { loadStoredRefreshToken } from '../src/spotify-token-store.js';
 import { fallbackProvider } from '../src/api/devMode.js';
 import { SoundCloudProvider } from '../src/api/soundcloud.js';
 
@@ -33,57 +34,31 @@ const interaction = {
 } as any;
 
 async function checkSpotify(): Promise<void> {
-    // First-party (keymaster) refresh token — reads playlists in full.
-    if (config.spotifyFpRefreshToken) {
-        try {
-            const res = await fetch('https://accounts.spotify.com/api/token', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams({
-                    grant_type: 'refresh_token',
-                    refresh_token: config.spotifyFpRefreshToken,
-                    client_id: '65b708073fc0480ea92a077233ca87bd',
-                }).toString(),
-            });
-            const body: any = await res.json().catch(() => ({}));
-            console.log(
-                `spotify .......... ${
-                    res.ok && body.access_token
-                        ? 'OK  [first-party / keymaster — playlists read in full]'
-                        : `FAILED (${res.status}) ${JSON.stringify(body)}`
-                }`
-            );
-            return;
-        } catch (e) {
-            console.log('spotify .......... ERROR (first-party)', e);
-            return;
-        }
-    }
-
-    if (!config.spotifyClientId || !config.spotifyClientSecret) {
+    const haveFp = !!(loadStoredRefreshToken() ?? config.spotifyFpRefreshToken);
+    const haveDevApp = !!(config.spotifyClientId && config.spotifyClientSecret);
+    if (!haveFp && !haveDevApp) {
         console.log('spotify .......... no creds  (albums + playlists via ~100-track scraper)');
         return;
     }
-    // Dev app: reads albums fine; does NOT read playlists since Spotify's
-    // Nov-2024 lockdown, so playlists fall back to the ~100-track scraper.
-    const grant = config.spotifyRefreshToken ? 'refresh_token (user)' : 'client_credentials';
-    try {
-        const auth = btoa(`${config.spotifyClientId}:${config.spotifyClientSecret}`);
-        const bodyStr = config.spotifyRefreshToken
-            ? `grant_type=refresh_token&refresh_token=${encodeURIComponent(config.spotifyRefreshToken)}`
-            : 'grant_type=client_credentials';
-        const res = await fetch('https://accounts.spotify.com/api/token', {
-            method: 'POST',
-            headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: bodyStr,
-        });
-        const body: any = await res.json().catch(() => ({}));
+
+    // Goes through the same code path the bot uses — including first-party
+    // refresh-token rotation + persistence — so it doesn't burn the token.
+    const token = await spotifyAccessToken().catch(() => null);
+    const tier = spotifyTokenTier();
+    if (!token) {
         console.log(
-            `spotify .......... ${res.ok && body.access_token ? `OK  [dev app: ${grant} — albums only]` : `FAILED (${res.status}) ${JSON.stringify(body)}`}`
+            `spotify .......... FAILED to mint a token` +
+                `${haveFp ? '  (first-party token revoked? re-run `bun run spotify-auth-fp`)' : ''}`
         );
-    } catch (e) {
-        console.log('spotify .......... ERROR', e);
+        return;
     }
+    console.log(
+        `spotify .......... OK  [${
+            tier === 'first-party'
+                ? 'first-party / keymaster — playlists read in full'
+                : 'dev app — albums only, playlists via ~100-track scraper'
+        }]`
+    );
 }
 
 async function reach(url: string): Promise<string> {

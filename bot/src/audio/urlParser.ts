@@ -4,6 +4,7 @@ import { Track } from './musicPlayer.js';
 import { defaultSearchProvider, tidalProvider, qobuzProvider } from '../api/devMode.js';
 import { SoundCloudProvider } from '../api/soundcloud.js';
 import { config } from '../config.js';
+import { loadStoredRefreshToken, saveRefreshToken } from '../spotify-token-store.js';
 
 // spotify-url-info's default export is a factory (inject fetch); its shipped
 // types don't model that, so call through `any`.
@@ -117,57 +118,104 @@ interface SpotifyName {
 
 let cachedSpotifyToken: { value: string; expires: number; firstParty: boolean } | null = null;
 let warnedScopes = false;
+let warnedFpRevoked = false;
+
+/** Which tier minted the currently-cached token (for diagnostics). */
+export function spotifyTokenTier(): 'first-party' | 'dev-app' | null {
+    if (!cachedSpotifyToken || cachedSpotifyToken.expires <= Date.now()) return null;
+    return cachedSpotifyToken.firstParty ? 'first-party' : 'dev-app';
+}
+
+// Spotify rotates the first-party refresh token on every use, so the live value
+// is whatever it last handed back — the persisted file, else the .env seed.
+let fpRefreshToken: string | null | undefined;
+function currentFpRefreshToken(): string | null {
+    if (fpRefreshToken === undefined) fpRefreshToken = loadStoredRefreshToken() ?? config.spotifyFpRefreshToken;
+    return fpRefreshToken;
+}
+
+type FpResult = { access: string; expiresIn: number } | 'revoked' | 'error';
+
+/** One refresh attempt against the keymaster client. Persists a rotated token. */
+async function fpRefreshOnce(refreshToken: string): Promise<FpResult> {
+    let res: Response;
+    try {
+        res = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                grant_type: 'refresh_token',
+                refresh_token: refreshToken,
+                client_id: SPOTIFY_KEYMASTER_CLIENT_ID,
+            }).toString(),
+        });
+    } catch (e) {
+        console.warn('[spotify] first-party token refresh error:', e);
+        return 'error';
+    }
+
+    if (res.ok) {
+        const j: Raw = await res.json().catch(() => ({}));
+        if (!j.access_token) return 'error';
+        if (j.refresh_token && j.refresh_token !== refreshToken) {
+            fpRefreshToken = j.refresh_token;
+            saveRefreshToken(j.refresh_token);
+        }
+        return { access: j.access_token, expiresIn: j.expires_in ?? 3600 };
+    }
+
+    const detail = (await res.text().catch(() => '')).slice(0, 200);
+    if (detail.includes('invalid_grant')) return 'revoked';
+    console.warn(`[spotify] first-party token refresh failed (${res.status}): ${detail || '(no body)'}`);
+    return 'error';
+}
 
 /**
  * A Spotify access token.
  *
- * 1. If SPOTIFY_FIRSTPARTY_REFRESH_TOKEN is set, refresh it against Spotify's
- *    own desktop client id (no secret). These tokens read playlists in full.
+ * 1. If a first-party (keymaster) refresh token is available, refresh it
+ *    against Spotify's own desktop client id (no secret). These tokens read
+ *    playlists in full. The refresh token rotates on each use and is persisted.
  * 2. Otherwise fall back to the self-registered dev app: refresh-token grant if
  *    a user token is configured, else client-credentials (albums only — dev-app
  *    playlist reads 403 since Nov 2024).
  *
  * Cached until ~1 min before expiry.
  */
-async function spotifyAccessToken(): Promise<string | null> {
+export async function spotifyAccessToken(): Promise<string | null> {
     if (cachedSpotifyToken && cachedSpotifyToken.expires > Date.now()) return cachedSpotifyToken.value;
 
     // --- 1. first-party (keymaster) refresh token -----------------------------
-    if (config.spotifyFpRefreshToken) {
-        try {
-            const res = await fetch('https://accounts.spotify.com/api/token', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: new URLSearchParams({
-                    grant_type: 'refresh_token',
-                    refresh_token: config.spotifyFpRefreshToken,
-                    client_id: SPOTIFY_KEYMASTER_CLIENT_ID,
-                }).toString(),
-            });
-            if (res.ok) {
-                const j: Raw = await res.json();
-                if (j.access_token) {
-                    if (j.refresh_token && j.refresh_token !== config.spotifyFpRefreshToken) {
-                        console.warn(
-                            '[spotify] first-party refresh token rotated — update ' +
-                                `SPOTIFY_FIRSTPARTY_REFRESH_TOKEN in bot/.env to: ${j.refresh_token}`
-                        );
-                    }
-                    cachedSpotifyToken = {
-                        value: j.access_token,
-                        expires: Date.now() + (j.expires_in ?? 3600) * 1000 - 60_000,
-                        firstParty: true,
-                    };
-                    return j.access_token;
-                }
-            } else {
-                const detail = (await res.text().catch(() => '')).slice(0, 200);
-                console.warn(`[spotify] first-party token refresh failed (${res.status}): ${detail || '(no body)'}`);
+    let fpToken = currentFpRefreshToken();
+    if (fpToken) {
+        let result = await fpRefreshOnce(fpToken);
+        // A "revoked" can mean another process (a probe run, a restart) already
+        // rotated the on-disk token past ours — reload and retry once.
+        if (result === 'revoked') {
+            const fromDisk = loadStoredRefreshToken();
+            if (fromDisk && fromDisk !== fpToken) {
+                fpRefreshToken = fromDisk;
+                fpToken = fromDisk;
+                result = await fpRefreshOnce(fromDisk);
             }
-        } catch (e) {
-            console.warn('[spotify] first-party token refresh error:', e);
         }
-        // fall through to the dev-app path if the first-party refresh failed
+        if (typeof result === 'object') {
+            warnedFpRevoked = false;
+            cachedSpotifyToken = {
+                value: result.access,
+                expires: Date.now() + result.expiresIn * 1000 - 60_000,
+                firstParty: true,
+            };
+            return result.access;
+        }
+        if (result === 'revoked' && !warnedFpRevoked) {
+            warnedFpRevoked = true;
+            console.warn(
+                '[spotify] first-party refresh token is revoked/expired — re-run ' +
+                    '`bun run spotify-auth-fp` and update SPOTIFY_FIRSTPARTY_REFRESH_TOKEN. Falling back for now.'
+            );
+        }
+        // fall through to the dev-app path
     }
 
     // --- 2. self-registered dev app -----------------------------------------
