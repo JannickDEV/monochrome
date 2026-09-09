@@ -25,7 +25,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     let description = '';
 
     if (player.currentTrack) {
-        description += `**Now Playing:**\n[${player.currentTrack.title}](${player.currentTrack.url || '#'}) by ${player.currentTrack.artist.name}\n\n`;
+        description += `**Now Playing:**\n${player.currentTrack.title} — ${player.currentTrack.artist.name}\n\n`;
     }
 
     if (player.queue.length > 0) {

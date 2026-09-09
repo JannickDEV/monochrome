@@ -1,23 +1,22 @@
+import { spawn, type ChildProcessWithoutNullStreams } from 'child_process';
 import {
     AudioPlayer,
     AudioPlayerStatus,
     createAudioPlayer,
     createAudioResource,
-    demuxProbe,
     joinVoiceChannel,
+    StreamType,
     VoiceConnection,
     VoiceConnectionStatus,
-    generateDependencyReport
 } from '@discordjs/voice';
 import { GuildMember, TextChannel } from 'discord.js';
+import ffmpegStatic from 'ffmpeg-static';
 import { fallbackProvider } from '../api/devMode.js';
 import { SoundCloudProvider } from '../api/soundcloud.js';
-
-console.log("=== Discord Voice Dependencies ===");
-console.log(generateDependencyReport());
-console.log("==================================");
 import { updateDashboard } from '../ui/dashboard.js';
+import { config } from '../config.js';
 
+const FFMPEG_BIN = config.ffmpegPath || ffmpegStatic || 'ffmpeg';
 
 export interface Track {
     id: string;
@@ -29,46 +28,79 @@ export interface Track {
     cover?: string | null;
 }
 
+const FFMPEG_ARGS = (url: string) => [
+    '-reconnect', '1',
+    '-reconnect_streamed', '1',
+    '-reconnect_delay_max', '5',
+    '-user_agent',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    '-i', url,
+    '-vn',
+    '-c:a', 'libopus',
+    '-b:a', '128k',
+    '-vbr', 'on',
+    '-ar', '48000',
+    '-ac', '2',
+    '-f', 'webm',
+    'pipe:1',
+];
+
 export class MusicPlayer {
     public player: AudioPlayer;
     public connection: VoiceConnection | null = null;
     public queue: Track[] = [];
     public currentTrack: Track | null = null;
     public dashboardChannel: TextChannel | null = null;
-    private isProcessing: boolean = false;
-    
-    private soundCloudProvider = new SoundCloudProvider();
+
+    private readonly soundCloudProvider = new SoundCloudProvider();
+
+    /** Bumped on every skip/stop/track-change; a resolve in flight for a stale
+     *  token is discarded instead of being played. */
+    private playToken = 0;
+    private currentFfmpeg: ChildProcessWithoutNullStreams | null = null;
+    private pumping = false;
+    private idleTimer: NodeJS.Timeout | null = null;
 
     constructor() {
         this.player = createAudioPlayer();
 
         this.player.on(AudioPlayerStatus.Idle, () => {
             this.currentTrack = null;
-            this.playNext();
+            this.killFfmpeg();
+            this.schedulePump();
         });
 
-        this.player.on('error', error => {
-            console.error('[MusicPlayer] Audio Player Error:', error.message);
+        this.player.on('error', (error) => {
+            console.error('[MusicPlayer] Audio player error:', error.message);
             this.currentTrack = null;
-            this.playNext();
+            this.killFfmpeg();
+            this.schedulePump();
         });
     }
 
-    public async join(member: GuildMember, channel: TextChannel) {
+    get isPaused(): boolean {
+        return (
+            this.player.state.status === AudioPlayerStatus.Paused ||
+            this.player.state.status === AudioPlayerStatus.AutoPaused
+        );
+    }
+
+    public async join(member: GuildMember, channel: TextChannel): Promise<void> {
         if (!member.voice.channel) throw new Error('You must be in a voice channel first!');
-        
+
         this.connection = joinVoiceChannel({
             channelId: member.voice.channel.id,
             guildId: member.guild.id,
             adapterCreator: member.guild.voiceAdapterCreator,
         });
-        
         this.dashboardChannel = channel;
 
         this.connection.on('stateChange', (oldState, newState) => {
-            console.log(`[VoiceConnection] State changed from ${oldState.status} to ${newState.status}`);
+            console.log(`[VoiceConnection] ${oldState.status} -> ${newState.status}`);
         });
-
+        this.connection.on(VoiceConnectionStatus.Destroyed, () => {
+            this.connection = null;
+        });
         this.connection.on(VoiceConnectionStatus.Disconnected, () => {
             this.stop();
         });
@@ -76,115 +108,33 @@ export class MusicPlayer {
         this.connection.subscribe(this.player);
     }
 
-    public async addTrack(track: Track) {
+    public addTrack(track: Track): void {
         this.queue.push(track);
-        if (this.player.state.status === AudioPlayerStatus.Idle && !this.isProcessing) {
-            this.playNext();
-        } else {
-            this.refreshDashboard();
-        }
+        this.schedulePump();
     }
 
-    public async playNext() {
-        if (this.isProcessing) return;
-        
-        if (this.queue.length === 0) {
-            this.refreshDashboard();
-            return;
-        }
-
-        this.isProcessing = true;
-        const track = this.queue.shift()!;
-        this.currentTrack = track;
-
-        try {
-            console.log(`[MusicPlayer] Resolving stream for ${track.id} (${track.provider})`);
-            let streamInfo;
-            
-            if (track.provider === 'soundcloud') {
-                streamInfo = await this.soundCloudProvider.getStreamUrl(track.id);
-            } else {
-                // Uses FallbackProvider (Qobuz priority, Tidal fallback with ISRC translation)
-                streamInfo = await fallbackProvider.getStreamUrl(track.id);
-            }
-
-            if (!streamInfo || !streamInfo.url) {
-                throw new Error('Stream URL not found');
-            }
-
-            this.currentTrack.provider = streamInfo.provider || this.currentTrack.provider;
-
-            console.log(`[MusicPlayer] Playing stream URL: ${streamInfo.url.substring(0, 50)}...`);
-
-            const { spawn } = await import('child_process');
-            const { StreamType } = await import('@discordjs/voice');
-            
-            const args = [
-                '-reconnect', '1',
-                '-reconnect_streamed', '1',
-                '-reconnect_delay_max', '5',
-                '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                '-i', streamInfo.url,
-                '-c:a', 'libopus',
-                '-b:a', '128k',
-                '-vbr', 'on',
-                '-ar', '48000',
-                '-ac', '2',
-                '-f', 'webm',
-                'pipe:1'
-            ];
-
-            const ffmpegProcess = spawn(process.env.FFMPEG_PATH || 'ffmpeg', args);
-            
-            ffmpegProcess.stderr.on('data', (data) => {
-                // Log all FFmpeg output to catch ANY issues (it usually prints to stderr even on success)
-                console.log(`[FFmpeg-Debug] ${data.toString().trim()}`);
-            });
-            
-            ffmpegProcess.on('error', (err) => {
-                console.error('[MusicPlayer] FFmpeg spawn error:', err);
-            });
-
-            const resource = createAudioResource(ffmpegProcess.stdout, {
-                inputType: StreamType.WebmOpus,
-            });
-
-            resource.playStream.on('error', (err: any) => {
-                console.error('[MusicPlayer] Stream Error (FFmpeg):', err);
-            });
-
-            this.player.play(resource);
-            this.refreshDashboard();
-        } catch (error) {
-            console.error('[MusicPlayer] Failed to play track:', error);
-            this.currentTrack = null;
-            if (this.dashboardChannel) {
-                this.dashboardChannel.send(`❌ Failed to play **${track.title}**: ${error instanceof Error ? error.message : 'Unknown error'}`);
-            }
-        } finally {
-            this.isProcessing = false;
-            if (!this.currentTrack && this.queue.length > 0) {
-                this.playNext();
-            }
-        }
+    public addTracks(tracks: Track[]): void {
+        this.queue.push(...tracks);
+        this.schedulePump();
     }
 
-    public pause() {
+    public pause(): void {
         this.player.pause();
         this.refreshDashboard();
     }
 
-    public resume() {
+    public resume(): void {
         this.player.unpause();
         this.refreshDashboard();
     }
 
-    public skip() {
-        this.player.stop(); // triggers Idle event -> playNext()
+    public skip(): void {
+        this.playToken++;
+        this.killFfmpeg();
+        this.player.stop(); // -> Idle -> schedulePump
     }
 
-    public shuffle() {
-        if (this.queue.length === 0) return;
+    public shuffle(): void {
         for (let i = this.queue.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [this.queue[i], this.queue[j]] = [this.queue[j], this.queue[i]];
@@ -192,31 +142,157 @@ export class MusicPlayer {
         this.refreshDashboard();
     }
 
-    public stop() {
+    /** Clears the upcoming queue but leaves the current track playing. */
+    public clearUpcoming(): number {
+        const n = this.queue.length;
+        this.queue = [];
+        this.refreshDashboard();
+        return n;
+    }
+
+    /** Full teardown: empties the queue, stops playback and leaves the channel. */
+    public stop(): void {
+        this.playToken++;
+        this.clearIdleTimer();
         this.queue = [];
         this.currentTrack = null;
-        this.isProcessing = false;
+        this.killFfmpeg();
         this.player.stop();
         if (this.connection) {
-            this.connection.destroy();
+            try {
+                this.connection.destroy();
+            } catch {
+                /* already destroyed */
+            }
             this.connection = null;
         }
         this.refreshDashboard();
     }
 
-    public refreshDashboard() {
+    public refreshDashboard(): void {
         if (this.dashboardChannel) {
             updateDashboard(this.dashboardChannel, this);
         }
     }
+
+    // --- internals -------------------------------------------------------------
+
+    private killFfmpeg(): void {
+        if (this.currentFfmpeg) {
+            this.currentFfmpeg.removeAllListeners();
+            this.currentFfmpeg.stderr?.removeAllListeners();
+            try {
+                this.currentFfmpeg.kill('SIGKILL');
+            } catch {
+                /* already gone */
+            }
+            this.currentFfmpeg = null;
+        }
+    }
+
+    private clearIdleTimer(): void {
+        if (this.idleTimer) {
+            clearTimeout(this.idleTimer);
+            this.idleTimer = null;
+        }
+    }
+
+    private armIdleTimer(): void {
+        this.clearIdleTimer();
+        if (!this.connection) return;
+        this.idleTimer = setTimeout(() => {
+            if (this.currentTrack || this.queue.length > 0) return;
+            this.dashboardChannel?.send('Left the voice channel after being idle.').catch(() => {});
+            this.stop();
+        }, config.idleDisconnectMs);
+    }
+
+    private schedulePump(): void {
+        if (this.pumping) return;
+        this.pump().catch((e) => console.error('[MusicPlayer] pump crashed:', e));
+    }
+
+    /** Starts the next queued track if, and only if, the player is currently idle. */
+    private async pump(): Promise<void> {
+        if (this.pumping) return;
+        this.pumping = true;
+        try {
+            if (this.player.state.status !== AudioPlayerStatus.Idle) {
+                this.refreshDashboard();
+                return;
+            }
+            if (this.queue.length === 0) {
+                this.refreshDashboard();
+                this.armIdleTimer();
+                return;
+            }
+
+            this.clearIdleTimer();
+            const token = ++this.playToken;
+            const track = this.queue.shift()!;
+            this.currentTrack = track;
+            this.refreshDashboard();
+
+            try {
+                const streamInfo =
+                    track.provider === 'soundcloud'
+                        ? await this.soundCloudProvider.getStreamUrl(track.id)
+                        : await fallbackProvider.getStreamUrl(track.id);
+
+                if (token !== this.playToken) return; // skipped/stopped while resolving
+                if (!streamInfo?.url) throw new Error('No stream URL for this track');
+
+                track.provider = streamInfo.provider || track.provider;
+                track.url = streamInfo.url;
+
+                const ffmpeg = spawn(FFMPEG_BIN, FFMPEG_ARGS(streamInfo.url));
+
+                if (token !== this.playToken) {
+                    try {
+                        ffmpeg.kill('SIGKILL');
+                    } catch {
+                        /* noop */
+                    }
+                    return;
+                }
+
+                this.killFfmpeg();
+                this.currentFfmpeg = ffmpeg;
+
+                ffmpeg.stderr.on('data', (d) => console.log(`[ffmpeg] ${d.toString().trim()}`));
+                ffmpeg.on('error', (err) => console.error('[MusicPlayer] ffmpeg spawn error:', err));
+
+                const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.WebmOpus });
+                resource.playStream.on('error', (err) => console.error('[MusicPlayer] stream error:', err));
+
+                this.player.play(resource);
+                this.refreshDashboard();
+            } catch (error) {
+                if (token !== this.playToken) return;
+                console.error('[MusicPlayer] Failed to play track:', error);
+                this.currentTrack = null;
+                const msg = error instanceof Error ? error.message : 'Unknown error';
+                this.dashboardChannel?.send(`Failed to play **${track.title}** — ${msg}`).catch(() => {});
+            }
+        } finally {
+            this.pumping = false;
+            // If we ended up idle with tracks still queued (e.g. a resolve
+            // failed), try the next one.
+            if (this.player.state.status === AudioPlayerStatus.Idle && this.queue.length > 0) {
+                this.schedulePump();
+            }
+        }
+    }
 }
 
-// Global music player instances per guild
-export const guildPlayers = new Map<string, MusicPlayer>();
+// One player per guild.
+const guildPlayers = new Map<string, MusicPlayer>();
 
 export function getPlayer(guildId: string): MusicPlayer {
-    if (!guildPlayers.has(guildId)) {
-        guildPlayers.set(guildId, new MusicPlayer());
+    let player = guildPlayers.get(guildId);
+    if (!player) {
+        player = new MusicPlayer();
+        guildPlayers.set(guildId, player);
     }
-    return guildPlayers.get(guildId)!;
+    return player;
 }

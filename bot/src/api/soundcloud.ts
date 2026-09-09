@@ -125,11 +125,17 @@ export class SoundCloudProvider implements Provider {
         }
 
         const transcodings = trackData.media.transcodings;
-        // Prefer HLS Opus or HQ
-        let selected = transcodings.find((t: any) => t.format.protocol === 'hls' && t.format.mime_type.includes('opus')) ||
-                       transcodings.find((t: any) => t.format.protocol === 'hls' && t.quality === 'hq') ||
-                       transcodings.find((t: any) => t.format.protocol === 'hls') ||
-                       transcodings[0];
+        // ffmpeg pipes a plain progressive stream far more reliably than SC's
+        // HLS, so prefer progressive; fall back to HLS, then anything.
+        const selected =
+            transcodings.find((t: any) => t.format?.protocol === 'progressive' && t.quality === 'hq') ||
+            transcodings.find((t: any) => t.format?.protocol === 'progressive') ||
+            transcodings.find((t: any) => t.format?.protocol === 'hls' && t.quality === 'hq') ||
+            transcodings.find((t: any) => t.format?.protocol === 'hls') ||
+            transcodings[0];
+        if (!selected?.url) {
+            throw new ProviderError('No usable transcoding', 'soundcloud', 'getStreamUrl');
+        }
 
         const clientId = await this.getClientId();
         const streamInfoRes = await fetch(`${selected.url}?client_id=${clientId}`);

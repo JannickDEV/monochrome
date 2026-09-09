@@ -2,19 +2,17 @@ import { ChatInputCommandInteraction, SlashCommandBuilder, MessageFlags } from '
 import { getPlayer } from '../audio/musicPlayer.js';
 
 export const data = new SlashCommandBuilder()
-    .setName('clear')
-    .setDescription('Clear all upcoming tracks from the queue (does not stop the current track)');
+    .setName('stop')
+    .setDescription('Stop playback, clear the queue and leave the voice channel');
 
 export async function execute(interaction: ChatInputCommandInteraction) {
     if (!interaction.guildId) {
         return interaction.reply({ content: 'Server only.', flags: MessageFlags.Ephemeral });
     }
-
     const player = getPlayer(interaction.guildId);
-    if (player.queue.length === 0) {
-        return interaction.reply('The queue is already empty.');
+    if (!player.connection) {
+        return interaction.reply({ content: 'I am not in a voice channel.', flags: MessageFlags.Ephemeral });
     }
-
-    const count = player.clearUpcoming();
-    return interaction.reply(`Cleared ${count} track(s) from the queue.`);
+    player.stop();
+    return interaction.reply({ content: 'Stopped and left the channel.', flags: MessageFlags.Ephemeral });
 }

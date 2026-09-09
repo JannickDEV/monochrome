@@ -1,177 +1,193 @@
 import { Client, GatewayIntentBits, Interaction, REST, Routes, MessageFlags } from 'discord.js';
-import * as dotenv from 'dotenv';
-import PocketBase from 'pocketbase';
-import { data as playCommandData, execute as executePlayCommand } from './commands/play.js';
-import { data as queueCommandData, execute as executeQueueCommand } from './commands/queue.js';
-import { data as clearCommandData, execute as executeClearCommand } from './commands/clear.js';
-import { data as shuffleCommandData, execute as executeShuffleCommand } from './commands/shuffle.js';
-import { getPlayer } from './audio/musicPlayer.js';
 import express from 'express';
 import cors from 'cors';
 import { Readable } from 'stream';
-
-dotenv.config();
-
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID;
-
-if (!DISCORD_TOKEN || !CLIENT_ID) {
-    console.error('Missing DISCORD_TOKEN or CLIENT_ID in environment variables.');
-    process.exit(1);
-}
-
-// Initialize PocketBase
-const pb = new PocketBase('https://pb-data.bitperfect.dedyn.io');
-console.log('PocketBase initialized pointing to https://pb-data.bitperfect.dedyn.io');
+import { config, isProxyableUrl } from './config.js';
+import { commands, commandMap } from './commands/index.js';
+import { getPlayer } from './audio/musicPlayer.js';
 
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildVoiceStates,
-        GatewayIntentBits.GuildMessages
-    ]
+        GatewayIntentBits.GuildMessages,
+    ],
 });
 
-client.once('clientReady', () => {
-    console.log(`[Discord Bot] Logged in as ${client.user?.tag}!`);
+client.once('ready', () => {
+    console.log(`[bot] Logged in as ${client.user?.tag}`);
 });
 
-// Setup Audio Proxy Server
+// --- Audio / API proxy (sits behind the VPS nginx) ---------------------------
+
 const app = express();
 app.use(cors());
 
 app.get('/proxy-audio', async (req, res) => {
-    const targetUrl = req.query.url as string;
-    if (!targetUrl) return res.status(400).send('Missing url parameter');
-    
+    const targetUrl = req.query.url;
+    if (!isProxyableUrl(targetUrl)) {
+        res.status(400).send('Missing or disallowed url parameter');
+        return;
+    }
+
     try {
-        const fetchOptions: RequestInit = {};
-        if (req.headers.range) {
-            fetchOptions.headers = { 'Range': req.headers.range };
+        const headers: Record<string, string> = {};
+        if (req.headers.range) headers['Range'] = req.headers.range;
+
+        const upstream = await fetch(targetUrl, { headers });
+        if (!upstream.ok && upstream.status !== 206) {
+            res.status(upstream.status).send(upstream.statusText);
+            return;
         }
 
-        const fetchRes = await fetch(targetUrl, fetchOptions);
-        if (!fetchRes.ok) return res.status(fetchRes.status).send(fetchRes.statusText);
-        
-        if (fetchRes.headers.has('content-type')) res.setHeader('Content-Type', fetchRes.headers.get('content-type')!);
-        if (fetchRes.headers.has('content-length')) res.setHeader('Content-Length', fetchRes.headers.get('content-length')!);
-        if (fetchRes.headers.has('accept-ranges')) res.setHeader('Accept-Ranges', fetchRes.headers.get('accept-ranges')!);
-        if (fetchRes.headers.has('content-range')) res.setHeader('Content-Range', fetchRes.headers.get('content-range')!);
-        
-        if (fetchRes.body) {
-            Readable.fromWeb(fetchRes.body as any).pipe(res);
+        res.status(upstream.status);
+        for (const h of ['content-type', 'content-length', 'accept-ranges', 'content-range']) {
+            const v = upstream.headers.get(h);
+            if (v) res.setHeader(h, v);
+        }
+
+        if (upstream.body) {
+            Readable.fromWeb(upstream.body as any).pipe(res);
         } else {
             res.end();
         }
     } catch (err) {
-        console.error('[Audio Proxy] Error:', err);
-        res.status(500).send('Proxy error');
+        console.error('[proxy-audio] error:', err);
+        res.status(502).send('Proxy error');
     }
 });
 
 app.get('/proxy-api', async (req, res) => {
-    const targetUrl = req.query.url as string;
-    if (!targetUrl) return res.status(400).send('Missing url parameter');
+    const targetUrl = req.query.url;
+    if (!isProxyableUrl(targetUrl)) {
+        res.status(400).send('Missing or disallowed url parameter');
+        return;
+    }
 
     try {
-        const fetchRes = await fetch(targetUrl);
-        if (!fetchRes.ok) return res.status(fetchRes.status).send(fetchRes.statusText);
-        
-        const data = await fetchRes.json();
-        res.json(data);
+        const upstream = await fetch(targetUrl);
+        if (!upstream.ok) {
+            res.status(upstream.status).send(upstream.statusText);
+            return;
+        }
+        res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
+        res.status(upstream.status).send(Buffer.from(await upstream.arrayBuffer()));
     } catch (err) {
-        console.error('[API Proxy] Error:', err);
-        res.status(500).send('API Proxy error');
+        console.error('[proxy-api] error:', err);
+        res.status(502).send('Proxy error');
     }
 });
 
-const PROXY_PORT = process.env.PROXY_PORT || 8080;
-app.listen(PROXY_PORT, () => {
-    console.log(`[Audio Proxy] Listening on port ${PROXY_PORT}`);
+app.listen(config.proxyPort, config.proxyBind, () => {
+    console.log(`[proxy] listening on ${config.proxyBind}:${config.proxyPort}`);
 });
+
+// --- Voice channel housekeeping --------------------------------------------
 
 client.on('voiceStateUpdate', (oldState, newState) => {
-    // If the bot itself left or was kicked from a voice channel
-    if (oldState.channelId && !newState.channelId && oldState.id === client.user?.id) {
+    const botId = client.user?.id;
+    if (!botId) return;
+
+    // Bot itself was moved/kicked out of a voice channel.
+    if (oldState.id === botId && oldState.channelId && !newState.channelId) {
         const player = getPlayer(oldState.guild.id);
         if (player.connection) {
-            console.log(`[Voice] Bot left channel ${oldState.channelId}, clearing queue...`);
+            console.log(`[voice] bot left ${oldState.channelId}, tearing down`);
             player.stop();
+        }
+        return;
+    }
+
+    // A human left a channel the bot is sitting in, leaving it alone.
+    const left = oldState.channel && (!newState.channel || newState.channelId !== oldState.channelId);
+    if (left && oldState.channel!.members.has(botId)) {
+        const humans = oldState.channel!.members.filter((m) => !m.user.bot).size;
+        if (humans === 0) {
+            const player = getPlayer(oldState.guild.id);
+            if (player.connection) {
+                console.log('[voice] channel empty, leaving');
+                player.dashboardChannel?.send('Everyone left — leaving the voice channel.').catch(() => {});
+                player.stop();
+            }
         }
     }
 });
 
+// --- Interactions ---------------------------------------------------------
+
 client.on('interactionCreate', async (interaction: Interaction) => {
-    // Handle Slash Commands
     if (interaction.isChatInputCommand()) {
-        if (interaction.commandName === 'play') {
-            await executePlayCommand(interaction);
-        } else if (interaction.commandName === 'queue') {
-            await executeQueueCommand(interaction);
-        } else if (interaction.commandName === 'clear') {
-            await executeClearCommand(interaction);
-        } else if (interaction.commandName === 'shuffle') {
-            await executeShuffleCommand(interaction);
+        const command = commandMap.get(interaction.commandName);
+        if (!command) return;
+        try {
+            await command.execute(interaction);
+        } catch (err) {
+            console.error(`[command:${interaction.commandName}] error:`, err);
+            const content = 'Something went wrong running that command.';
+            if (interaction.deferred || interaction.replied) {
+                await interaction.editReply({ content }).catch(() => {});
+            } else {
+                await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => {});
+            }
         }
-    } 
-    // Handle Button Interactions from the Dashboard
-    else if (interaction.isButton()) {
+        return;
+    }
+
+    if (interaction.isButton()) {
         const guildId = interaction.guildId;
         if (!guildId) return;
-
         const player = getPlayer(guildId);
+
         if (!player.connection) {
-            await interaction.reply({ content: 'Bot is not in a voice channel!', flags: MessageFlags.Ephemeral });
+            await interaction
+                .reply({ content: 'The bot is not in a voice channel.', flags: MessageFlags.Ephemeral })
+                .catch(() => {});
             return;
         }
 
-        const customId = interaction.customId;
-
-        if (customId === 'btn_playpause') {
-            const isPlaying = player.player.state.status === 'playing';
-            if (isPlaying) player.pause();
-            else player.resume();
-            await interaction.reply({ content: isPlaying ? 'Paused playback.' : 'Resumed playback.', flags: MessageFlags.Ephemeral });
-        } else if (customId === 'btn_skip') {
-            player.skip();
-            await interaction.reply({ content: 'Skipped track.', flags: MessageFlags.Ephemeral });
-        } else if (customId === 'btn_shuffle') {
-            player.shuffle();
-            await interaction.reply({ content: 'Shuffled the queue! 🔀', flags: MessageFlags.Ephemeral });
-        } else if (customId === 'btn_stop') {
-            player.stop();
-            await interaction.reply({ content: 'Stopped playback.', flags: MessageFlags.Ephemeral });
+        switch (interaction.customId) {
+            case 'btn_playpause':
+                if (player.isPaused) player.resume();
+                else player.pause();
+                break;
+            case 'btn_skip':
+                player.skip();
+                break;
+            case 'btn_shuffle':
+                player.shuffle();
+                break;
+            case 'btn_stop':
+                player.stop();
+                break;
         }
+        // Silent ack — the dashboard message reflects the new state.
+        await interaction.deferUpdate().catch(() => {});
     }
 });
 
-// Register commands
+// --- Startup ----------------------------------------------------------------
+
 async function registerCommands() {
-    const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN!);
-    try {
-        console.log('Started refreshing application (/) commands.');
+    const rest = new REST({ version: '10' }).setToken(config.discordToken);
+    const body = commands.map((c) => c.data.toJSON());
+    const route = config.guildId
+        ? Routes.applicationGuildCommands(config.clientId, config.guildId)
+        : Routes.applicationCommands(config.clientId);
 
-        const commands = [
-            playCommandData.toJSON(),
-            queueCommandData.toJSON(),
-            clearCommandData.toJSON(),
-            shuffleCommandData.toJSON()
-        ];
-
-        await rest.put(
-            Routes.applicationCommands(CLIENT_ID!),
-            { body: commands },
-        );
-        console.log('Successfully reloaded application (/) commands.');
-    } catch (error) {
-        console.error('Failed to register commands:', error);
-    }
+    await rest.put(route, { body });
+    console.log(`[bot] Registered ${body.length} command(s) ${config.guildId ? `to guild ${config.guildId}` : 'globally'}`);
 }
 
-// Start the bot
 async function bootstrap() {
-    await registerCommands();
-    await client.login(DISCORD_TOKEN);
+    try {
+        await registerCommands();
+    } catch (err) {
+        console.error('[bot] Failed to register commands:', err);
+    }
+    await client.login(config.discordToken);
 }
 
-bootstrap();
+bootstrap().catch((err) => {
+    console.error('[bot] Fatal startup error:', err);
+    process.exit(1);
+});

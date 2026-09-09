@@ -1,8 +1,9 @@
 import { Provider, SearchOptions, SearchResults, StreamInfo } from '../../../js/services/types.js';
 import { FallbackProvider } from '../../../js/services/fallback/FallbackProvider.js';
+import { config } from '../config.js';
 
-const devModeUrl = process.env.DEV_MODE_URL || 'https://hf-core.bitperfect.dedyn.io';
-const qobuzUrl = process.env.QOBUZ_URL || 'https://qz-api.bitperfect.dedyn.io';
+const devModeUrl = config.hifiUrl;
+const qobuzUrl = config.qobuzUrl;
 
 class BotTidalProvider implements Provider {
     readonly id = 'tidal';

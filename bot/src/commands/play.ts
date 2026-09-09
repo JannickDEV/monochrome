@@ -1,79 +1,76 @@
-import { ChatInputCommandInteraction, GuildMember, SlashCommandBuilder, TextChannel, MessageFlags } from 'discord.js';
-import { getPlayer, Track } from '../audio/musicPlayer.js';
+import {
+    ChatInputCommandInteraction,
+    GuildMember,
+    SlashCommandBuilder,
+    TextChannel,
+    MessageFlags,
+} from 'discord.js';
+import { getPlayer } from '../audio/musicPlayer.js';
 import { resolveQueryToTracks } from '../audio/urlParser.js';
 
 export const data = new SlashCommandBuilder()
     .setName('play')
     .setDescription('Play a track or playlist')
-    .addStringOption(option => 
-        option.setName('query')
-            .setDescription('Search query for Tidal/Qobuz')
-            .setRequired(false))
-    .addStringOption(option => 
-        option.setName('title')
-            .setDescription('Specific track title')
-            .setRequired(false))
-    .addStringOption(option => 
-        option.setName('artist')
-            .setDescription('Specific artist name')
-            .setRequired(false))
-    .addStringOption(option => 
-        option.setName('url')
-            .setDescription('Direct Track or Album URL (Tidal, Qobuz, SoundCloud)')
-            .setRequired(false))
-    .addStringOption(option => 
-        option.setName('playlist')
-            .setDescription('Direct Playlist URL (Spotify, Tidal, Qobuz, SoundCloud)')
-            .setRequired(false));
+    .addStringOption((o) => o.setName('query').setDescription('Search text').setRequired(false))
+    .addStringOption((o) => o.setName('title').setDescription('Specific track title').setRequired(false))
+    .addStringOption((o) => o.setName('artist').setDescription('Specific artist name').setRequired(false))
+    .addStringOption((o) =>
+        o.setName('url').setDescription('Track / album URL (Tidal, Qobuz, SoundCloud)').setRequired(false)
+    )
+    .addStringOption((o) =>
+        o
+            .setName('playlist')
+            .setDescription('Playlist URL (Spotify, Tidal, Qobuz)')
+            .setRequired(false)
+    );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
     const member = interaction.member as GuildMember;
-    const channel = interaction.channel as TextChannel;
-    
-    if (!member.voice.channel) {
+    const channel = interaction.channel;
+
+    if (!member?.voice?.channel) {
         return interaction.reply({ content: 'You must be in a voice channel!', flags: MessageFlags.Ephemeral });
     }
+    if (!channel || !('send' in channel)) {
+        return interaction.reply({ content: 'Run this in a normal text channel.', flags: MessageFlags.Ephemeral });
+    }
 
-    const rawQuery = interaction.options.getString('query');
-    const urlQuery = interaction.options.getString('url');
-    const playlistQuery = interaction.options.getString('playlist');
-    const query = rawQuery || urlQuery || playlistQuery;
+    const url = interaction.options.getString('url') || interaction.options.getString('playlist');
+    const text = interaction.options.getString('query');
     const title = interaction.options.getString('title');
     const artist = interaction.options.getString('artist');
 
-    if (!query && !title) {
-        return interaction.reply({ content: 'You must provide a query, url, playlist, or a title!', flags: MessageFlags.Ephemeral });
+    if (!url && !text && !title) {
+        return interaction.reply({
+            content: 'Give me a query, url, playlist, or title.',
+            flags: MessageFlags.Ephemeral,
+        });
     }
+
+    // A URL is passed through untouched; otherwise join the text fragments.
+    const query = url || [text, title, artist].filter(Boolean).join(' ');
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const player = getPlayer(interaction.guildId!);
-    
+
     try {
         if (!player.connection) {
-            await player.join(member, channel);
+            await player.join(member, channel as TextChannel);
         }
 
-        let fullQuery = query || '';
-        if (title) fullQuery += ` ${title}`;
-        if (artist) fullQuery += ` ${artist}`;
+        const tracks = await resolveQueryToTracks(query, interaction);
+        if (tracks.length === 0) return; // resolveQueryToTracks already explained why
 
-        const tracks = await resolveQueryToTracks(fullQuery, interaction);
-
-        if (!tracks || tracks.length === 0) {
-            // resolveQueryToTracks handles its own editReply for empty/errors, 
-            // but just in case we hit a silent empty array fallback:
-            if (!interaction.replied) await interaction.editReply('No tracks found!');
-            return;
-        }
-
-        for (const track of tracks) {
-            await player.addTrack(track);
-        }
-
-        await interaction.editReply(`Added ${tracks.length} track(s) to queue!`);
-
+        player.addTracks(tracks);
+        await interaction.editReply(
+            tracks.length === 1
+                ? `Queued **${tracks[0].title}**.`
+                : `Queued **${tracks.length}** tracks.`
+        );
     } catch (error) {
-        console.error(error);
-        await interaction.editReply(`Error playing track: ${error instanceof Error ? error.message : 'Unknown'}`);
+        console.error('[play] error:', error);
+        await interaction
+            .editReply(`Error: ${error instanceof Error ? error.message : 'unknown'}`)
+            .catch(() => {});
     }
 }

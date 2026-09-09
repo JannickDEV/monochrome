@@ -1,71 +1,65 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, Message, TextChannel } from 'discord.js';
 import { MusicPlayer } from '../audio/musicPlayer.js';
 
+const ICON = 'https://raw.githubusercontent.com/JannickDEV/monochrome/main/assets/512.png';
+
 const dashboardMessages = new Map<string, Message>();
+const updateChain = new Map<string, Promise<unknown>>();
 
-const updateChain = new Map<string, Promise<any>>();
+function buildEmbed(player: MusicPlayer): EmbedBuilder {
+    const embed = new EmbedBuilder()
+        .setColor(0x000000)
+        .setAuthor({ name: 'Monochrome Music Bot', iconURL: ICON });
 
-export async function updateDashboard(channel: TextChannel, player: MusicPlayer) {
-    const prev = updateChain.get(channel.id) || Promise.resolve();
-    
-    const next = prev.then(async () => {
-        const embed = new EmbedBuilder()
-            .setColor(0x000000)
-            .setAuthor({ name: 'Monochrome Music Bot', iconURL: 'https://github.com/monochrome-music/monochrome/blob/main/assets/512.png?raw=true' });
+    const t = player.currentTrack;
+    if (!t && player.queue.length === 0) {
+        return embed.setTitle('Nothing is playing').setDescription('Use `/play` to start a session.');
+    }
+    if (t) {
+        embed
+            .setTitle((player.isPaused ? '⏸ ' : '') + t.title)
+            .setDescription(`by **${t.artist.name}**\n\nProvider: \`${t.provider.toUpperCase()}\``);
+        if (t.cover) embed.setThumbnail(t.cover);
+    }
+    if (player.queue.length > 0) {
+        const upNext = player.queue
+            .slice(0, 3)
+            .map((q, i) => `${i + 1}. ${q.title} — ${q.artist.name}`)
+            .join('\n');
+        embed.addFields({ name: `Up next (${player.queue.length})`, value: upNext });
+    }
+    return embed;
+}
 
-        if (!player.currentTrack && player.queue.length === 0) {
-            embed.setTitle('Nothing is playing right now')
-                 .setDescription('Use `/play` to start a session!');
-        } else if (player.currentTrack) {
-            const t = player.currentTrack;
-            embed.setTitle(t.title)
-                 .setDescription(`by **${t.artist.name}**\n\nProvider: \`${t.provider.toUpperCase()}\``);
-                 
-            if (t.cover) {
-                embed.setThumbnail(t.cover);
+function buildButtons(): ActionRowBuilder<ButtonBuilder> {
+    return new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('btn_playpause').setLabel('Play/Pause').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId('btn_skip').setLabel('Skip').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('btn_shuffle').setLabel('Shuffle').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId('btn_stop').setLabel('Stop').setStyle(ButtonStyle.Danger)
+    );
+}
+
+/** Edit-or-send the single control message for a channel, serialised per channel. */
+export function updateDashboard(channel: TextChannel, player: MusicPlayer): void {
+    const prev = updateChain.get(channel.id) ?? Promise.resolve();
+
+    const next = prev
+        .then(async () => {
+            const payload = { embeds: [buildEmbed(player)], components: [buildButtons()] };
+            const existing = dashboardMessages.get(channel.id);
+            try {
+                if (existing) {
+                    await existing.edit(payload);
+                    return;
+                }
+            } catch {
+                // message was deleted — fall through and send a fresh one
             }
-
-            if (player.queue.length > 0) {
-                const upNext = player.queue.slice(0, 3).map((q, i) => `${i + 1}. ${q.title} - ${q.artist.name}`).join('\n');
-                embed.addFields({ name: `Up Next (${player.queue.length})`, value: upNext });
-            }
-        }
-
-        const row = new ActionRowBuilder<ButtonBuilder>()
-            .addComponents(
-                new ButtonBuilder()
-                    .setCustomId('btn_playpause')
-                    .setLabel('Play/Pause')
-                    .setStyle(ButtonStyle.Primary),
-                new ButtonBuilder()
-                    .setCustomId('btn_skip')
-                    .setLabel('Skip')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('btn_shuffle')
-                    .setLabel('Shuffle')
-                    .setStyle(ButtonStyle.Secondary),
-                new ButtonBuilder()
-                    .setCustomId('btn_stop')
-                    .setLabel('Stop')
-                    .setStyle(ButtonStyle.Danger)
-            );
-
-        const existingMessage = dashboardMessages.get(channel.id);
-        
-        try {
-            if (existingMessage) {
-                await existingMessage.edit({ embeds: [embed], components: [row] });
-            } else {
-                const newMessage = await channel.send({ embeds: [embed], components: [row] });
-                dashboardMessages.set(channel.id, newMessage);
-            }
-        } catch (e) {
-            // If message was deleted by a user, send a new one
-            const newMessage = await channel.send({ embeds: [embed], components: [row] });
-            dashboardMessages.set(channel.id, newMessage);
-        }
-    }).catch(e => console.error('[Dashboard Update Error]', e));
+            const sent = await channel.send(payload);
+            dashboardMessages.set(channel.id, sent);
+        })
+        .catch((e) => console.error('[dashboard] update failed:', e));
 
     updateChain.set(channel.id, next);
 }

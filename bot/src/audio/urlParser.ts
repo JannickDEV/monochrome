@@ -1,265 +1,228 @@
 import spotifyUrlInfo from 'spotify-url-info';
+import { ChatInputCommandInteraction } from 'discord.js';
 import { Track } from './musicPlayer.js';
 import { defaultSearchProvider, tidalProvider, qobuzProvider } from '../api/devMode.js';
 import { SoundCloudProvider } from '../api/soundcloud.js';
-import { ChatInputCommandInteraction } from 'discord.js';
+import { config } from '../config.js';
 
 const { getTracks: getSpotifyTracks } = spotifyUrlInfo(fetch);
 const scProvider = new SoundCloudProvider();
 
-export async function resolveQueryToTracks(query: string, interaction: ChatInputCommandInteraction): Promise<Track[]> {
-    let tracks: Track[] = [];
+type Raw = any;
 
-    // 1. URL Support
-    if (query.startsWith('http://') || query.startsWith('https://')) {
-        if (query.includes('soundcloud.com')) {
-            const scTrack = await scProvider.resolveUrl(query);
-            if (scTrack) tracks.push(scTrack);
-        } else if (query.includes('tidal.com/')) {
-            if (query.includes('tidal.com/browse/playlist/') || query.includes('tidal.com/playlist/')) {
-                const idMatch = query.match(/playlist\/([a-zA-Z0-9-]+)/);
-                if (idMatch) {
-                    await interaction.editReply('Fetching Tidal playlist...');
-                    try {
-                        const tidalRes = await fetch(`https://hf-core.bitperfect.dedyn.io/playlist/?id=${idMatch[1]}`);
-                        if (tidalRes.ok) {
-                            const data = await tidalRes.json();
-                            const items = data.items || data.playlist?.items || [];
-                            if (items.length > 0) {
-                                for (const entry of items) {
-                                    const item = entry.item || entry;
-                                    if (item && item.id) {
-                                        tracks.push({
-                                            id: item.id.toString(),
-                                            title: item.title,
-                                            artist: { name: item.artist?.name || 'Unknown', id: item.artist?.id?.toString() },
-                                            provider: 'tidal',
-                                            cover: item.album?.cover ? defaultSearchProvider.getCoverUrl(item.album.cover) : null
-                                        });
-                                    }
-                                }
-                            } else {
-                                await interaction.editReply('Playlist is empty or could not be found.');
-                                return [];
-                            }
-                        } else {
-                            await interaction.editReply(`Failed to fetch Tidal playlist. Error ${tidalRes.status}`);
-                            return [];
-                        }
-                    } catch (e: any) {
-                        await interaction.editReply(`Failed to parse Tidal playlist: ${e.message}`);
-                        return [];
-                    }
-                } else {
-                    await interaction.editReply('Could not extract a valid Tidal playlist ID from the URL.');
-                    return [];
-                }
-            } else if (query.includes('tidal.com/browse/album/') || query.includes('tidal.com/album/')) {
-                const idMatch = query.match(/album\/([0-9]+)/);
-                if (idMatch) {
-                    await interaction.editReply('Fetching Tidal album...');
-                    try {
-                        const tidalRes = await fetch(`https://hf-core.bitperfect.dedyn.io/album/?id=${idMatch[1]}`);
-                        if (tidalRes.ok) {
-                            const data = await tidalRes.json();
-                            const items = data.items || data.data?.items || [];
-                            if (items.length > 0) {
-                                for (const entry of items) {
-                                    const item = entry.item || entry;
-                                    if (item && item.id) {
-                                        tracks.push({
-                                            id: item.id.toString(),
-                                            title: item.title,
-                                            artist: { name: item.artist?.name || 'Unknown', id: item.artist?.id?.toString() },
-                                            provider: 'tidal',
-                                            cover: item.album?.cover || data.data?.cover ? defaultSearchProvider.getCoverUrl(item.album?.cover || data.data?.cover) : null
-                                        });
-                                    }
-                                }
-                            } else {
-                                await interaction.editReply('Album is empty or could not be found.');
-                                return [];
-                            }
-                        } else {
-                            await interaction.editReply(`Failed to fetch Tidal album. Error ${tidalRes.status}`);
-                            return [];
-                        }
-                    } catch (e: any) {
-                        await interaction.editReply(`Failed to parse Tidal album: ${e.message}`);
-                        return [];
-                    }
-                } else {
-                    await interaction.editReply('Could not extract a valid Tidal album ID from the URL.');
-                    return [];
-                }
-            } else {
-                // Tidal Track
-                const match = query.match(/track\/(\d+)/);
-                if (match) {
-                    const id = match[1];
-                    const metadata = await tidalProvider.getTrackMetadata(id);
-                    if (metadata) {
-                        tracks.push({
-                            id: metadata.id,
-                            title: metadata.title,
-                            artist: { name: metadata.artist?.name || 'Unknown', id: metadata.artist?.id },
-                            provider: 'tidal',
-                            cover: metadata.album?.cover ? tidalProvider.getCoverUrl(metadata.album.cover) : null
-                        });
-                    }
-                } else {
-                    await interaction.editReply('Could not extract a valid Tidal track ID from the URL. Please ensure it is a track URL.');
-                    return [];
-                }
-            }
-        } else if (query.includes('qobuz.com/') || query.includes('m-app.bitperfect.dedyn.io/')) {
-            // First check if it's an album or playlist
-            if (query.includes('/album/')) {
-                const idMatch = query.match(/album\/[^\/]+\/([a-zA-Z0-9]+)/) || query.match(/album\/([a-zA-Z0-9]+)/);
-                if (idMatch) {
-                    await interaction.editReply('Fetching Qobuz album...');
-                try {
-                    const qobuzRes = await fetch(`https://qz-api.bitperfect.dedyn.io/album/get?album_id=${idMatch[1]}`);
-                    if (qobuzRes.ok) {
-                        const data = await qobuzRes.json();
-                        const items = data.tracks?.items || [];
-                        if (items.length > 0) {
-                            for (const item of items) {
-                                if (item && item.id) {
-                                    tracks.push({
-                                        id: `q:${item.id}`,
-                                        title: item.title,
-                                        artist: { name: item.performer?.name || item.artist?.name || 'Unknown', id: item.performer?.id?.toString() || item.artist?.id?.toString() },
-                                        provider: 'qobuz',
-                                        cover: item.album?.image?.large || data.image?.large ? defaultSearchProvider.getCoverUrl(item.album?.image?.large || data.image?.large) : null
-                                    });
-                                }
-                            }
-                        } else {
-                            await interaction.editReply('Album is empty or could not be found.');
-                            return [];
-                        }
-                    } else {
-                        await interaction.editReply(`Failed to fetch Qobuz album. Error ${qobuzRes.status}`);
-                        return [];
-                    }
-                } catch (e: any) {
-                    await interaction.editReply(`Failed to parse Qobuz album: ${e.message}`);
-                    return [];
-                }
-            } else {
-                await interaction.editReply('Could not extract a valid Qobuz album ID from the URL.');
-                return [];
-            }
-        } else if (query.includes('qobuz.com/playlist/') || query.includes('play.qobuz.com/playlist/') || query.includes('m-app.bitperfect.dedyn.io/playlist/')) {
-            const idMatch = query.match(/playlist\/[^\/]+\/([a-zA-Z0-9-]+)/) || query.match(/playlist\/([a-zA-Z0-9-]+)/);
-            if (idMatch) {
-                await interaction.editReply('Fetching Qobuz playlist...');
-                try {
-                    const qobuzRes = await fetch(`https://qz-api.bitperfect.dedyn.io/playlist/get?playlist_id=${idMatch[1]}&extra=tracks`);
-                    if (qobuzRes.ok) {
-                        const data = await qobuzRes.json();
-                        const items = data.tracks?.items || [];
-                        if (items.length > 0) {
-                            for (const item of items) {
-                                if (item && item.id) {
-                                    tracks.push({
-                                        id: `q:${item.id}`,
-                                        title: item.title,
-                                        artist: { name: item.performer?.name || item.artist?.name || 'Unknown', id: item.performer?.id?.toString() || item.artist?.id?.toString() },
-                                        provider: 'qobuz',
-                                        cover: item.album?.image?.large ? defaultSearchProvider.getCoverUrl(item.album.image.large) : null
-                                    });
-                                }
-                            }
-                        } else {
-                            await interaction.editReply('Playlist is empty or could not be found.');
-                            return [];
-                        }
-                    } else {
-                        await interaction.editReply(`Failed to fetch Qobuz playlist. Error ${qobuzRes.status}`);
-                        return [];
-                    }
-                } catch (e: any) {
-                    await interaction.editReply(`Failed to parse Qobuz playlist: ${e.message}`);
-                    return [];
-                }
-            } else {
-                await interaction.editReply('Could not extract a valid Qobuz playlist ID from the URL.');
-                return [];
-            }
-        } else {
-            // Handle tracks
-            const match = query.match(/track\/([a-zA-Z0-9_-]+)/);
-            if (match) {
-                const id = match[1];
-                const metadata = await qobuzProvider.getTrackMetadata(id);
-                if (metadata) {
-                    tracks.push({
-                        id: `q:${metadata.id || id}`,
-                        title: metadata.title,
-                        artist: { name: metadata.performer?.name || metadata.artist?.name || 'Unknown', id: undefined },
-                        provider: 'qobuz',
-                        cover: metadata.album?.image?.large || metadata.album?.image?.small || metadata.image?.large || null
-                    });
-                }
-            } else {
-                await interaction.editReply('Could not extract a valid Qobuz track ID from the URL. Please ensure it is a track URL.');
-                return [];
-            }
+/** Tidal image ids come back as `xxxx-xxxx-...`; Qobuz already gives full URLs. */
+function resolveCover(raw: unknown): string | null {
+    if (typeof raw !== 'string' || !raw) return null;
+    return raw.startsWith('http') ? raw : tidalProvider.getCoverUrl(raw);
+}
+
+function toTrack(item: Raw, provider: string): Track | null {
+    if (!item || item.id == null) return null;
+    const cover =
+        item.album?.cover ??
+        item.album?.image?.large ??
+        item.album?.image?.small ??
+        item.image?.large ??
+        item.cover ??
+        item.image ??
+        null;
+    return {
+        id: provider === 'qobuz' ? `q:${item.id}` : String(item.id),
+        title: item.title ?? 'Unknown Title',
+        artist: {
+            name: item.artist?.name ?? item.performer?.name ?? 'Unknown',
+            id: (item.artist?.id ?? item.performer?.id)?.toString(),
+        },
+        provider,
+        cover: resolveCover(cover),
+    };
+}
+
+/** Fetch a playlist/album track listing and normalise it to a flat item array. */
+async function fetchTrackList(
+    url: string,
+    label: string,
+    interaction: ChatInputCommandInteraction
+): Promise<Raw[] | null> {
+    await interaction.editReply(`Fetching ${label}…`);
+    let data: Raw;
+    try {
+        const res = await fetch(url);
+        if (!res.ok) {
+            await interaction.editReply(`Failed to fetch ${label} (HTTP ${res.status}).`);
+            return null;
         }
-    } else if (query.includes('open.spotify.com/playlist/') || query.includes('open.spotify.com/album/')) {
-        await interaction.editReply('Parsing Spotify playlist... this may take a moment.');
-        try {
-            const spTracks = await getSpotifyTracks(query);
-            if (spTracks && spTracks.length > 0) {
-                await interaction.editReply(`Found ${spTracks.length} tracks on Spotify. Resolving on Tidal/Qobuz...`);
-                let addedCount = 0;
-                for (const spTrack of spTracks) {
-                    const searchQuery = `${spTrack.name} ${spTrack.artist || spTrack.artists?.[0]?.name || ''}`.trim();
-                    const searchResults = await defaultSearchProvider.searchTracks(searchQuery, { limit: 1 });
-                    if (searchResults?.items?.length > 0) {
-                        const item = searchResults.items[0];
-                        tracks.push({
-                            id: item.id,
-                            title: item.title,
-                            artist: { name: item.artist?.name || 'Unknown', id: item.artist?.id },
-                            provider: item.provider || 'tidal',
-                            cover: item.album?.cover ? defaultSearchProvider.getCoverUrl(item.album.cover) : null
-                        });
-                        addedCount++;
-                    }
-                }
-                if (addedCount === 0) {
-                    await interaction.editReply('Could not resolve any of the Spotify tracks on Tidal/Qobuz.');
-                    return [];
-                }
-            } else {
-                await interaction.editReply('Could not find any tracks in this Spotify URL.');
+        data = await res.json();
+    } catch (e: any) {
+        await interaction.editReply(`Failed to reach the ${label} API: ${e?.message ?? e}`);
+        return null;
+    }
+    const raw: Raw[] =
+        data?.items || data?.tracks?.items || data?.data?.items || data?.playlist?.items || [];
+    const items = raw.map((entry: Raw) => entry?.item ?? entry).filter(Boolean);
+    if (items.length === 0) {
+        await interaction.editReply(`${label} is empty or could not be found.`);
+        return null;
+    }
+    return items;
+}
+
+interface UrlHandler {
+    test: (q: string) => boolean;
+    run: (q: string, interaction: ChatInputCommandInteraction) => Promise<Track[]>;
+}
+
+const first = (q: string, re: RegExp) => q.match(re)?.[1] ?? null;
+
+const handlers: UrlHandler[] = [
+    // --- SoundCloud -------------------------------------------------------------
+    {
+        test: (q) => q.includes('soundcloud.com'),
+        run: async (q, i) => {
+            try {
+                const t = await scProvider.resolveUrl(q);
+                return t ? [t] : [];
+            } catch (e: any) {
+                await i.editReply(`Couldn't resolve that SoundCloud link: ${e?.message ?? e}`);
                 return [];
             }
-        } catch (e: any) {
-            await interaction.editReply(`Failed to parse Spotify URL: ${e.message}`);
+        },
+    },
+
+    // --- Tidal ---------------------------------------------------------------
+    {
+        test: (q) => /tidal\.com\/(browse\/)?playlist\//.test(q),
+        run: async (q, i) => {
+            const id = first(q, /playlist\/([a-zA-Z0-9-]+)/);
+            if (!id) return (await i.editReply('Invalid Tidal playlist URL.'), []);
+            const items = await fetchTrackList(`${config.hifiUrl}/playlist/?id=${id}`, 'Tidal playlist', i);
+            return (items ?? []).map((it) => toTrack(it, 'tidal')).filter((t): t is Track => !!t);
+        },
+    },
+    {
+        test: (q) => /tidal\.com\/(browse\/)?album\//.test(q),
+        run: async (q, i) => {
+            const id = first(q, /album\/([0-9]+)/);
+            if (!id) return (await i.editReply('Invalid Tidal album URL.'), []);
+            const items = await fetchTrackList(`${config.hifiUrl}/album/?id=${id}`, 'Tidal album', i);
+            return (items ?? []).map((it) => toTrack(it, 'tidal')).filter((t): t is Track => !!t);
+        },
+    },
+    {
+        test: (q) => q.includes('tidal.com/'),
+        run: async (q, i) => {
+            const id = first(q, /track\/(\d+)/);
+            if (!id) return (await i.editReply('Could not find a Tidal track id in that URL.'), []);
+            const meta = await tidalProvider.getTrackMetadata(id).catch(() => null);
+            const t = meta && toTrack({ ...meta, id: meta.id ?? id }, 'tidal');
+            return t ? [t] : [];
+        },
+    },
+
+    // --- Qobuz (and the fork's m-app mirror) ----------------------------------
+    {
+        test: (q) =>
+            q.includes('qobuz.com/playlist/') ||
+            q.includes('play.qobuz.com/playlist/') ||
+            q.includes('m-app.bitperfect.dedyn.io/playlist/'),
+        run: async (q, i) => {
+            const id = first(q, /playlist\/[^/]+\/([a-zA-Z0-9-]+)/) ?? first(q, /playlist\/([a-zA-Z0-9-]+)/);
+            if (!id) return (await i.editReply('Invalid Qobuz playlist URL.'), []);
+            const items = await fetchTrackList(
+                `${config.qobuzUrl}/playlist/get?playlist_id=${id}&extra=tracks`,
+                'Qobuz playlist',
+                i
+            );
+            return (items ?? []).map((it) => toTrack(it, 'qobuz')).filter((t): t is Track => !!t);
+        },
+    },
+    {
+        test: (q) =>
+            (q.includes('qobuz.com/') || q.includes('m-app.bitperfect.dedyn.io/')) && q.includes('/album/'),
+        run: async (q, i) => {
+            const id = first(q, /album\/[^/]+\/([a-zA-Z0-9]+)/) ?? first(q, /album\/([a-zA-Z0-9]+)/);
+            if (!id) return (await i.editReply('Invalid Qobuz album URL.'), []);
+            const items = await fetchTrackList(`${config.qobuzUrl}/album/get?album_id=${id}`, 'Qobuz album', i);
+            return (items ?? []).map((it) => toTrack(it, 'qobuz')).filter((t): t is Track => !!t);
+        },
+    },
+    {
+        test: (q) => q.includes('qobuz.com/') || q.includes('m-app.bitperfect.dedyn.io/'),
+        run: async (q, i) => {
+            const id = first(q, /track\/([a-zA-Z0-9_-]+)/);
+            if (!id) return (await i.editReply('Could not find a Qobuz track id in that URL.'), []);
+            const meta = await qobuzProvider.getTrackMetadata(id).catch(() => null);
+            const t = meta && toTrack({ ...meta, id: meta.id ?? id }, 'qobuz');
+            return t ? [t] : [];
+        },
+    },
+
+    // --- Spotify (playlists / albums) --------------------------------------
+    {
+        test: (q) => /open\.spotify\.com\/(playlist|album)\//.test(q),
+        run: async (q, i) => {
+            await i.editReply('Reading the Spotify list…');
+            let spotifyTracks: Raw[] = [];
+            try {
+                spotifyTracks = await getSpotifyTracks(q);
+            } catch (e: any) {
+                await i.editReply(`Failed to read that Spotify URL: ${e?.message ?? e}`);
+                return [];
+            }
+            if (!spotifyTracks?.length) {
+                await i.editReply('No tracks found in that Spotify URL.');
+                return [];
+            }
+
+            const wanted = spotifyTracks.slice(0, config.maxQueueAdd);
+            await i.editReply(`Matching ${wanted.length} Spotify track(s) on Tidal/Qobuz…`);
+
+            const out: Track[] = [];
+            for (let start = 0; start < wanted.length; start += 6) {
+                const batch = wanted.slice(start, start + 6).map(async (sp) => {
+                    const name = `${sp.name ?? ''} ${sp.artist ?? sp.artists?.[0]?.name ?? ''}`.trim();
+                    if (!name) return null;
+                    const results = await defaultSearchProvider.searchTracks(name, { limit: 1 }).catch(() => null);
+                    const hit = results?.items?.[0];
+                    return hit ? toTrack(hit, hit.provider || 'tidal') : null;
+                });
+                for (const t of await Promise.all(batch)) if (t) out.push(t);
+            }
+            if (out.length === 0) await i.editReply('Could not match any of those tracks.');
+            return out;
+        },
+    },
+];
+
+/**
+ * Turns a free-text query or a supported URL into an ordered list of Tracks.
+ * Handlers own their own error `editReply`s; on failure they return `[]`.
+ */
+export async function resolveQueryToTracks(
+    query: string,
+    interaction: ChatInputCommandInteraction
+): Promise<Track[]> {
+    const q = query.trim();
+
+    if (/^https?:\/\//i.test(q)) {
+        const handler = handlers.find((h) => h.test(q));
+        if (!handler) {
+            await interaction.editReply(
+                'That link is not supported. Try a SoundCloud, Tidal, Qobuz, or Spotify (playlist/album) URL.'
+            );
             return [];
         }
-    } else {
-        await interaction.editReply('That URL provider is not fully supported yet (Only SoundCloud, Tidal, Qobuz, and Spotify Playlists are supported).');
-        return [];
-    }
-    } else {
-        // 2. Text Search (Tidal Default Provider)
-        const searchResults = await defaultSearchProvider.searchTracks(query.trim(), { limit: 5 });
-        if (searchResults && searchResults.items && searchResults.items.length > 0) {
-            const item = searchResults.items[0];
-            tracks.push({
-                id: item.id,
-                title: item.title,
-                artist: { name: item.artist?.name || 'Unknown', id: item.artist?.id },
-                provider: item.provider || 'tidal', // defaultSearchProvider is tidalProvider
-                cover: item.album?.cover ? defaultSearchProvider.getCoverUrl(item.album.cover) : (item.cover || item.image || null)
-            });
-        }
+        const tracks = await handler.run(q, interaction);
+        return tracks.slice(0, config.maxQueueAdd);
     }
 
-    return tracks;
+    // Plain text -> top search result (Tidal).
+    const results = await defaultSearchProvider.searchTracks(q, { limit: 5 }).catch(() => null);
+    const hit = results?.items?.[0];
+    if (!hit) {
+        await interaction.editReply(`No results for "${q}".`);
+        return [];
+    }
+    const track = toTrack(hit, hit.provider || 'tidal');
+    return track ? [track] : [];
 }

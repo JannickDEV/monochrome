@@ -1,16 +1,16 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, MessageFlags } from 'discord.js';
 import { getPlayer } from '../audio/musicPlayer.js';
 
-export const data = new SlashCommandBuilder().setName('shuffle').setDescription('Shuffle the current queue');
+export const data = new SlashCommandBuilder().setName('skip').setDescription('Skip the current track');
 
 export async function execute(interaction: ChatInputCommandInteraction) {
     if (!interaction.guildId) {
         return interaction.reply({ content: 'Server only.', flags: MessageFlags.Ephemeral });
     }
     const player = getPlayer(interaction.guildId);
-    if (player.queue.length < 2) {
-        return interaction.reply({ content: 'Not enough tracks queued to shuffle.', flags: MessageFlags.Ephemeral });
+    if (!player.currentTrack && player.queue.length === 0) {
+        return interaction.reply({ content: 'Nothing to skip.', flags: MessageFlags.Ephemeral });
     }
-    player.shuffle();
-    return interaction.reply({ content: 'Shuffled the queue. 🔀', flags: MessageFlags.Ephemeral });
+    player.skip();
+    return interaction.reply({ content: 'Skipped.', flags: MessageFlags.Ephemeral });
 }
