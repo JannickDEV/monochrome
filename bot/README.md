@@ -41,10 +41,10 @@ Play/Pause · Skip · Shuffle · Stop buttons.
 - Spotify resolution order for a `/play <spotify url>`:
   1. **First-party token** — if `SPOTIFY_FIRSTPARTY_REFRESH_TOKEN` is set, the
      bot refreshes it against Spotify's own desktop client id (the same one
-     librespot / OnTheSpot use) and reads the playlist/album **in full, past
-     100**, straight from the Web API. This is the official-client identity, so
-     it isn't subject to the developer-app restrictions. Get the token once
-     with `bun run spotify-auth-fp`. ToS-gray — private instances only.
+     librespot / OnTheSpot use) and reads the playlist/album straight from the
+     Web API, past 100. This is the official-client identity, so it isn't
+     subject to the developer-app `403`. Get the token once with
+     `bun run spotify-auth-fp`. ToS-gray — private instances only.
 
      Spotify **rotates** this refresh token on every use, so `.env` only seeds
      the first refresh — after that the bot keeps the current token in
@@ -52,6 +52,12 @@ Play/Pause · Skip · Shuffle · Stop buttons.
      run `probe` against a Spotify URL while the bot is live: both processes
      would race to rotate the same token and one loses it. If it ever ends up
      revoked, re-run `bun run spotify-auth-fp`.
+
+     **Caveat:** Spotify rate-limits this shared client id aggressively from
+     datacenter IPs. On a VPS you'll often get `429` on lists >100 and fall
+     back to the scraper anyway; it's reliable from a residential IP. Set
+     `SPOTIFY_API_BASE` to a relay on a residential connection to route around
+     it. Successful reads are cached for 15 min.
   2. **Dev app** — `SPOTIFY_CLIENT_ID` + `SPOTIFY_CLIENT_SECRET` read **albums**
      fully. They do **not** read playlists: since Spotify's Nov-2024 lockdown
      `GET /playlists/{id}/tracks` returns a bare `403` for any app not in

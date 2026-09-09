@@ -46,6 +46,12 @@ export const config = {
      * When set it takes precedence over the dev-app creds.
      */
     spotifyFpRefreshToken: process.env.SPOTIFY_FIRSTPARTY_REFRESH_TOKEN || null,
+    /**
+     * Base URL for Spotify Web API calls. Spotify rate-limits the first-party
+     * client id hard from datacenter IPs; point this at a relay on a
+     * residential connection to work around that. Defaults to api.spotify.com.
+     */
+    spotifyApiBase: (process.env.SPOTIFY_API_BASE || 'https://api.spotify.com').replace(/\/+$/, ''),
 
     /** ffmpeg binary. Falls back to ffmpeg-static, then the system `ffmpeg`. */
     ffmpegPath: process.env.FFMPEG_PATH || null,

@@ -254,15 +254,32 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /** Why the last Web API attempt gave up — lets the caller message accurately. */
 let lastWebApiFailure: 'ratelimited' | 'forbidden' | 'other' | null = null;
+/** Retry-After (seconds) from the last 429, when known. */
+let lastRetryAfter = 0;
 export function spotifyWebApiFailure() {
-    return lastWebApiFailure;
+    return { reason: lastWebApiFailure, retryAfter: lastRetryAfter };
 }
+
+// Successful full Web API reads, keyed by `${kind}:${id}`. Spotify rate-limits
+// this client id hard (esp. from datacenter IPs), so never re-fetch a list we
+// already have this session.
+const webApiCache = new Map<string, { at: number; names: SpotifyName[] }>();
+const WEB_API_CACHE_TTL = 15 * 60 * 1000;
+
+// Wait at most this long *inside* a command for a 429 to clear; anything longer
+// is a penalty box — fall back and tell the user the real number.
+const MAX_INLINE_RETRY_WAIT = 40;
 
 async function spotifyViaWebApi(url: string): Promise<SpotifyName[] | null> {
     lastWebApiFailure = null;
+    lastRetryAfter = 0;
     const m = url.match(/open\.spotify\.com\/(playlist|album)\/([a-zA-Z0-9]+)/);
     if (!m) return null;
     const [, kind, id] = m;
+
+    const cacheKey = `${kind}:${id}`;
+    const hit = webApiCache.get(cacheKey);
+    if (hit && Date.now() - hit.at < WEB_API_CACHE_TTL) return hit.names;
 
     const token = await spotifyAccessToken();
     if (!token) return null;
@@ -270,26 +287,31 @@ async function spotifyViaWebApi(url: string): Promise<SpotifyName[] | null> {
     const out: SpotifyName[] = [];
     let next: string | null =
         kind === 'playlist'
-            ? `https://api.spotify.com/v1/playlists/${id}/tracks?limit=100&fields=next,items(track(name,artists(name)))`
-            : `https://api.spotify.com/v1/albums/${id}/tracks?limit=50`;
+            ? `${config.spotifyApiBase}/v1/playlists/${id}/tracks?limit=100&fields=next,items(track(name,artists(name)))`
+            : `${config.spotifyApiBase}/v1/albums/${id}/tracks?limit=50`;
     let gotAPage = false;
 
     while (next && out.length < config.maxQueueAdd) {
         let res = await fetch(next, { headers: { Authorization: `Bearer ${token}` } });
 
-        // 429s here are almost always transient (a burst of refreshes/pages).
-        // Honour Retry-After for a couple of short retries before giving up.
-        for (let attempt = 0; res.status === 429 && attempt < 3; attempt++) {
-            const wait = Math.min((Number(res.headers.get('retry-after')) || 1) * 1000, 6000);
-            console.warn(`[spotify] 429 on ${kind} ${id} — waiting ${wait}ms (retry ${attempt + 1}/3)`);
-            await sleep(wait + 250);
-            res = await fetch(next, { headers: { Authorization: `Bearer ${token}` } });
+        // One bounded retry on 429. Hammering a rate limiter only deepens it.
+        if (res.status === 429) {
+            const secs = Number(res.headers.get('retry-after')) || 0;
+            lastRetryAfter = secs;
+            if (secs > 0 && secs <= MAX_INLINE_RETRY_WAIT) {
+                console.warn(`[spotify] 429 on ${kind} ${id} — waiting ${secs}s then one retry`);
+                await sleep(secs * 1000 + 300);
+                res = await fetch(next, { headers: { Authorization: `Bearer ${token}` } });
+            } else {
+                console.warn(`[spotify] 429 on ${kind} ${id} — Retry-After ${secs || '?'}s, not waiting`);
+            }
         }
 
         if (!res.ok) {
             const detail = (await res.text().catch(() => '')).slice(0, 300);
             console.warn(`[spotify] Web API ${res.status} for ${kind} ${id}: ${detail || '(no body)'}`);
             lastWebApiFailure = res.status === 429 ? 'ratelimited' : res.status === 403 ? 'forbidden' : 'other';
+            if (res.status === 429) lastRetryAfter = Number(res.headers.get('retry-after')) || lastRetryAfter;
             if (!gotAPage) {
                 console.warn('[spotify] falling back to the scraper');
                 return null;
@@ -302,7 +324,14 @@ async function spotifyViaWebApi(url: string): Promise<SpotifyName[] | null> {
             const t = it.track ?? it; // playlist wraps in .track; album/tracks are bare
             if (t?.name) out.push({ name: t.name, artist: t.artists?.[0]?.name ?? '' });
         }
-        next = j.next ?? null;
+        // `j.next` is an absolute api.spotify.com URL — keep it on the relay.
+        next = j.next ? j.next.replace('https://api.spotify.com', config.spotifyApiBase) : null;
+    }
+
+    // Cache a read that finished cleanly (pagination exhausted or queue cap hit),
+    // not one cut short by an error mid-way.
+    if (out.length && (!next || out.length >= config.maxQueueAdd)) {
+        webApiCache.set(cacheKey, { at: Date.now(), names: out });
     }
     return out;
 }
@@ -470,12 +499,13 @@ const handlers: UrlHandler[] = [
             // Explain a short list only when it's actually capped by the scraper.
             let capNote = '';
             if (scraped && names.length >= 100) {
-                const why = spotifyWebApiFailure();
+                const { reason, retryAfter } = spotifyWebApiFailure();
+                const when = retryAfter > 90 ? `~${Math.ceil(retryAfter / 60)} min` : retryAfter > 0 ? `~${retryAfter}s` : 'a bit';
                 capNote =
-                    why === 'ratelimited'
+                    reason === 'ratelimited'
                         ? `Note: Spotify rate-limited the full read — got the first ~${names.length} via ` +
-                          `fallback. Try again in a minute for the whole list.`
-                        : why === 'forbidden'
+                          `fallback. Try again in ${when} for the whole list.`
+                        : reason === 'forbidden'
                           ? `Note: this token can't read the full playlist (Spotify 403) — showing the ` +
                             `first ~${names.length}.`
                           : `Note: only the first ~${names.length} tracks of this playlist are exposed ` +
