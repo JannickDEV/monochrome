@@ -3012,16 +3012,27 @@ export class LosslessAPI {
         if (devModeSettings.isEnabled()) {
             const lookup = await this.getTrackFromDevMode(id, quality);
             let streamUrl;
+            let fromManifest = false;
             if (lookup.originalTrackUrl) {
                 streamUrl = lookup.originalTrackUrl;
             } else if (lookup.info?.manifest) {
                 streamUrl = this.extractStreamUrlFromManifest(lookup.info.manifest);
+                fromManifest = true;
             }
             if (!streamUrl) {
                 throw new Error('Could not resolve stream URL from dev mode');
             }
+            // A DASH manifest is handed to the player as a blob: URL with no
+            // extension — Shaka can't infer the type, so state it explicitly.
+            // (Atmos EAC3_JOC is always segmented DASH; FLAC is usually direct.)
+            const isDash =
+                fromManifest &&
+                (String(lookup.info?.manifestMimeType || '').includes('dash') ||
+                    (typeof streamUrl === 'string' && streamUrl.startsWith('blob:')));
             const result = {
                 url: streamUrl,
+                quality: lookup.info?.audioQuality || normalizeQualityToken(quality) || quality,
+                ...(isDash ? { playbackType: 'dash', delivery: 'dash', mimeType: 'application/dash+xml' } : {}),
                 rgInfo: lookup.info
                     ? {
                           trackReplayGain: lookup.info.trackReplayGain || lookup.info.replayGain,

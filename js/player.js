@@ -1837,7 +1837,11 @@ export class Player {
                         ? resolvedStreamInfo.mimeType || null
                         : this.isNativeAmazonHlsDecryptionUrl(streamUrl)
                           ? 'application/vnd.apple.mpegurl'
-                          : null;
+                          : isDashManifest &&
+                              typeof streamUrl === 'string' &&
+                              (streamUrl.startsWith('blob:') || streamUrl.startsWith('data:'))
+                            ? resolvedStreamInfo.mimeType || 'application/dash+xml'
+                            : null;
 
                     try {
                         if (startTime > 0) {
