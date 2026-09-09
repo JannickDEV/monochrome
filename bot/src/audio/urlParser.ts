@@ -108,27 +108,45 @@ interface SpotifyName {
     artist: string;
 }
 
-async function spotifyViaWebApi(url: string): Promise<SpotifyName[] | null> {
-    if (!config.spotifyClientId || !config.spotifyClientSecret) return null;
+let cachedSpotifyToken: { value: string; expires: number } | null = null;
 
+/**
+ * A Spotify access token. Prefers the refresh-token (user) grant — the only one
+ * that can read playlist tracks now — and falls back to client-credentials
+ * (albums only). Cached until ~1 min before expiry.
+ */
+async function spotifyAccessToken(): Promise<string | null> {
+    if (!config.spotifyClientId || !config.spotifyClientSecret) return null;
+    if (cachedSpotifyToken && cachedSpotifyToken.expires > Date.now()) return cachedSpotifyToken.value;
+
+    const auth = btoa(`${config.spotifyClientId}:${config.spotifyClientSecret}`);
+    const body = config.spotifyRefreshToken
+        ? `grant_type=refresh_token&refresh_token=${encodeURIComponent(config.spotifyRefreshToken)}`
+        : 'grant_type=client_credentials';
+
+    try {
+        const res = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+            body,
+        });
+        if (!res.ok) return null;
+        const j: Raw = await res.json();
+        if (!j.access_token) return null;
+        cachedSpotifyToken = { value: j.access_token, expires: Date.now() + (j.expires_in ?? 3600) * 1000 - 60_000 };
+        return j.access_token;
+    } catch {
+        return null;
+    }
+}
+
+async function spotifyViaWebApi(url: string): Promise<SpotifyName[] | null> {
     const m = url.match(/open\.spotify\.com\/(playlist|album)\/([a-zA-Z0-9]+)/);
     if (!m) return null;
     const [, kind, id] = m;
 
-    let token: string;
-    try {
-        const auth = btoa(`${config.spotifyClientId}:${config.spotifyClientSecret}`);
-        const res = await fetch('https://accounts.spotify.com/api/token', {
-            method: 'POST',
-            headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'grant_type=client_credentials',
-        });
-        if (!res.ok) return null;
-        token = (await res.json()).access_token;
-        if (!token) return null;
-    } catch {
-        return null;
-    }
+    const token = await spotifyAccessToken();
+    if (!token) return null;
 
     const out: SpotifyName[] = [];
     let next: string | null =
@@ -140,14 +158,17 @@ async function spotifyViaWebApi(url: string): Promise<SpotifyName[] | null> {
     while (next && out.length < config.maxQueueAdd) {
         const res = await fetch(next, { headers: { Authorization: `Bearer ${token}` } });
         if (!res.ok) {
-            // The very first request failed — hand off to the scraper. Spotify's
-            // own editorial/algorithmic playlists (37i9dQZF… ids) return 404 to
-            // app tokens; private lists 403.
+            // First request failed — hand off to the scraper. 403 on a playlist
+            // with only client-credentials is expected (Spotify no longer allows
+            // it); run `bun scripts/spotify-auth.ts` for a SPOTIFY_REFRESH_TOKEN.
+            // 404 = a Spotify-owned editorial list (37i9dQZF… id), unreadable by
+            // any app token.
             if (!gotAPage) {
-                console.warn(
-                    `[spotify] Web API ${res.status} for ${kind} ${id} — ` +
-                        `editorial/private lists aren't readable with an app token; falling back to the scraper`
-                );
+                const hint =
+                    kind === 'playlist' && !config.spotifyRefreshToken
+                        ? ' — set SPOTIFY_REFRESH_TOKEN (bun scripts/spotify-auth.ts) to read playlists'
+                        : '';
+                console.warn(`[spotify] Web API ${res.status} for ${kind} ${id}${hint}; falling back to the scraper`);
                 return null;
             }
             break; // partial result — keep what we already paged

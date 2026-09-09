@@ -28,12 +28,16 @@ export const config = {
     qobuzUrl: (process.env.QOBUZ_URL || 'https://qz-api.bitperfect.dedyn.io').replace(/\/+$/, ''),
 
     /**
-     * Optional Spotify app credentials (client-credentials flow). When set, big
-     * Spotify playlists/albums are read via the real Web API (fully paginated)
-     * instead of the ~100-track embed scraper.
+     * Optional Spotify app credentials. With just id+secret, only ALBUM tracks
+     * are readable (client-credentials). Reading PLAYLISTS now needs a user
+     * token: run `bun scripts/spotify-auth.ts` once and paste the resulting
+     * SPOTIFY_REFRESH_TOKEN here. Without any of this the bot uses the
+     * ~100-track embed scraper.
      */
     spotifyClientId: process.env.SPOTIFY_CLIENT_ID || null,
     spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET || null,
+    spotifyRefreshToken: process.env.SPOTIFY_REFRESH_TOKEN || null,
+    spotifyRedirectUri: process.env.SPOTIFY_REDIRECT_URI || 'http://127.0.0.1:8888/callback',
 
     /** ffmpeg binary. Falls back to ffmpeg-static, then the system `ffmpeg`. */
     ffmpegPath: process.env.FFMPEG_PATH || null,

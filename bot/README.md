@@ -37,9 +37,12 @@ Play/Pause · Skip · Shuffle · Stop buttons.
   nothing playing, or immediately when the last human leaves.
 - ffmpeg child processes are tracked and killed on skip/stop/track-change.
 - A `/play` with a huge playlist is capped at `MAX_QUEUE_ADD` (default 200).
-- Tidal / Qobuz playlists and albums are fully paginated. Spotify uses the
-  Web API when `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` are set, otherwise
-  a scraper limited to ~100 tracks.
+- Tidal / Qobuz playlists and albums are fully paginated.
+- Spotify: **albums** work with `SPOTIFY_CLIENT_ID` + `SPOTIFY_CLIENT_SECRET`.
+  **Playlists** additionally need `SPOTIFY_REFRESH_TOKEN` (Spotify no longer
+  lets app tokens read playlists) — run `bun run spotify-auth` once to get it.
+  Spotify's own editorial playlists (`37i9dQZF1DX…`) can't be read by any app
+  token; those fall back to the ~100-track scraper.
 
 ## Test without Discord
 

@@ -34,22 +34,26 @@ const interaction = {
 
 async function checkSpotify(): Promise<void> {
     if (!config.spotifyClientId || !config.spotifyClientSecret) {
-        console.log('spotify creds .... not set  (falls back to the ~100-track scraper)');
+        console.log('spotify .......... no id/secret  (playlists via ~100-track scraper)');
         return;
     }
+    const grant = config.spotifyRefreshToken ? 'refresh_token (user)' : 'client_credentials (albums only)';
     try {
         const auth = btoa(`${config.spotifyClientId}:${config.spotifyClientSecret}`);
+        const bodyStr = config.spotifyRefreshToken
+            ? `grant_type=refresh_token&refresh_token=${encodeURIComponent(config.spotifyRefreshToken)}`
+            : 'grant_type=client_credentials';
         const res = await fetch('https://accounts.spotify.com/api/token', {
             method: 'POST',
             headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: 'grant_type=client_credentials',
+            body: bodyStr,
         });
         const body: any = await res.json().catch(() => ({}));
         console.log(
-            `spotify creds .... ${res.ok && body.access_token ? 'OK — token acquired' : `FAILED (${res.status}) ${JSON.stringify(body)}`}`
+            `spotify .......... ${res.ok && body.access_token ? `OK  [${grant}]` : `FAILED (${res.status}) ${JSON.stringify(body)}`}`
         );
     } catch (e) {
-        console.log('spotify creds .... ERROR', e);
+        console.log('spotify .......... ERROR', e);
     }
 }
 
