@@ -37,6 +37,9 @@ Play/Pause · Skip · Shuffle · Stop buttons.
   nothing playing, or immediately when the last human leaves.
 - ffmpeg child processes are tracked and killed on skip/stop/track-change.
 - A `/play` with a huge playlist is capped at `MAX_QUEUE_ADD` (default 200).
+- Tidal / Qobuz playlists and albums are fully paginated. Spotify uses the
+  Web API when `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` are set, otherwise
+  a scraper limited to ~100 tracks.
 
 ## Proxy
 

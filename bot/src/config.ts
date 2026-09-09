@@ -27,6 +27,14 @@ export const config = {
     /** Qobuz API. */
     qobuzUrl: (process.env.QOBUZ_URL || 'https://qz-api.bitperfect.dedyn.io').replace(/\/+$/, ''),
 
+    /**
+     * Optional Spotify app credentials (client-credentials flow). When set, big
+     * Spotify playlists/albums are read via the real Web API (fully paginated)
+     * instead of the ~100-track embed scraper.
+     */
+    spotifyClientId: process.env.SPOTIFY_CLIENT_ID || null,
+    spotifyClientSecret: process.env.SPOTIFY_CLIENT_SECRET || null,
+
     /** ffmpeg binary. Falls back to ffmpeg-static, then the system `ffmpeg`. */
     ffmpegPath: process.env.FFMPEG_PATH || null,
 

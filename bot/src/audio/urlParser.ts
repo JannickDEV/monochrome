@@ -10,6 +10,8 @@ const scProvider = new SoundCloudProvider();
 
 type Raw = any;
 
+const PAGE = 100; // per-request page size for playlist/album pagination
+
 /** Tidal image ids come back as `xxxx-xxxx-...`; Qobuz already gives full URLs. */
 function resolveCover(raw: unknown): string | null {
     if (typeof raw !== 'string' || !raw) return null;
@@ -38,34 +40,142 @@ function toTrack(item: Raw, provider: string): Track | null {
     };
 }
 
-/** Fetch a playlist/album track listing and normalise it to a flat item array. */
+function extractItems(data: Raw): Raw[] {
+    const raw: Raw[] = data?.items || data?.tracks?.items || data?.data?.items || data?.playlist?.items || [];
+    return raw.map((entry: Raw) => entry?.item ?? entry).filter(Boolean);
+}
+
+const firstId = (items: Raw[]): string | null => (items[0]?.id != null ? String(items[0].id) : null);
+
+/**
+ * Fetch a playlist/album track listing, following `offset`/`limit` pagination
+ * until the source is exhausted, a page repeats (server ignored `offset`), or
+ * the queue cap is reached.
+ */
 async function fetchTrackList(
-    url: string,
+    buildUrl: (offset: number, limit: number) => string,
     label: string,
     interaction: ChatInputCommandInteraction
 ): Promise<Raw[] | null> {
     await interaction.editReply(`Fetching ${label}…`);
-    let data: Raw;
-    try {
-        const res = await fetch(url);
-        if (!res.ok) {
-            await interaction.editReply(`Failed to fetch ${label} (HTTP ${res.status}).`);
+
+    const all: Raw[] = [];
+    let offset = 0;
+    let pageSize = 0;
+
+    for (let iter = 0; iter < 100 && all.length < config.maxQueueAdd; iter++) {
+        let data: Raw;
+        try {
+            const res = await fetch(buildUrl(offset, PAGE));
+            if (!res.ok) {
+                if (all.length) break; // keep what we already have
+                await interaction.editReply(`Failed to fetch ${label} (HTTP ${res.status}).`);
+                return null;
+            }
+            data = await res.json();
+        } catch (e: any) {
+            if (all.length) break;
+            await interaction.editReply(`Failed to reach the ${label} API: ${e?.message ?? e}`);
             return null;
         }
-        data = await res.json();
-    } catch (e: any) {
-        await interaction.editReply(`Failed to reach the ${label} API: ${e?.message ?? e}`);
-        return null;
+
+        const page = extractItems(data);
+        if (page.length === 0) break;
+        if (all.length && firstId(page) && firstId(page) === firstId(all)) break; // offset ignored -> loop
+
+        all.push(...page);
+        if (pageSize && page.length < pageSize) break; // short page -> last page
+        pageSize = page.length;
+        offset += page.length;
+        if (page.length > 30) await interaction.editReply(`Fetching ${label}… (${all.length})`);
     }
-    const raw: Raw[] =
-        data?.items || data?.tracks?.items || data?.data?.items || data?.playlist?.items || [];
-    const items = raw.map((entry: Raw) => entry?.item ?? entry).filter(Boolean);
-    if (items.length === 0) {
+
+    if (all.length === 0) {
         await interaction.editReply(`${label} is empty or could not be found.`);
         return null;
     }
-    return items;
+    return all.slice(0, config.maxQueueAdd);
 }
+
+// --- Spotify -----------------------------------------------------------------
+
+interface SpotifyName {
+    name: string;
+    artist: string;
+}
+
+async function spotifyViaWebApi(url: string): Promise<SpotifyName[] | null> {
+    if (!config.spotifyClientId || !config.spotifyClientSecret) return null;
+
+    const m = url.match(/open\.spotify\.com\/(playlist|album)\/([a-zA-Z0-9]+)/);
+    if (!m) return null;
+    const [, kind, id] = m;
+
+    let token: string;
+    try {
+        const auth = btoa(`${config.spotifyClientId}:${config.spotifyClientSecret}`);
+        const res = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: { Authorization: `Basic ${auth}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'grant_type=client_credentials',
+        });
+        if (!res.ok) return null;
+        token = (await res.json()).access_token;
+        if (!token) return null;
+    } catch {
+        return null;
+    }
+
+    const out: SpotifyName[] = [];
+    let next: string | null =
+        kind === 'playlist'
+            ? `https://api.spotify.com/v1/playlists/${id}/tracks?limit=100&fields=next,items(track(name,artists(name)))`
+            : `https://api.spotify.com/v1/albums/${id}/tracks?limit=50`;
+
+    while (next && out.length < config.maxQueueAdd) {
+        const res = await fetch(next, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) break;
+        const j: Raw = await res.json();
+        for (const it of j.items || []) {
+            const t = it.track ?? it; // playlist wraps in .track; album/tracks are bare
+            if (t?.name) out.push({ name: t.name, artist: t.artists?.[0]?.name ?? '' });
+        }
+        next = j.next ?? null;
+    }
+    return out;
+}
+
+async function spotifyViaScraper(url: string): Promise<SpotifyName[] | null> {
+    try {
+        const tracks: Raw[] = await getSpotifyTracks(url);
+        return (tracks || [])
+            .map((sp) => ({ name: sp.name ?? '', artist: sp.artist ?? sp.artists?.[0]?.name ?? '' }))
+            .filter((s) => s.name);
+    } catch {
+        return null;
+    }
+}
+
+/** Resolves a list of `{name, artist}` to Tracks by searching each on Tidal, batched. */
+async function matchOnTidal(names: SpotifyName[], interaction: ChatInputCommandInteraction): Promise<Track[]> {
+    const wanted = names.slice(0, config.maxQueueAdd);
+    await interaction.editReply(`Matching ${wanted.length} track(s) on Tidal/Qobuz…`);
+
+    const out: Track[] = [];
+    for (let start = 0; start < wanted.length; start += 8) {
+        const batch = wanted.slice(start, start + 8).map(async ({ name, artist }) => {
+            const query = `${name} ${artist}`.trim();
+            if (!query) return null;
+            const results = await defaultSearchProvider.searchTracks(query, { limit: 1 }).catch(() => null);
+            const hit = results?.items?.[0];
+            return hit ? toTrack(hit, hit.provider || 'tidal') : null;
+        });
+        for (const t of await Promise.all(batch)) if (t) out.push(t);
+    }
+    return out;
+}
+
+// --- URL handlers ----------------------------------------------------------
 
 interface UrlHandler {
     test: (q: string) => boolean;
@@ -95,7 +205,11 @@ const handlers: UrlHandler[] = [
         run: async (q, i) => {
             const id = first(q, /playlist\/([a-zA-Z0-9-]+)/);
             if (!id) return (await i.editReply('Invalid Tidal playlist URL.'), []);
-            const items = await fetchTrackList(`${config.hifiUrl}/playlist/?id=${id}`, 'Tidal playlist', i);
+            const items = await fetchTrackList(
+                (o, l) => `${config.hifiUrl}/playlist/?id=${id}&offset=${o}&limit=${l}`,
+                'Tidal playlist',
+                i
+            );
             return (items ?? []).map((it) => toTrack(it, 'tidal')).filter((t): t is Track => !!t);
         },
     },
@@ -104,7 +218,11 @@ const handlers: UrlHandler[] = [
         run: async (q, i) => {
             const id = first(q, /album\/([0-9]+)/);
             if (!id) return (await i.editReply('Invalid Tidal album URL.'), []);
-            const items = await fetchTrackList(`${config.hifiUrl}/album/?id=${id}`, 'Tidal album', i);
+            const items = await fetchTrackList(
+                (o, l) => `${config.hifiUrl}/album/?id=${id}&offset=${o}&limit=${l}`,
+                'Tidal album',
+                i
+            );
             return (items ?? []).map((it) => toTrack(it, 'tidal')).filter((t): t is Track => !!t);
         },
     },
@@ -129,7 +247,7 @@ const handlers: UrlHandler[] = [
             const id = first(q, /playlist\/[^/]+\/([a-zA-Z0-9-]+)/) ?? first(q, /playlist\/([a-zA-Z0-9-]+)/);
             if (!id) return (await i.editReply('Invalid Qobuz playlist URL.'), []);
             const items = await fetchTrackList(
-                `${config.qobuzUrl}/playlist/get?playlist_id=${id}&extra=tracks`,
+                (o, l) => `${config.qobuzUrl}/playlist/get?playlist_id=${id}&extra=tracks&limit=${l}&offset=${o}`,
                 'Qobuz playlist',
                 i
             );
@@ -142,7 +260,11 @@ const handlers: UrlHandler[] = [
         run: async (q, i) => {
             const id = first(q, /album\/[^/]+\/([a-zA-Z0-9]+)/) ?? first(q, /album\/([a-zA-Z0-9]+)/);
             if (!id) return (await i.editReply('Invalid Qobuz album URL.'), []);
-            const items = await fetchTrackList(`${config.qobuzUrl}/album/get?album_id=${id}`, 'Qobuz album', i);
+            const items = await fetchTrackList(
+                (o, l) => `${config.qobuzUrl}/album/get?album_id=${id}&limit=${l}&offset=${o}`,
+                'Qobuz album',
+                i
+            );
             return (items ?? []).map((it) => toTrack(it, 'qobuz')).filter((t): t is Track => !!t);
         },
     },
@@ -162,32 +284,28 @@ const handlers: UrlHandler[] = [
         test: (q) => /open\.spotify\.com\/(playlist|album)\//.test(q),
         run: async (q, i) => {
             await i.editReply('Reading the Spotify list…');
-            let spotifyTracks: Raw[] = [];
-            try {
-                spotifyTracks = await getSpotifyTracks(q);
-            } catch (e: any) {
-                await i.editReply(`Failed to read that Spotify URL: ${e?.message ?? e}`);
+
+            let names = await spotifyViaWebApi(q);
+            if (names === null) {
+                names = await spotifyViaScraper(q);
+                if (names && names.length >= 90) {
+                    await i.editReply(
+                        `Reading the Spotify list… (only the first ~${names.length} tracks — ` +
+                            `set SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET for the full list)`
+                    );
+                }
+            }
+
+            if (!names) {
+                await i.editReply('Failed to read that Spotify URL.');
                 return [];
             }
-            if (!spotifyTracks?.length) {
+            if (names.length === 0) {
                 await i.editReply('No tracks found in that Spotify URL.');
                 return [];
             }
 
-            const wanted = spotifyTracks.slice(0, config.maxQueueAdd);
-            await i.editReply(`Matching ${wanted.length} Spotify track(s) on Tidal/Qobuz…`);
-
-            const out: Track[] = [];
-            for (let start = 0; start < wanted.length; start += 6) {
-                const batch = wanted.slice(start, start + 6).map(async (sp) => {
-                    const name = `${sp.name ?? ''} ${sp.artist ?? sp.artists?.[0]?.name ?? ''}`.trim();
-                    if (!name) return null;
-                    const results = await defaultSearchProvider.searchTracks(name, { limit: 1 }).catch(() => null);
-                    const hit = results?.items?.[0];
-                    return hit ? toTrack(hit, hit.provider || 'tidal') : null;
-                });
-                for (const t of await Promise.all(batch)) if (t) out.push(t);
-            }
+            const out = await matchOnTidal(names, i);
             if (out.length === 0) await i.editReply('Could not match any of those tracks.');
             return out;
         },
