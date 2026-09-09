@@ -41,6 +41,22 @@ Play/Pause · Skip · Shuffle · Stop buttons.
   Web API when `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` are set, otherwise
   a scraper limited to ~100 tracks.
 
+## Test without Discord
+
+`scripts/probe.ts` runs the real resolution + streaming code with a fake
+interaction — no gateway connection:
+
+```bash
+bun run probe "daft punk one more time"                 # text search
+bun run probe "https://open.spotify.com/playlist/…"      # checks Spotify creds + pagination
+bun run probe "https://tidal.com/browse/album/…"
+bun run probe "<any supported url>" --stream             # also resolve the CDN URL and reach it
+```
+
+It prints which backends it's using, whether the Spotify token was acquired,
+the resolved track list, and (with `--stream`) the stream URL + an HTTP range
+check against the CDN.
+
 ## Proxy
 
 `src/index.ts` also runs a tiny HTTP proxy (`/proxy-audio`, `/proxy-api`) on
