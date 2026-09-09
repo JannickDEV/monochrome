@@ -288,7 +288,7 @@ export class MusicAPI {
         return api.getArtist(cleanId);
     }
 
-    async getArtistBiography(id) {
+    async getArtistBiography(id, options = {}) {
         if (String(id).startsWith('sc_')) return null;
         if (this.isAppleId(id, 'artist') || this.appleArtistIds.has(String(id))) {
             const artist = this.appleArtistCache.get(String(this.getAppleId(id, 'artist')));
@@ -297,7 +297,7 @@ export class MusicAPI {
         const api = this.getAPI();
         const cleanId = this.stripProviderPrefix(id);
         if (typeof api.getArtistBiography === 'function') {
-            return api.getArtistBiography(cleanId);
+            return api.getArtistBiography(cleanId, options);
         }
         return null;
     }

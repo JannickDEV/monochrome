@@ -173,6 +173,28 @@ export class QobuzProvider implements Provider {
         }
     }
 
+    async getArtistBiography(id: string | number): Promise<{ text: string; source: string } | null> {
+        try {
+            const res = await this.client.request('/artist/', { id: cleanId(id), extra: 'biography' });
+            const bio = res?.biography ?? res?.data?.biography;
+            const raw: string =
+                typeof bio === 'string'
+                    ? bio
+                    : bio?.content || bio?.summary || bio?.text || '';
+            if (!raw) return null;
+            // Qobuz biographies are light HTML — flatten to text the artist view can render.
+            const text = raw
+                .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+                .replace(/<\/(p|div)\s*>/gi, '\n\n')
+                .replace(/<[^>]+>/g, '')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+            return text ? { text, source: (typeof bio === 'object' && bio?.source) || 'Qobuz' } : null;
+        } catch (err: any) {
+            throw new ProviderError(err.message || 'Qobuz getArtistBiography failed', this.id, 'getArtistBiography', err);
+        }
+    }
+
     async getPlaylist(id: string | number): Promise<any> {
         try {
             const res = await this.client.request('/playlist/', { id: cleanId(id) });

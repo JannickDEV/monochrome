@@ -6137,7 +6137,7 @@ export class UIRenderer {
                 } else {
                     // Try to fetch biography asynchronously
                     this.api
-                        .getArtistBiography(artistId, provider)
+                        .getArtistBiography(artistId, { provider, artistName: artist.name })
                         .then((bio) => {
                             if (bio) renderBioPreview(bio);
                         })
@@ -6204,8 +6204,13 @@ export class UIRenderer {
 
             this.adjustTitleFontSize(nameEl, artist.name);
 
+            const popularityPct = Number(artist.popularity);
+            const popularityHTML =
+                Number.isFinite(popularityPct) && popularityPct > 0
+                    ? `<span>${Math.round(popularityPct)}% Popularity</span>`
+                    : '';
             metaEl.innerHTML = `
-                <span>${artist.popularity}% Popularity</span>
+                ${popularityHTML}
                 <div class="artist-tags">
                     ${(artist.artistRoles || [])
                         .filter((role) => role.category)

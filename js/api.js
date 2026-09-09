@@ -1586,29 +1586,52 @@ export class LosslessAPI {
         }
     }
 
-    async getArtistBiography(artistId) {
+    async getArtistBiography(artistId, options = {}) {
+        if (String(artistId).startsWith('sc_')) return null;
+
         const cacheKey = `artist_bio_v1_${artistId}`;
         const cached = await this.cache.get('artist', cacheKey);
         if (cached) return cached;
 
+        let bio = null;
         try {
             const response = await this.fetchWithRetry(`/artist/bio/?id=${artistId}`, { type: 'api' });
-
             if (response.ok) {
                 const { data } = await response.json();
                 if (data && data.text) {
-                    const bio = {
-                        text: data.text,
-                        source: data.source || 'Tidal',
-                    };
-                    if (!(response instanceof TidalResponse)) {
-                        await this.cache.set('artist', cacheKey, bio);
-                    }
-                    return bio;
+                    bio = { text: data.text, source: data.source || 'Tidal' };
                 }
             }
         } catch (e) {
-            console.warn('Failed to fetch Tidal biography:', e);
+            console.warn('Failed to fetch artist biography from the HiFi API:', e);
+        }
+
+        // The dev-mode HiFi backend often has no biography for an artist; the
+        // TIDAL call above already covered that path, so go to Qobuz (its
+        // artist objects carry a biography). Artists have no shared id/ISRC
+        // between services, so match by name.
+        if (!bio?.text && options.artistName && devModeSettings.isEnabled() && !options._fromProvider) {
+            try {
+                const qobuz = this.getFallbackProvider()?.getProviders?.().find((p) => p.id === 'qobuz');
+                if (qobuz && typeof qobuz.getArtistBiography === 'function') {
+                    const search = await qobuz.searchArtists(options.artistName, { limit: 3 });
+                    const want = String(options.artistName).trim().toLowerCase();
+                    const hit =
+                        (search?.items || []).find((a) => (a.name || '').trim().toLowerCase() === want) ||
+                        (search?.items || [])[0];
+                    if (hit?.id) {
+                        const q = await qobuz.getArtistBiography(hit.id);
+                        if (q?.text) bio = q;
+                    }
+                }
+            } catch (e) {
+                console.warn('Qobuz biography fallback failed:', e);
+            }
+        }
+
+        if (bio?.text) {
+            await this.cache.set('artist', cacheKey, bio);
+            return bio;
         }
         return null;
     }
