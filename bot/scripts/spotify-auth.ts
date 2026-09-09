@@ -20,7 +20,13 @@ if (!id || !secret) {
 const scope = 'playlist-read-private playlist-read-collaborative';
 const authUrl =
     'https://accounts.spotify.com/authorize?' +
-    new URLSearchParams({ client_id: id, response_type: 'code', redirect_uri: redirect, scope }).toString();
+    new URLSearchParams({
+        client_id: id,
+        response_type: 'code',
+        redirect_uri: redirect,
+        scope,
+        show_dialog: 'true', // always show the consent screen so scopes are (re)granted
+    }).toString();
 
 console.log(`
 1. In your Spotify app (developer.spotify.com/dashboard -> your app -> Settings),
@@ -60,6 +66,8 @@ rl.question('Paste redirected URL or code: ', async (answer) => {
     }
 
     console.log(`
+Granted scopes: ${j.scope || '(none!)'}
+
 Add this line to bot/.env and restart the bot:
 
 SPOTIFY_REFRESH_TOKEN=${j.refresh_token}

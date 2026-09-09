@@ -109,6 +109,7 @@ interface SpotifyName {
 }
 
 let cachedSpotifyToken: { value: string; expires: number } | null = null;
+let warnedScopes = false;
 
 /**
  * A Spotify access token. Prefers the refresh-token (user) grant — the only one
@@ -133,6 +134,10 @@ async function spotifyAccessToken(): Promise<string | null> {
         if (!res.ok) return null;
         const j: Raw = await res.json();
         if (!j.access_token) return null;
+        if (config.spotifyRefreshToken && !warnedScopes) {
+            warnedScopes = true;
+            console.log(`[spotify] user token scopes: ${j.scope || '(none)'}`);
+        }
         cachedSpotifyToken = { value: j.access_token, expires: Date.now() + (j.expires_in ?? 3600) * 1000 - 60_000 };
         return j.access_token;
     } catch {
@@ -151,24 +156,17 @@ async function spotifyViaWebApi(url: string): Promise<SpotifyName[] | null> {
     const out: SpotifyName[] = [];
     let next: string | null =
         kind === 'playlist'
-            ? `https://api.spotify.com/v1/playlists/${id}/tracks?limit=100&fields=next,items(track(name,artists(name)))`
-            : `https://api.spotify.com/v1/albums/${id}/tracks?limit=50`;
+            ? `https://api.spotify.com/v1/playlists/${id}/tracks?limit=100&market=from_token&fields=next,items(track(name,artists(name)))`
+            : `https://api.spotify.com/v1/albums/${id}/tracks?limit=50&market=from_token`;
     let gotAPage = false;
 
     while (next && out.length < config.maxQueueAdd) {
         const res = await fetch(next, { headers: { Authorization: `Bearer ${token}` } });
         if (!res.ok) {
-            // First request failed — hand off to the scraper. 403 on a playlist
-            // with only client-credentials is expected (Spotify no longer allows
-            // it); run `bun scripts/spotify-auth.ts` for a SPOTIFY_REFRESH_TOKEN.
-            // 404 = a Spotify-owned editorial list (37i9dQZF… id), unreadable by
-            // any app token.
             if (!gotAPage) {
-                const hint =
-                    kind === 'playlist' && !config.spotifyRefreshToken
-                        ? ' — set SPOTIFY_REFRESH_TOKEN (bun scripts/spotify-auth.ts) to read playlists'
-                        : '';
-                console.warn(`[spotify] Web API ${res.status} for ${kind} ${id}${hint}; falling back to the scraper`);
+                const detail = (await res.text().catch(() => '')).slice(0, 300);
+                console.warn(`[spotify] Web API ${res.status} for ${kind} ${id}: ${detail || '(no body)'}`);
+                console.warn('[spotify] falling back to the scraper');
                 return null;
             }
             break; // partial result — keep what we already paged
