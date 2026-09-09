@@ -1784,7 +1784,14 @@ export class Player {
                         resolvedStreamInfo.delivery === 'dash' ||
                         resolvedStreamInfo.mimeType?.includes('dash') ||
                         (typeof streamUrl === 'string' &&
-                            (streamUrl.startsWith('data:') || streamUrl.includes('.mpd'))));
+                            (streamUrl.startsWith('data:') ||
+                                streamUrl.includes('.mpd') ||
+                                // A blob: URL here is always a DASH manifest we built from
+                                // extractStreamUrlFromManifest() (the only producer of blob
+                                // audio URLs); Shaka can't infer that from the extensionless URL.
+                                (streamUrl.startsWith('blob:') &&
+                                    resolvedStreamInfo.playbackType !== 'direct' &&
+                                    resolvedStreamInfo.playbackType !== 'hls'))));
 
                 const isHlsStream = isHlsManifest;
 
