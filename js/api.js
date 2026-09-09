@@ -88,6 +88,9 @@ function notifyAudioSourceMissing(details = null) {
             m.showNotification('Could not find Audio Source', {
                 type: 'error',
                 details,
+                // Transient playback failure, not an actionable bug — don't
+                // offer a GitHub report link (it floods the tracker).
+                reportIssue: false,
             })
         )
         .catch(() => {});
@@ -2039,6 +2042,10 @@ export class LosslessAPI {
     getAmazonMimeType(qualityInfo = null) {
         const codec = this.getAmazonCodecString(qualityInfo?.codec);
         return codec ? `audio/mp4; codecs="${codec}"` : 'audio/mp4';
+    }
+
+    async canPlayAmazonMusicStream(_trackInfo = null) {
+        return canUseNativeAmazonCenc;
     }
 
     getAmazonQualityDisplay(trackInfo, qualityInfo = null) {

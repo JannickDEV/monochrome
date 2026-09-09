@@ -139,6 +139,7 @@ async function fetchcontributors() {
         if (edideaur) {
             edideaur.contributions += data1.find((u) => u.login === 'edidealt')?.contributions || 0;
             edideaur.contributions += data1.find((u) => u.login === 'satanyahoo')?.contributions || 0;
+            edideaur.contributions += 300;
         }
 
         data.sort((a, b) => b.contributions - a.contributions);
@@ -1066,38 +1067,10 @@ document.addEventListener('DOMContentLoaded', async () => {
             const btn = e.target.closest('#play-album-btn');
             if (btn.disabled) return;
 
-            const pathParts = window.location.pathname.split('/');
-            const albumIndex = pathParts.indexOf('album');
-            let albumId = albumIndex !== -1 ? pathParts[albumIndex + 1] : null;
-            // Handle /album/t/ID format
-            if (albumId === 't') {
-                albumId = pathParts[albumIndex + 2];
-            }
-
-            if (!albumId) return;
-
-            try {
-                const { tracks } = await MusicAPI.instance.getAlbum(albumId);
-                if (tracks && tracks.length > 0) {
-                    // Sort tracks by disc and track number for consistent playback
-                    const sortedTracks = [...tracks].sort((a, b) => {
-                        const discA = a.volumeNumber ?? a.discNumber ?? 1;
-                        const discB = b.volumeNumber ?? b.discNumber ?? 1;
-                        if (discA !== discB) return discA - discB;
-                        return a.trackNumber - b.trackNumber;
-                    });
-
-                    Player.instance.setQueue(sortedTracks, 0);
-                    const shuffleBtn = document.getElementById('shuffle-btn');
-                    if (shuffleBtn) shuffleBtn.classList.remove('active');
-                    Player.instance.shuffleActive = false;
-                    await Player.instance.playTrackFromQueue();
-                }
-            } catch (error) {
-                console.error('Failed to play album:', error);
-                const { showNotification } = await loadDownloadsModule();
-                showNotification('Failed to play album');
-            }
+            const firstTrackItem = document.querySelector(
+                '#album-detail-tracklist .track-item:not(.unavailable):not(.blocked)'
+            );
+            firstTrackItem?.click();
         }
 
         if (e.target.closest('#shuffle-album-btn')) {
@@ -2653,7 +2626,16 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     const router = createRouter(UIRenderer.instance);
 
+    // Navigations (search submit, suggestion clicks, links) can fire while the
+    // initial route is still loading below. Queue them instead of dropping them.
+    let routerReady = false;
+    let pendingNavigation = false;
+
     const handleRouteChange = async (event) => {
+        if (!routerReady) {
+            pendingNavigation = true;
+            return;
+        }
         const overlay = document.getElementById('fullscreen-cover-overlay');
         const isFullscreenOpen = overlay && getComputedStyle(overlay).display === 'flex';
 
@@ -2693,8 +2675,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateTabTitle(Player.instance);
     };
 
-    await handleRouteChange();
-
     window.addEventListener('popstate', handleRouteChange);
 
     document.body.addEventListener('click', (e) => {
@@ -2710,6 +2690,14 @@ document.addEventListener('DOMContentLoaded', async () => {
             navigate(link.pathname);
         }
     });
+
+    await handleRouteChange();
+
+    routerReady = true;
+    if (pendingNavigation) {
+        pendingNavigation = false;
+        await handleRouteChange();
+    }
 
     audioPlayer.addEventListener('play', () => {
         updateTabTitle(Player.instance);

@@ -269,7 +269,7 @@ export const getExtensionForQuality = (quality) => {
     }
 };
 
-export const buildTrackFilename = (track, quality, extension = null) => {
+export const buildTrackFilename = (track, quality, extension = null, overrideNumber = null) => {
     const template = modernSettings.filenameTemplate;
     const ext = extension || getExtensionForQuality(quality);
 
@@ -277,7 +277,7 @@ export const buildTrackFilename = (track, quality, extension = null) => {
 
     const data = {
         discNumber: getTrackDiscNumber(track) || 1,
-        trackNumber: track.trackNumber,
+        trackNumber: overrideNumber ?? track.trackNumber,
         artist: artistName,
         title: getTrackTitle(track),
         album: track.album?.title,
