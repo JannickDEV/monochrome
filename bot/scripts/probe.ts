@@ -34,10 +34,12 @@ const interaction = {
 
 async function checkSpotify(): Promise<void> {
     if (!config.spotifyClientId || !config.spotifyClientSecret) {
-        console.log('spotify .......... no id/secret  (playlists via ~100-track scraper)');
+        console.log('spotify .......... no id/secret  (albums + playlists via ~100-track scraper)');
         return;
     }
-    const grant = config.spotifyRefreshToken ? 'refresh_token (user)' : 'client_credentials (albums only)';
+    // Either grant reads albums fine; neither reads playlists since Spotify's
+    // Nov-2024 lockdown, so playlists always use the ~100-track scraper.
+    const grant = config.spotifyRefreshToken ? 'refresh_token (user)' : 'client_credentials';
     try {
         const auth = btoa(`${config.spotifyClientId}:${config.spotifyClientSecret}`);
         const bodyStr = config.spotifyRefreshToken

@@ -1,7 +1,11 @@
 /**
- * One-time Spotify user authorization. Produces a SPOTIFY_REFRESH_TOKEN, which
- * is the only credential that can read playlist tracks (client-credentials
- * can't anymore). No local server — you paste the redirected URL back in.
+ * One-time Spotify user authorization. Produces a SPOTIFY_REFRESH_TOKEN.
+ *
+ * NOTE: as of Spotify's Nov-2024 API lockdown this does NOT unlock playlist
+ * reads — GET /playlists/{id}/tracks returns 403 for any app not in Extended
+ * Quota Mode, user token or not. Playlists still fall back to the ~100-track
+ * scraper. This flow is kept only so the bot is ready if Spotify ever grants
+ * quota. No local server — you paste the redirected URL back in.
  *
  *   bun scripts/spotify-auth.ts
  */

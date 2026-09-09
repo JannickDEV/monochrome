@@ -156,8 +156,8 @@ async function spotifyViaWebApi(url: string): Promise<SpotifyName[] | null> {
     const out: SpotifyName[] = [];
     let next: string | null =
         kind === 'playlist'
-            ? `https://api.spotify.com/v1/playlists/${id}/tracks?limit=100&market=from_token&fields=next,items(track(name,artists(name)))`
-            : `https://api.spotify.com/v1/albums/${id}/tracks?limit=50&market=from_token`;
+            ? `https://api.spotify.com/v1/playlists/${id}/tracks?limit=100&fields=next,items(track(name,artists(name)))`
+            : `https://api.spotify.com/v1/albums/${id}/tracks?limit=50`;
     let gotAPage = false;
 
     while (next && out.length < config.maxQueueAdd) {
@@ -194,9 +194,13 @@ async function spotifyViaScraper(url: string): Promise<SpotifyName[] | null> {
 }
 
 /** Resolves a list of `{name, artist}` to Tracks by searching each on Tidal, batched. */
-async function matchOnTidal(names: SpotifyName[], interaction: ChatInputCommandInteraction): Promise<Track[]> {
+async function matchOnTidal(
+    names: SpotifyName[],
+    interaction: ChatInputCommandInteraction,
+    note = ''
+): Promise<Track[]> {
     const wanted = names.slice(0, config.maxQueueAdd);
-    await interaction.editReply(`Matching ${wanted.length} track(s) on Tidal/Qobuz…`);
+    await interaction.editReply(`Matching ${wanted.length} track(s) on Tidal/Qobuz…${note ? `\n${note}` : ''}`);
 
     const out: Track[] = [];
     for (let start = 0; start < wanted.length; start += 8) {
@@ -323,14 +327,10 @@ const handlers: UrlHandler[] = [
             await i.editReply('Reading the Spotify list…');
 
             let names = await spotifyViaWebApi(q);
+            let scraped = false;
             if (names === null) {
                 names = await spotifyViaScraper(q);
-                if (names && names.length >= 90) {
-                    await i.editReply(
-                        `Reading the Spotify list… (only the first ~${names.length} tracks — ` +
-                            `set SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET for the full list)`
-                    );
-                }
+                scraped = true;
             }
 
             if (!names) {
@@ -342,7 +342,16 @@ const handlers: UrlHandler[] = [
                 return [];
             }
 
-            const out = await matchOnTidal(names, i);
+            // The Web API path is dead for playlist reads (Spotify's Nov-2024
+            // lockdown 403s every non-Extended-Quota app), so long playlists
+            // come from the embed scraper, which Spotify caps near 100.
+            const capNote =
+                scraped && names.length >= 100
+                    ? `Note: Spotify only exposes the first ~${names.length} tracks of this ` +
+                      `playlist to third-party apps — that's a Spotify-side limit.`
+                    : '';
+
+            const out = await matchOnTidal(names, i, capNote);
             if (out.length === 0) await i.editReply('Could not match any of those tracks.');
             return out;
         },

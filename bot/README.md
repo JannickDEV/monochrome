@@ -38,11 +38,16 @@ Play/Pause · Skip · Shuffle · Stop buttons.
 - ffmpeg child processes are tracked and killed on skip/stop/track-change.
 - A `/play` with a huge playlist is capped at `MAX_QUEUE_ADD` (default 200).
 - Tidal / Qobuz playlists and albums are fully paginated.
-- Spotify: **albums** work with `SPOTIFY_CLIENT_ID` + `SPOTIFY_CLIENT_SECRET`.
-  **Playlists** additionally need `SPOTIFY_REFRESH_TOKEN` (Spotify no longer
-  lets app tokens read playlists) — run `bun run spotify-auth` once to get it.
-  Spotify's own editorial playlists (`37i9dQZF1DX…`) can't be read by any app
-  token; those fall back to the ~100-track scraper.
+- Spotify **albums** are fully read via the Web API when `SPOTIFY_CLIENT_ID` +
+  `SPOTIFY_CLIENT_SECRET` are set.
+- Spotify **playlists** are effectively capped at ~100 tracks. Since Spotify's
+  November 2024 API lockdown, `GET /playlists/{id}/tracks` returns a bare
+  `403 Forbidden` for every app that isn't in Extended Quota Mode — a user
+  `SPOTIFY_REFRESH_TOKEN` with the playlist-read scopes does **not** change
+  this. The bot therefore falls back to the `spotify-url-info` embed scraper,
+  which Spotify limits to roughly the first 100 tracks. Editorial playlists
+  (`37i9dQZF1DX…`) behave the same way. There is no config that lifts this;
+  it needs Spotify to approve Extended Quota Mode for the app.
 
 ## Test without Discord
 
