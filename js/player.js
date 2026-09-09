@@ -1857,7 +1857,15 @@ export class Player {
                             await this.shakaPlayer.load(getProxyUrl(loadTarget), null, shakaMimeType);
                         }
                     } catch (e) {
-                        console.warn('PreloadManager/Shaka load Error:', e);
+                        console.warn('PreloadManager/Shaka load Error:', e, {
+                            code: e?.code,
+                            urlKind:
+                                typeof streamUrl === 'string' ? streamUrl.slice(0, 12) : typeof streamUrl,
+                            playbackType: resolvedStreamInfo.playbackType,
+                            mimeType: resolvedStreamInfo.mimeType,
+                            shakaMimeType,
+                            usedPreloadManager: loadTarget !== streamUrl,
+                        });
                         if (isHlsStream) {
                             if (this.shakaInitialized) {
                                 try {
