@@ -135,10 +135,24 @@ async function spotifyViaWebApi(url: string): Promise<SpotifyName[] | null> {
         kind === 'playlist'
             ? `https://api.spotify.com/v1/playlists/${id}/tracks?limit=100&fields=next,items(track(name,artists(name)))`
             : `https://api.spotify.com/v1/albums/${id}/tracks?limit=50`;
+    let gotAPage = false;
 
     while (next && out.length < config.maxQueueAdd) {
         const res = await fetch(next, { headers: { Authorization: `Bearer ${token}` } });
-        if (!res.ok) break;
+        if (!res.ok) {
+            // The very first request failed — hand off to the scraper. Spotify's
+            // own editorial/algorithmic playlists (37i9dQZF… ids) return 404 to
+            // app tokens; private lists 403.
+            if (!gotAPage) {
+                console.warn(
+                    `[spotify] Web API ${res.status} for ${kind} ${id} — ` +
+                        `editorial/private lists aren't readable with an app token; falling back to the scraper`
+                );
+                return null;
+            }
+            break; // partial result — keep what we already paged
+        }
+        gotAPage = true;
         const j: Raw = await res.json();
         for (const it of j.items || []) {
             const t = it.track ?? it; // playlist wraps in .track; album/tracks are bare
