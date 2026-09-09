@@ -3017,7 +3017,20 @@ export class LosslessAPI {
         }
 
         if (devModeSettings.isEnabled()) {
-            const lookup = await this.getTrackFromDevMode(id, quality);
+            // Dolby Atmos from Tidal is an E-AC-3 JOC DASH stream. If this
+            // browser can't decode ec-3 through MSE (Chrome/Edge on most
+            // platforms, Firefox), Shaka parses the manifest then filters out
+            // every stream and throws — so fall back to lossless instead of
+            // hard-failing. (Downloads keep Atmos; that path is separate.)
+            let effectiveQuality = quality;
+            if (isAtmosQuality(quality) && !canBrowserStreamAtmosQuality(quality)) {
+                console.warn(
+                    `[atmos] this browser can't decode ${quality} via MSE — playing HI_RES_LOSSLESS instead. ` +
+                        `Download for a real Atmos file, or use Safari.`
+                );
+                effectiveQuality = 'HI_RES_LOSSLESS';
+            }
+            const lookup = await this.getTrackFromDevMode(id, effectiveQuality);
             let streamUrl;
             let fromManifest = false;
             if (lookup.originalTrackUrl) {
@@ -3038,7 +3051,7 @@ export class LosslessAPI {
                     (typeof streamUrl === 'string' && streamUrl.startsWith('blob:')));
             const result = {
                 url: streamUrl,
-                quality: lookup.info?.audioQuality || normalizeQualityToken(quality) || quality,
+                quality: lookup.info?.audioQuality || normalizeQualityToken(effectiveQuality) || effectiveQuality,
                 ...(isDash ? { playbackType: 'dash', delivery: 'dash', mimeType: 'application/dash+xml' } : {}),
                 rgInfo: lookup.info
                     ? {
