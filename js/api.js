@@ -651,10 +651,17 @@ export class LosslessAPI {
                 return null;
             }
 
-            // Check if it's a DASH manifest (XML)
+            // Check if it's a DASH manifest (XML). Hand it to the player as a
+            // data: URI, not a blob: URL — the media type is embedded in a
+            // data: URI, so Shaka reads it directly instead of HEAD-probing an
+            // extensionless blob (which fails on blob: and throws error 4032).
             if (decoded.includes('<MPD')) {
-                const blob = new Blob([decoded], { type: 'application/dash+xml' });
-                return URL.createObjectURL(blob);
+                try {
+                    return `data:application/dash+xml;base64,${btoa(decoded)}`;
+                } catch {
+                    const blob = new Blob([decoded], { type: 'application/dash+xml' });
+                    return URL.createObjectURL(blob);
+                }
             }
 
             try {
