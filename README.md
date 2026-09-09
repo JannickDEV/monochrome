@@ -12,7 +12,6 @@
 
 <p align="center">
   <a href="https://monochrome.tf">Website</a> -
-  <a href="https://ko-fi.com/monochrometf">Donate</a> -
   <a href="#features">Features</a> -
   <a href="#usage">Usage</a> -
   <a href="#self-hosting">Self-Hosting</a> -

@@ -9,7 +9,6 @@ import {
     audioEffectsSettings,
     silenceRemovalSettings,
     crossfadeSettings,
-    donationPromptSettings,
 } from '../storage.js';
 
 describe('storage.js', () => {
@@ -121,14 +120,6 @@ describe('storage.js', () => {
             expect(crossfadeSettings.getDuration()).toBe(12);
             crossfadeSettings.setDuration(0);
             expect(crossfadeSettings.getDuration()).toBe(5);
-        });
-    });
-
-    describe('donation prompt settings', () => {
-        test('defaults reminders on and persists an opt-out', () => {
-            expect(donationPromptSettings.isEnabled()).toBe(true);
-            donationPromptSettings.setEnabled(false);
-            expect(donationPromptSettings.isEnabled()).toBe(false);
         });
     });
 

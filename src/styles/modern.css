@@ -271,10 +271,6 @@ textarea:focus-visible,
     text-transform: uppercase;
 }
 
-.sidebar-donate-goal {
-    margin: 0 10px 8px 41px;
-}
-
 .main-content {
     padding: 0 clamp(22px, 3vw, 52px) calc(var(--player-bar-height-desktop) + 42px) !important;
     scroll-behavior: auto;
@@ -684,8 +680,7 @@ textarea:focus-visible,
 #current-time,
 #total-duration,
 #fs-current-time,
-#fs-total-duration,
-.donate-goal-card-percent {
+#fs-total-duration {
     font-variant-numeric: tabular-nums;
 }
 
@@ -802,8 +797,7 @@ textarea:focus-visible,
 }
 
 .settings-group,
-.modal-content,
-.donate-goal-card {
+.modal-content {
     background: var(--chrome-raised);
     border: 0;
     border-radius: var(--radius-xl);

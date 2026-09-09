@@ -16,7 +16,6 @@ const primaryItems: NavigationItem[] = [
     { id: 'sidebar-nav-library', href: '/library', label: 'Library', icon: icons.library },
     { id: 'sidebar-nav-recent', href: '/recent', label: 'Recent', icon: icons.recent },
     { id: 'sidebar-nav-unreleased', href: '/unreleased', label: 'Unreleased', icon: icons.squares },
-    { id: 'sidebar-nav-donate', href: '/donate', label: 'Donate', icon: icons.handHeart },
     { id: 'sidebar-nav-settings', href: '/settings', label: 'Settings', icon: icons.settings },
 ];
 
@@ -74,14 +73,6 @@ function NavigationList({ items, pathname }: { items: NavigationItem[]; pathname
                             <Icon svg={item.icon} size={item.id === 'sidebar-nav-discordbtn' ? 22 : 20} />
                             <span>{item.label}</span>
                         </a>
-                        {item.id === 'sidebar-nav-donate' ? (
-                            <div className="sidebar-donate-goal" id="sidebar-donate-goal-container">
-                                <div className="sidebar-donate-goal-track">
-                                    <div className="sidebar-donate-goal-fill" id="sidebar-donate-goal-progress" />
-                                </div>
-                                <span id="sidebar-donate-goal-text">0%</span>
-                            </div>
-                        ) : null}
                     </li>
                 );
             })}

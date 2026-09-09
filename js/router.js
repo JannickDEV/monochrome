@@ -120,9 +120,6 @@ export function createRouter(ui) {
             case 'reset-password':
                 await ui.renderResetPasswordPage();
                 break;
-            case 'donate':
-                ui.showPage('donate');
-                break;
             case 'user':
                 if (param && param.startsWith('@') && !param.includes('/')) {
                     await loadProfile(decodeURIComponent(param.slice(1)));

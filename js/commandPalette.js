@@ -198,17 +198,6 @@ class CommandPalette {
                 },
             },
             {
-                id: 'nav-donate',
-                group: 'Navigation',
-                icon: 'handHeart',
-                label: 'Go to Donate',
-                keywords: ['donate', 'support', 'contribute'],
-                action: () => {
-                    navigate('/donate');
-                },
-            },
-
-            {
                 id: 'play-pause',
                 group: 'Playback',
                 icon: 'play',

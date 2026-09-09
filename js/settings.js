@@ -12,7 +12,6 @@ import {
     waveformSettings,
     silenceRemovalSettings,
     crossfadeSettings,
-    donationPromptSettings,
     replayGainSettings,
     downloadQualitySettings,
     losslessContainerSettings,
@@ -6481,26 +6480,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         sidebarShowUnreleasedToggle.addEventListener('change', (e) => {
             sidebarSectionSettings.setShowUnreleased(e.target.checked);
             sidebarSectionSettings.applySidebarVisibility();
-        });
-    }
-
-    const sidebarShowDonateToggle = document.getElementById('sidebar-show-donate-toggle');
-    if (sidebarShowDonateToggle) {
-        sidebarShowDonateToggle.checked = sidebarSectionSettings.shouldShowDonate();
-        sidebarShowDonateToggle.addEventListener('change', (e) => {
-            sidebarSectionSettings.setShowDonate(e.target.checked);
-            sidebarSectionSettings.applySidebarVisibility();
-        });
-    }
-
-    const donationPromptToggle = document.getElementById('donation-prompts-toggle');
-    if (donationPromptToggle) {
-        donationPromptToggle.checked = donationPromptSettings.isEnabled();
-        donationPromptToggle.addEventListener('change', (e) => {
-            donationPromptSettings.setEnabled(e.target.checked);
-            if (!e.target.checked) {
-                document.querySelectorAll('.donation-prompt').forEach((prompt) => prompt.remove());
-            }
         });
     }
 

@@ -742,7 +742,7 @@ export async function renderUnreleasedPage(container) {
     container.innerHTML = `
         <h2 class="section-title">Unreleased Music</h2>
         <p style="color: var(--muted-foreground); margin-bottom: 1.5rem; font-size: 0.9rem;">
-            Unreleased Songs & Info Provided By <a href="https://artistgrid.cx" target="_blank" style="text-decoration: underline;">ArtistGrid</a>. Consider Donating to Them.
+            Unreleased Songs & Info Provided By <a href="https://artistgrid.cx" target="_blank" style="text-decoration: underline;">ArtistGrid</a>.
         </p>
         <div style="margin-bottom: 1.5rem;">
             <input 

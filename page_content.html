@@ -2167,37 +2167,6 @@
                                     <span>Unreleased</span>
                                 </a>
                             </li>
-                            <li class="nav-item" id="sidebar-nav-donate">
-                                <a href="/donate">
-                                    <svg
-                                        xmlns="http://www.w3.org/2000/svg"
-                                        width="24"
-                                        height="24"
-                                        fill="none"
-                                        stroke="currentColor"
-                                        stroke-linecap="round"
-                                        stroke-linejoin="round"
-                                        stroke-width="2"
-                                        class="lucide lucide-hand-heart"
-                                        viewBox="0 0 24 24"
-                                    >
-                                        <path d="M11 14h2a2 2 0 0 0 0-4h-3c-.6 0-1.1.2-1.4.6L3 16"></path>
-                                        <path
-                                            d="m14.45 13.39 5.05-4.694C20.196 8 21 6.85 21 5.75a2.75 2.75 0 0 0-4.797-1.837.276.276 0 0 1-.406 0A2.75 2.75 0 0 0 11 5.75c0 1.2.802 2.248 1.5 2.946L16 11.95M2 15l6 6"
-                                        ></path>
-                                        <path
-                                            d="m7 20 1.6-1.4c.3-.4.8-.6 1.4-.6h4c1.1 0 2.1-.4 2.8-1.2l4.6-4.4a1 1 0 0 0-2.75-2.91"
-                                        ></path>
-                                    </svg>
-                                    <span>Donate</span>
-                                </a>
-                                <div id="sidebar-donate-goal-container" class="sidebar-donate-goal">
-                                    <div class="sidebar-donate-goal-track">
-                                        <div id="sidebar-donate-goal-progress" class="sidebar-donate-goal-fill"></div>
-                                    </div>
-                                    <span id="sidebar-donate-goal-text">0%</span>
-                                </div>
-                            </li>
                             <li class="nav-item" id="sidebar-nav-settings">
                                 <a href="/settings">
                                     <svg
@@ -4736,18 +4705,6 @@
                                         </div>
                                         <label class="toggle-switch">
                                             <input type="checkbox" id="sidebar-show-unreleased-toggle" checked="" />
-                                            <span class="slider"></span>
-                                        </label>
-                                    </div>
-                                    <div class="setting-item">
-                                        <div class="info">
-                                            <span class="label">Show Donate in Sidebar</span>
-                                            <span class="description"
-                                                >Display the Donate link in the sidebar navigation</span
-                                            >
-                                        </div>
-                                        <label class="toggle-switch">
-                                            <input type="checkbox" id="sidebar-show-donate-toggle" checked="" />
                                             <span class="slider"></span>
                                         </label>
                                     </div>
@@ -7475,53 +7432,6 @@
                             distraction-free listening experience.
                             <br />
                         </p>
-                        <div class="about-donate">
-                            <h2 class="section-title" style="text-align: center">Support Monochrome</h2>
-                            <p style="text-align: center" class="donate-description">
-                                If Monochrome has been useful to you and you're able to, consider making a donation.
-                                <br />
-                                It helps pay for the server and domain, and you get to support us :)
-                            </p>
-                            <div
-                                class="donate-button"
-                                id="donate-button-container"
-                                style="
-                                    display: flex;
-                                    gap: 20px;
-                                    align-items: center;
-                                    justify-content: center;
-                                    margin-top: 30px;
-                                    flex-wrap: wrap;
-                                "
-                            >
-                                <a
-                                    href="/donate"
-                                    class="btn-secondary"
-                                    style="
-                                        text-decoration: none;
-                                        display: inline-flex;
-                                        align-items: center;
-                                        gap: 0.5rem;
-                                    "
-                                >
-                                    Donate to Monochrome
-                                </a>
-                                <a
-                                    href="https://github.com/monochrome-music/monochrome"
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    class="btn-secondary"
-                                    style="
-                                        text-decoration: none;
-                                        display: inline-flex;
-                                        align-items: center;
-                                        gap: 0.5rem;
-                                    "
-                                >
-                                    Star on GitHub
-                                </a>
-                            </div>
-                        </div>
                         <p style="text-align: center; color: grey">
                             made with ‪‪❤︎‬ by
                             <a href="https://prigoana.com/" style="text-decoration: underline">Edideaur</a> &amp;
@@ -7608,38 +7518,6 @@
                             <a id="advanced-config-link" class="btn-secondary" href="/settings"
                                 >Advanced: Custom Configuration</a
                             >
-                        </div>
-                    </div>
-                </div>
-                <div id="page-donate" class="page">
-                    <div class="donate-page-wrapper">
-                        <h2 class="section-title donate-page-title">Support Monochrome</h2>
-                        <p class="donate-page-desc">
-                            If Monochrome has been useful to you and you're able to, consider making a donation. It
-                            helps pay for the server and domain, and you get to support us :)
-                        </p>
-                        <div class="donate-goal-card">
-                            <div class="donate-goal-card-header">
-                                <span class="donate-goal-card-label">Donation Goal</span>
-                                <span id="donate-goal-percent" class="donate-goal-card-percent">0%</span>
-                            </div>
-                            <div class="donate-goal-track">
-                                <div id="donate-goal-progress" class="donate-goal-fill"></div>
-                            </div>
-                            <div class="donate-goal-card-footer">
-                                <span id="donate-goal">$0.00</span>
-                                <span>of $1,000.00 goal</span>
-                            </div>
-                        </div>
-                        <div class="donate-actions" id="donate-actions">
-                            <a
-                                href="https://ko-fi.com/monochrometf"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                class="btn-primary donate-kofi-btn"
-                            >
-                                Donate on Ko-fi
-                            </a>
                         </div>
                     </div>
                 </div>
