@@ -469,7 +469,10 @@ const handlers: UrlHandler[] = [
             const id = first(q, /track\/([a-zA-Z0-9_-]+)/);
             if (!id) return (await i.editReply('Could not find a Qobuz track id in that URL.'), []);
             const meta = await qobuzProvider.getTrackMetadata(id).catch(() => null);
-            const t = meta && toTrack({ ...meta, id: meta.id ?? id }, 'qobuz');
+            // QobuzProvider prefixes ids with `q:`; toTrack() re-adds that prefix
+            // itself, so strip it here to avoid a double `q:q:` id.
+            const metaId = typeof meta?.id === 'string' ? meta.id.replace(/^q:/, '') : meta?.id;
+            const t = meta && toTrack({ ...meta, id: metaId ?? id }, 'qobuz');
             return t ? [t] : [];
         },
     },
