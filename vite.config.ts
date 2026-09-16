@@ -25,8 +25,6 @@ function getGitCommitHash() {
     }
 }
 
-const decrypterVersion = '2026-08-06-crossfade-v10';
-
 export default defineConfig(({ mode }) => {
     const commitHash = getGitCommitHash();
     const isDev = mode === 'development';
@@ -129,7 +127,6 @@ export default defineConfig(({ mode }) => {
                     suppressWarnings: true,
                 },
                 workbox: {
-                    importScripts: [`sw-decrypter.js?v=${decrypterVersion}`],
                     skipWaiting: true,
                     clientsClaim: true,
                     globPatterns: ['index.html', 'manifest.json'],

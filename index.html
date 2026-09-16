@@ -4149,27 +4149,27 @@
                                         >
                                     </div>
                                     <select id="streaming-quality-setting">
-                                        <option value="auto" data-sources="Amazon and Mono">Auto (Adaptive)</option>
-                                        <option value="DOLBY_ATMOS_EAC3_HIGH" data-sources="Amazon and Tidal">
+                                        <option value="auto">Auto (Adaptive)</option>
+                                        <option value="DOLBY_ATMOS_EAC3_HIGH" data-sources="Tidal">
                                             Dolby Atmos — E-AC-3 High
                                         </option>
-                                        <option value="DOLBY_ATMOS_EAC3_LOW" data-sources="Amazon">
+                                        <option value="DOLBY_ATMOS_EAC3_LOW">
                                             Dolby Atmos — E-AC-3 Low
                                         </option>
-                                        <option value="DOLBY_ATMOS_AC4_HIGH" data-sources="Amazon">
+                                        <option value="DOLBY_ATMOS_AC4_HIGH">
                                             Dolby Atmos — AC-4 High
                                         </option>
-                                        <option value="DOLBY_ATMOS_AC4_LOW" data-sources="Amazon">
+                                        <option value="DOLBY_ATMOS_AC4_LOW">
                                             Dolby Atmos — AC-4 Low
                                         </option>
-                                        <option value="HI_RES_LOSSLESS" data-sources="Amazon and Mono">
+                                        <option value="HI_RES_LOSSLESS" data-sources="Mono">
                                             Hi-Res Lossless (24-bit)
                                         </option>
-                                        <option value="LOSSLESS" data-sources="Amazon and Mono">
+                                        <option value="LOSSLESS" data-sources="Mono">
                                             Lossless (16-bit)
                                         </option>
-                                        <option value="HIGH" data-sources="Amazon">High</option>
-                                        <option value="LOW" data-sources="Amazon">Low</option>
+                                        <option value="HIGH">High</option>
+                                        <option value="LOW">Low</option>
                                     </select>
                                 </div>
                                 <div
@@ -5010,6 +5010,14 @@
 
                                         <div class="autoeq-actions-row">
                                             <button
+                                                id="autoeq-import-preset-btn"
+                                                class="autoeq-download-btn"
+                                                title="Import EQ settings"
+                                                aria-label="Import EQ settings"
+                                            >
+                                                <use svg="!lucide/upload.svg" size="20" />
+                                            </button>
+                                            <button
                                                 id="autoeq-download-btn"
                                                 class="autoeq-download-btn"
                                                 title="Export EQ settings"
@@ -5017,6 +5025,12 @@
                                             >
                                                 <use svg="!lucide/download.svg" size="20" />
                                             </button>
+                                            <input
+                                                type="file"
+                                                id="autoeq-import-preset-file"
+                                                accept=".txt,.csv"
+                                                style="display: none"
+                                            />
                                         </div>
                                         <span
                                             id="autoeq-status"
@@ -5459,26 +5473,26 @@
                                             >
                                         </div>
                                         <select id="download-quality-setting">
-                                            <option value="DOLBY_ATMOS_EAC3_HIGH" data-sources="Amazon and Tidal">
+                                            <option value="DOLBY_ATMOS_EAC3_HIGH" data-sources="Tidal">
                                                 Dolby Atmos — E-AC-3 High
                                             </option>
-                                            <option value="DOLBY_ATMOS_EAC3_LOW" data-sources="Amazon">
+                                            <option value="DOLBY_ATMOS_EAC3_LOW">
                                                 Dolby Atmos — E-AC-3 Low
                                             </option>
-                                            <option value="DOLBY_ATMOS_AC4_HIGH" data-sources="Amazon">
+                                            <option value="DOLBY_ATMOS_AC4_HIGH">
                                                 Dolby Atmos — AC-4 High
                                             </option>
-                                            <option value="DOLBY_ATMOS_AC4_LOW" data-sources="Amazon">
+                                            <option value="DOLBY_ATMOS_AC4_LOW">
                                                 Dolby Atmos — AC-4 Low
                                             </option>
-                                            <option value="HI_RES_LOSSLESS" data-sources="Amazon and Mono">
+                                            <option value="HI_RES_LOSSLESS" data-sources="Mono">
                                                 Hi-Res Lossless (24-bit)
                                             </option>
-                                            <option value="LOSSLESS" data-sources="Amazon and Mono">
+                                            <option value="LOSSLESS" data-sources="Mono">
                                                 Lossless (16-bit)
                                             </option>
-                                            <option value="HIGH" data-sources="Amazon">High</option>
-                                            <option value="LOW" data-sources="Amazon">Low</option>
+                                            <option value="HIGH">High</option>
+                                            <option value="LOW">Low</option>
                                         </select>
                                     </div>
                                     <div class="setting-item" id="hi-res-download-warning" style="display: none">
@@ -5895,65 +5909,6 @@
                                         >
                                     </div>
                                     <button id="custom-db-btn" class="btn-secondary">Configure</button>
-                                </div>
-                            </div>
-
-                            <div class="settings-group">
-                                <div class="setting-item">
-                                    <div class="info">
-                                        <span class="label">Unified Playback</span>
-                                        <span class="description"
-                                            >Amazon is tried first, with the in-house lossless source handled by the
-                                            same API when Amazon is unavailable.</span
-                                        >
-                                    </div>
-                                    <label class="toggle-switch">
-                                        <input type="checkbox" id="unified-playback-toggle" checked />
-                                        <span class="slider"></span>
-                                    </label>
-                                </div>
-                                <div class="setting-item">
-                                    <div class="info">
-                                        <span class="label">Unified Playback API URL</span>
-                                        <span class="description">The API endpoint that resolves Amazon and Mono</span>
-                                    </div>
-                                    <input
-                                        type="text"
-                                        id="unified-playback-api-base-url"
-                                        placeholder="https://music-api.geeked.wtf"
-                                        style="
-                                            width: 220px;
-                                            padding: 0.35rem 0.5rem;
-                                            border: 1px solid var(--border);
-                                            border-radius: var(--radius-md);
-                                            background: var(--card);
-                                            color: var(--foreground);
-                                            font-size: 0.8rem;
-                                        "
-                                    />
-                                </div>
-                                <div class="setting-item">
-                                    <div class="info">
-                                        <span class="label">App API Key</span>
-                                        <span class="description"
-                                            >Bearer key used with a browser Turnstile session for playback</span
-                                        >
-                                    </div>
-                                    <input
-                                        type="password"
-                                        id="unified-playback-api-token"
-                                        placeholder="amp_…"
-                                        autocomplete="off"
-                                        style="
-                                            width: 220px;
-                                            padding: 0.35rem 0.5rem;
-                                            border: 1px solid var(--border);
-                                            border-radius: var(--radius-md);
-                                            background: var(--card);
-                                            color: var(--foreground);
-                                            font-size: 0.8rem;
-                                        "
-                                    />
                                 </div>
                             </div>
 
