@@ -67,6 +67,9 @@ export class MusicPlayer {
         this.player = createAudioPlayer();
 
         this.player.on(AudioPlayerStatus.Idle, () => {
+            if (this.currentTrack) {
+                console.log(`[MusicPlayer] player went idle while playing "${this.currentTrack.title}"`);
+            }
             this.currentTrack = null;
             this.killFfmpeg();
             this.schedulePump();
@@ -247,7 +250,17 @@ export class MusicPlayer {
                 track.provider = streamInfo.provider || track.provider;
                 track.url = streamInfo.url;
 
+                const streamHost = (() => {
+                    try {
+                        return new URL(streamInfo.url).hostname;
+                    } catch {
+                        return '(unparseable URL)';
+                    }
+                })();
+                console.log(`[MusicPlayer] streaming "${track.title}" from ${streamHost} via ${track.provider}`);
+
                 const ffmpeg = spawn(FFMPEG_BIN, FFMPEG_ARGS(streamInfo.url));
+                const startedAt = Date.now();
 
                 if (token !== this.playToken) {
                     try {
@@ -263,9 +276,17 @@ export class MusicPlayer {
 
                 ffmpeg.stderr.on('data', (d: Buffer) => console.log(`[ffmpeg] ${d.toString().trim()}`));
                 ffmpeg.on('error', (err: Error) => console.error('[MusicPlayer] ffmpeg spawn error:', err));
+                ffmpeg.on('exit', (code, signal) => {
+                    console.log(
+                        `[MusicPlayer] ffmpeg exited (code=${code}, signal=${signal}) after ${Date.now() - startedAt}ms`
+                    );
+                });
 
                 const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.WebmOpus });
                 resource.playStream.on('error', (err: Error) => console.error('[MusicPlayer] stream error:', err));
+                resource.playStream.on('close', () =>
+                    console.log(`[MusicPlayer] ffmpeg stdout closed after ${Date.now() - startedAt}ms`)
+                );
 
                 this.player.play(resource);
                 this.refreshDashboard();

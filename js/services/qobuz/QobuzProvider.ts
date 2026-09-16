@@ -1,6 +1,16 @@
 import type { Provider, SearchOptions, SearchResults, StreamInfo } from '../types.js';
 import { ProviderError } from '../types.js';
-import { QobuzClient } from './QobuzClient.js';
+
+/**
+ * Minimal shape QobuzProvider needs from its HTTP client. A real `QobuzClient`
+ * satisfies this structurally, but keeping the dependency this loose means
+ * non-browser callers (e.g. the bot) can supply a lightweight client with the
+ * same `request()` method without pulling in QobuzClient's `storage.js`
+ * (browser-only) fallback.
+ */
+export interface QobuzRequestClient {
+    request(endpoint: string, params?: Record<string, any>): Promise<any>;
+}
 
 function getQobuzFormatId(quality?: string): string {
     if (!quality) return '27';
@@ -74,10 +84,10 @@ export class QobuzProvider implements Provider {
     readonly id = 'qobuz';
     readonly name = 'Qobuz';
     readonly supportsAtmos = false;
-    private client: QobuzClient;
+    private client: QobuzRequestClient;
 
-    constructor(client?: QobuzClient) {
-        this.client = client || new QobuzClient();
+    constructor(client: QobuzRequestClient) {
+        this.client = client;
     }
 
     async search(query: string, options: SearchOptions = {}): Promise<SearchResults> {
