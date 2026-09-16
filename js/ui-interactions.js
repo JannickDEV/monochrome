@@ -353,7 +353,7 @@ export function initializeUIInteractions(player, api, ui) {
                     likeBtn.classList.toggle('active', added);
                     likeBtn.innerHTML = added ? SVG_HEART_FILLED(20) : SVG_HEART(20);
 
-                    await hapticSuccess();
+                    void hapticSuccess();
                     showNotification(added ? `Added to Liked: ${track.title}` : `Removed from Liked: ${track.title}`);
                 }
                 return;

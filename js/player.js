@@ -206,6 +206,14 @@ export class Player {
 
     async _initShaka() {
         try {
+            // Best-effort only: some browsers (seen on Edge) defer the load/error
+            // event for off-screen/lazy images indefinitely ("Images loaded lazily
+            // and replaced with placeholders" intervention). Image load state has
+            // nothing to do with whether Shaka can initialise, so never let it
+            // block playback forever — bound every wait here.
+            const withTimeout = (promise, ms) =>
+                Promise.race([promise, new Promise((resolve) => setTimeout(resolve, ms))]);
+
             const waitForImagesLoading = () => {
                 const images = Array.from(document.images).filter((img) => !img.complete);
                 if (images.length === 0) return Promise.resolve();
@@ -220,9 +228,9 @@ export class Player {
             };
 
             if (document.readyState !== 'complete') {
-                await new Promise((resolve) => window.addEventListener('load', resolve));
+                await withTimeout(new Promise((resolve) => window.addEventListener('load', resolve)), 5000);
             }
-            await waitForImagesLoading();
+            await withTimeout(waitForImagesLoading(), 3000);
 
             const shaka = await import('shaka-player');
             shaka.polyfill.installAll();

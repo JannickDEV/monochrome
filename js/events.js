@@ -717,28 +717,31 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
         setupMediaListeners(player.video);
     }
 
-    playPauseBtn.addEventListener('click', async () => {
-        await hapticMedium();
+    // Haptic feedback is a nicety, never a gate: fire it without awaiting so a
+    // stuck/unsupported Capacitor Haptics call (seen hanging indefinitely on
+    // some platforms) can never block the actual transport controls.
+    playPauseBtn.addEventListener('click', () => {
+        void hapticMedium();
         player.handlePlayPause();
     });
-    nextBtn.addEventListener('click', async () => {
-        await hapticMedium();
+    nextBtn.addEventListener('click', () => {
+        void hapticMedium();
         player.playNext();
     });
-    prevBtn.addEventListener('click', async () => {
-        await hapticMedium();
+    prevBtn.addEventListener('click', () => {
+        void hapticMedium();
         player.playPrev();
     });
 
     shuffleBtn.addEventListener('click', async () => {
-        await hapticLight();
+        void hapticLight();
         player.toggleShuffle();
         shuffleBtn.classList.toggle('active', player.shuffleActive);
         if (window.renderQueueFunction) await window.renderQueueFunction();
     });
 
     repeatBtn.addEventListener('click', async () => {
-        await hapticLight();
+        void hapticLight();
         const mode = await player.toggleRepeat();
         repeatBtn.classList.toggle('active', mode !== REPEAT_MODE.OFF);
         repeatBtn.classList.toggle('repeat-one', mode === REPEAT_MODE.ONE);
