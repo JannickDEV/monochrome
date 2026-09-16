@@ -2841,7 +2841,16 @@ export class LosslessAPI {
             return await soundCloudAPI.getStreamUrl(id, options);
         }
         if (devModeSettings.isEnabled() && !options._fromProvider) {
-            return await this.getFallbackProvider(true).getStreamUrl(id, quality);
+            const fp = this.getFallbackProvider(true);
+            // Ids with no Tidal/Qobuz-recognisable shape (e.g. apple:track:…)
+            // can't be looked up on either backend directly — FallbackProvider
+            // can only translate them via ISRC if it already has it.
+            if (options.track) {
+                const strId = String(id);
+                if (options.track.isrc) fp.isrcCache?.set(strId, String(options.track.isrc));
+                fp.metaCache?.set(strId, options.track);
+            }
+            return await fp.getStreamUrl(id, quality);
         }
 
         const cacheKey = `stream_info_${id}_${quality}`;

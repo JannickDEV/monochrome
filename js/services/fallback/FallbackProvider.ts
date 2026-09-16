@@ -23,7 +23,14 @@ export class FallbackProvider implements Provider {
         return this.providers;
     }
 
-    private getProviderForId(id: string | number): Provider {
+    /**
+     * Guesses which of *this instance's* providers an id belongs to, purely
+     * from its shape. Returns `null` — not a fallback guess — when the id
+     * carries a prefix that isn't one of ours (e.g. `apple:track:…`): such an
+     * id definitely doesn't belong to any provider here, so callers must not
+     * treat "no known source" as "must be the target provider".
+     */
+    private getProviderForId(id: string | number): Provider | null {
         if (!this.providers.length) {
             throw new Error('No providers configured in FallbackProvider');
         }
@@ -40,28 +47,37 @@ export class FallbackProvider implements Provider {
             const tidal = this.providers.find(p => p.id === 'tidal');
             if (tidal) return tidal;
         }
+        // A `word:`-style prefix (apple:, spotify:, …) belongs to a catalog none
+        // of our providers speak — never guess one of them owns it.
+        if (/^[a-z]+:/i.test(strId)) {
+            return null;
+        }
         return this.providers[0];
     }
 
     private async resolveProviderTrackId(targetProvider: Provider, id: string | number): Promise<string | number> {
         const strId = String(id);
-        const sourceProvider = this.getProviderForId(id) || targetProvider;
+        // Only set when we're actually confident which provider the id belongs
+        // to. Never treated as "must be the target provider" just because it's
+        // unrecognised — that's how a foreign id (e.g. apple:track:…) used to
+        // get handed straight to Qobuz/Tidal and 400.
+        const knownSourceProvider = this.getProviderForId(id);
 
-        // Strict target validation: 
+        // Strict target validation:
         if (targetProvider.id === 'qobuz' && strId.startsWith('q:')) {
             return id;
         } else if (targetProvider.id === 'tidal' && (strId.startsWith('t:') || /^\d+$/.test(strId))) {
             return id;
         } else if (targetProvider.id !== 'qobuz' && targetProvider.id !== 'tidal') {
-            if (sourceProvider.id === targetProvider.id) {
+            if (knownSourceProvider && knownSourceProvider.id === targetProvider.id) {
                 return id;
             }
         }
 
         // ONE MORE STRICT CHECK: If the user passed a purely numerical ID (TIDAL), but target is QOBUZ.
         // We absolutely CANNOT return this ID directly to Qobuz. We MUST translate it.
-        // If sourceProvider is mistakenly determined as Qobuz, we still force translation if it's purely numerical.
-        if (sourceProvider.id === targetProvider.id) {
+        // If knownSourceProvider is mistakenly determined as Qobuz, we still force translation if it's purely numerical.
+        if (knownSourceProvider && knownSourceProvider.id === targetProvider.id) {
             // Only allow if it's not a cross-provider numerical ID confusion
             if (!(targetProvider.id === 'qobuz' && /^\d+$/.test(strId))) {
                 return id;
@@ -77,17 +93,20 @@ export class FallbackProvider implements Provider {
         let isrc = this.isrcCache.get(strId);
         let meta: any = null;
 
-        if (sourceProvider) {
+        // Only ask a provider for metadata on an id we're confident is theirs —
+        // asking e.g. Qobuz to look up an `apple:track:…` id is a guaranteed
+        // 400, not a fallback attempt. Foreign ids go straight to metaCache below.
+        if (knownSourceProvider) {
             try {
                 // Attempt to fetch metadata, fallback to getTrack if it fails or returns something without a title
-                meta = typeof sourceProvider.getTrackMetadata === 'function' 
-                    ? await sourceProvider.getTrackMetadata(id)
+                meta = typeof knownSourceProvider.getTrackMetadata === 'function'
+                    ? await knownSourceProvider.getTrackMetadata(id)
                     : null;
-                
+
                 if (!meta || !meta.title) {
-                    meta = typeof sourceProvider.getTrack === 'function' ? await sourceProvider.getTrack(id) : null;
+                    meta = typeof knownSourceProvider.getTrack === 'function' ? await knownSourceProvider.getTrack(id) : null;
                 }
-                
+
                 // Some providers return { item: {...} } or { tracks: [...] }
                 if (meta && meta.item) meta = meta.item;
                 if (meta && meta.tracks && meta.tracks[0]) meta = meta.tracks[0];
@@ -154,11 +173,11 @@ export class FallbackProvider implements Provider {
 
                     // Validate the ISRC match to prevent label metadata errors (different song, same ISRC)
                     if (match) {
-                        if (!meta && sourceProvider) {
+                        if (!meta && knownSourceProvider) {
                             try {
-                                meta = typeof sourceProvider.getTrackMetadata === 'function' 
-                                    ? await sourceProvider.getTrackMetadata(id)
-                                    : (typeof sourceProvider.getTrack === 'function' ? await sourceProvider.getTrack(id) : null);
+                                meta = typeof knownSourceProvider.getTrackMetadata === 'function'
+                                    ? await knownSourceProvider.getTrackMetadata(id)
+                                    : (typeof knownSourceProvider.getTrack === 'function' ? await knownSourceProvider.getTrack(id) : null);
                             } catch (e) {
                                 console.warn(`[FallbackProvider] Could not fetch metadata for validation for ${id}:`, e);
                             }
@@ -462,22 +481,25 @@ export class FallbackProvider implements Provider {
     }
 
     getCoverUrl(id: string | number, size = '320'): string {
-        const provider = this.getProviderForId(id);
+        // No provider recognises this id's shape (e.g. a foreign apple:… id) —
+        // there's no async ISRC translation available here, so best-effort
+        // fall back to the first provider rather than throw.
+        const provider = this.getProviderForId(id) || this.providers[0];
         return provider.getCoverUrl(id, size);
     }
 
     getCoverSrcset(id: string | number): string {
-        const provider = this.getProviderForId(id);
+        const provider = this.getProviderForId(id) || this.providers[0];
         return provider.getCoverSrcset(id);
     }
 
     getArtistPictureUrl(id: string | number, size = '320'): string {
-        const provider = this.getProviderForId(id);
+        const provider = this.getProviderForId(id) || this.providers[0];
         return provider.getArtistPictureUrl(id, size);
     }
 
     getArtistPictureSrcset(id: string | number): string {
-        const provider = this.getProviderForId(id);
+        const provider = this.getProviderForId(id) || this.providers[0];
         return provider.getArtistPictureSrcset(id);
     }
 

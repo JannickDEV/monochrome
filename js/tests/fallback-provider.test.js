@@ -116,6 +116,28 @@ describe('FallbackProvider', () => {
         await expect(fallback.getTrack('999')).rejects.toThrow('All providers failed for getTrack');
     });
 
+    test('translates a foreign-prefixed id (e.g. apple:) via pre-seeded ISRC instead of guessing a provider', async () => {
+        qobuzMock.getTrackMetadata = vi.fn();
+        tidalMock.getTrackMetadata = vi.fn();
+        // Matches the isrc on the default qobuzMock.searchTracks mock from beforeEach.
+        fallback.isrcCache.set('apple:track:1', 'US123');
+        fallback.metaCache.set('apple:track:1', { title: 'Some Song', isrc: 'US123' });
+        qobuzMock.getStreamUrl.mockResolvedValueOnce({
+            url: 'https://qobuz.stream/apple-match.flac',
+            provider: 'qobuz',
+        });
+
+        const res = await fallback.getStreamUrl('apple:track:1', 'LOSSLESS');
+
+        expect(res.url).toBe('https://qobuz.stream/apple-match.flac');
+        // Neither provider should ever be asked to look up the apple: id directly.
+        expect(qobuzMock.getTrackMetadata).not.toHaveBeenCalled();
+        expect(qobuzMock.getTrack).not.toHaveBeenCalled();
+        expect(tidalMock.getTrackMetadata).not.toHaveBeenCalled();
+        expect(tidalMock.getTrack).not.toHaveBeenCalled();
+        expect(qobuzMock.searchTracks).toHaveBeenCalledWith('US123', { limit: 10 });
+    });
+
     test('getCoverUrl routes to appropriate provider based on ID prefix or pattern', () => {
         expect(fallback.getCoverUrl('q:cover_1', '600')).toBe('https://qobuz.img/q:cover_1/600');
         expect(fallback.getCoverUrl('t:cover_2', '600')).toBe('https://tidal.img/t:cover_2/600');
