@@ -23,7 +23,6 @@ vi.mock('../storage.js', () => ({
         getApiBaseUrl: vi.fn(() => 'https://unified.example'),
         getApiToken: vi.fn(() => ''),
     },
-    deezerFallbackSettings: { isEnabled: vi.fn(() => false), getApiBaseUrl: vi.fn(() => '') },
 }));
 
 vi.mock('../cache.js', () => ({

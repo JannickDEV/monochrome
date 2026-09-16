@@ -3809,118 +3809,6 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <div id="lastfm-credential-auth-secondary" style="display: none; margin-top: 12px">
-                                        <div style="display: flex; flex-direction: column; gap: 8px">
-                                            <div id="lastfm-credential-toggle-container-secondary">
-                                                <button
-                                                    id="lastfm-show-credential-auth-secondary"
-                                                    class="btn-secondary"
-                                                    style="padding: 6px 12px; font-size: 0.85rem; width: 100%"
-                                                >
-                                                    Login with Username/Password
-                                                </button>
-                                            </div>
-                                            <div id="lastfm-credential-form-secondary" style="display: none">
-                                                <input
-                                                    type="text"
-                                                    id="lastfm-username-secondary"
-                                                    placeholder="Last.fm Username"
-                                                    style="
-                                                        padding: 8px;
-                                                        border-radius: 4px;
-                                                        border: 1px solid var(--border);
-                                                        background: var(--background);
-                                                        color: var(--foreground);
-                                                        width: 100%;
-                                                        margin-bottom: 8px;
-                                                    "
-                                                />
-                                                <input
-                                                    type="password"
-                                                    id="lastfm-password-secondary"
-                                                    placeholder="Last.fm Password"
-                                                    style="
-                                                        padding: 8px;
-                                                        border-radius: 4px;
-                                                        border: 1px solid var(--border);
-                                                        background: var(--background);
-                                                        color: var(--foreground);
-                                                        width: 100%;
-                                                        margin-bottom: 8px;
-                                                    "
-                                                />
-                                                <div style="display: flex; gap: 8px">
-                                                    <button
-                                                        id="lastfm-login-credentials-secondary"
-                                                        class="btn-secondary"
-                                                        style="padding: 6px 12px; font-size: 0.85rem; flex: 1"
-                                                    >
-                                                        Login
-                                                    </button>
-                                                    <button
-                                                        id="lastfm-use-oauth-secondary"
-                                                        class="btn-secondary"
-                                                        style="padding: 6px 12px; font-size: 0.85rem; flex: 1"
-                                                    >
-                                                        Use OAuth
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div id="lastfm-credential-auth-alt" style="margin-top: 12px; display: none">
-                                        <div style="display: flex; flex-direction: column; gap: 8px">
-                                            <input
-                                                type="text"
-                                                id="lastfm-username-alt"
-                                                placeholder="Last.fm Username"
-                                                style="
-                                                    padding: 8px;
-                                                    border-radius: 4px;
-                                                    border: 1px solid var(--border);
-                                                    background: var(--background);
-                                                    color: var(--foreground);
-                                                "
-                                            />
-                                            <input
-                                                type="password"
-                                                id="lastfm-password-alt"
-                                                placeholder="Last.fm Password"
-                                                style="
-                                                    padding: 8px;
-                                                    border-radius: 4px;
-                                                    border: 1px solid var(--border);
-                                                    background: var(--background);
-                                                    color: var(--foreground);
-                                                "
-                                            />
-                                            <div style="display: flex; gap: 8px; margin-top: 4px">
-                                                <button
-                                                    id="lastfm-login-credentials-alt"
-                                                    class="btn-secondary"
-                                                    style="padding: 6px 12px; font-size: 0.85rem"
-                                                >
-                                                    Login with Credentials
-                                                </button>
-                                                <button
-                                                    id="lastfm-use-oauth-alt"
-                                                    class="btn-secondary"
-                                                    style="padding: 6px 12px; font-size: 0.85rem"
-                                                >
-                                                    Use OAuth Instead
-                                                </button>
-                                            </div>
-                                            <div style="display: flex; gap: 8px; margin-top: 4px">
-                                                <button
-                                                    id="lastfm-show-credential-auth-alt"
-                                                    class="btn-secondary"
-                                                    style="padding: 6px 12px; font-size: 0.85rem"
-                                                >
-                                                    Login with Username/Password
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
                                 </div>
 
                                 <div class="setting-item" id="lastfm-toggle-setting" style="display: none">
@@ -5231,23 +5119,6 @@
                                                         >
                                                     </div>
                                                 </div>
-                                                <div class="autoeq-control-mini speaker-eq-slider-control">
-                                                    <label class="autoeq-control-label">PREAMP</label>
-                                                    <div class="speaker-eq-slider-row">
-                                                        <input
-                                                            type="range"
-                                                            id="speaker-preamp-slider"
-                                                            min="-20"
-                                                            max="20"
-                                                            step="0.1"
-                                                            value="0"
-                                                            class="autoeq-preamp-slider"
-                                                        />
-                                                        <span id="speaker-preamp-value" class="speaker-eq-slider-value"
-                                                            >0 dB</span
-                                                        >
-                                                    </div>
-                                                </div>
                                             </div>
                                             <div class="speaker-eq-actions-row">
                                                 <button id="speaker-autoeq-btn" class="autoeq-run-btn" disabled>
@@ -5909,42 +5780,6 @@
                                         >
                                     </div>
                                     <button id="custom-db-btn" class="btn-secondary">Configure</button>
-                                </div>
-                            </div>
-
-                            <div class="settings-group">
-                                <div class="setting-item">
-                                    <div class="info">
-                                        <span class="label">Deezer Fallback</span>
-                                        <span class="description"
-                                            >Last-resort source when the primary and other fallback providers fail. Tops
-                                            out at 16-bit lossless (FLAC).</span
-                                        >
-                                    </div>
-                                    <label class="toggle-switch">
-                                        <input type="checkbox" id="deezer-fallback-toggle" checked />
-                                        <span class="slider"></span>
-                                    </label>
-                                </div>
-                                <div class="setting-item">
-                                    <div class="info">
-                                        <span class="label">Deezer Fallback API URL</span>
-                                        <span class="description">The Deezer fallback API endpoint</span>
-                                    </div>
-                                    <input
-                                        type="text"
-                                        id="deezer-fallback-api-base-url"
-                                        placeholder="https://dzr.tabs-vs-spaces.wtf"
-                                        style="
-                                            width: 220px;
-                                            padding: 0.35rem 0.5rem;
-                                            border: 1px solid var(--border);
-                                            border-radius: var(--radius-md);
-                                            background: var(--card);
-                                            color: var(--foreground);
-                                            font-size: 0.8rem;
-                                        "
-                                    />
                                 </div>
                             </div>
 
