@@ -138,6 +138,28 @@ describe('FallbackProvider', () => {
         expect(qobuzMock.searchTracks).toHaveBeenCalledWith('US123', { limit: 10 });
     });
 
+    test('falls back to a title+artist search when the ISRC has no match on the target catalog', async () => {
+        fallback.isrcCache.set('apple:track:2', 'US000'); // present on Apple, absent on Qobuz
+        fallback.metaCache.set('apple:track:2', {
+            title: 'Test Song',
+            artist: { name: 'Test Artist' },
+            isrc: 'US000',
+        });
+        qobuzMock.searchTracks.mockImplementation((query) => {
+            if (query === 'US000') return Promise.resolve({ items: [] }); // no ISRC match
+            return Promise.resolve({
+                items: [{ id: 'q:456', title: 'Test Song', artist: { name: 'Test Artist' } }],
+            });
+        });
+        qobuzMock.getStreamUrl.mockResolvedValueOnce({ url: 'https://qobuz.stream/title-match.flac', provider: 'qobuz' });
+
+        const res = await fallback.getStreamUrl('apple:track:2', 'LOSSLESS');
+
+        expect(res.url).toBe('https://qobuz.stream/title-match.flac');
+        expect(qobuzMock.searchTracks).toHaveBeenCalledWith('US000', { limit: 10 });
+        expect(qobuzMock.searchTracks).toHaveBeenCalledWith('Test Song Test Artist', { limit: 5 });
+    });
+
     test('getCoverUrl routes to appropriate provider based on ID prefix or pattern', () => {
         expect(fallback.getCoverUrl('q:cover_1', '600')).toBe('https://qobuz.img/q:cover_1/600');
         expect(fallback.getCoverUrl('t:cover_2', '600')).toBe('https://tidal.img/t:cover_2/600');

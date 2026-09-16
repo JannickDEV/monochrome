@@ -202,6 +202,43 @@ export class FallbackProvider implements Provider {
             }
         }
 
+        // ISRC translation failed or wasn't possible (no isrc at all, or the
+        // target catalog doesn't carry that ISRC — common for Apple-sourced
+        // search results). Fall back to a plain title + artist search. Less
+        // certain than an ISRC match, so require both to look right.
+        if ((!match || !match.id) && meta && (meta.title || meta.name)) {
+            const rawTitle = String(meta.title || meta.name);
+            const rawArtist = String(meta.artist?.name || meta.artists?.[0]?.name || meta.artist || '');
+            const metaTitle = rawTitle.toLowerCase().trim();
+            const metaArtist = rawArtist.toLowerCase().trim();
+
+            if (metaTitle) {
+                try {
+                    const query = rawArtist ? `${rawTitle} ${rawArtist}` : rawTitle;
+                    const searchRes = await targetProvider.searchTracks(query, { limit: 5 });
+                    const items = searchRes?.items || [];
+
+                    const candidate = items.find((t: any) => {
+                        const tTitle = String(t.title || '').toLowerCase().trim();
+                        const tArtist = String(t.artist?.name || t.artists?.[0]?.name || '').toLowerCase().trim();
+                        const titleOk = tTitle === metaTitle || tTitle.includes(metaTitle) || metaTitle.includes(tTitle);
+                        const artistOk =
+                            !metaArtist || tArtist === metaArtist || tArtist.includes(metaArtist) || metaArtist.includes(tArtist);
+                        return titleOk && artistOk;
+                    });
+
+                    if (candidate) {
+                        console.log(
+                            `[FallbackProvider] Matched ${id} -> ${candidate.id} on ${targetProvider.name} via title/artist (no ISRC match)`
+                        );
+                        match = candidate;
+                    }
+                } catch (err) {
+                    console.warn(`[FallbackProvider] Title/artist search failed on ${targetProvider.name} for "${meta.title}":`, err);
+                }
+            }
+        }
+
         if (!match || !match.id) {
             throw new Error(`Cannot translate track ID ${id} to ${targetProvider.name} (no match found via ISRC or title/artist)`);
         }
