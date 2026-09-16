@@ -1205,12 +1205,14 @@ export class Player {
     }
 
     async playTrackFromQueue(startTime = 0, recursiveCount = 0, isRetry = false, options = {}) {
+        console.error('[DEBUG] playTrackFromQueue entered', { PLAYBACK_AVAILABLE, shakaReady: !!this.shakaReady });
         if (!PLAYBACK_AVAILABLE) {
             this.audio.pause();
             this.video.pause();
             return;
         }
         await this.shakaReady;
+        console.error('[DEBUG] shakaReady resolved, shakaPlayer:', !!this.shakaPlayer);
         const { preserveGestureToken = false, preparedPlayback = null } = options;
         if (!isRetry) {
             this.isFallbackRetry = false;

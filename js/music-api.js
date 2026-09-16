@@ -369,6 +369,7 @@ export class MusicAPI {
 
     // Stream methods
     async getStreamUrl(id, quality, options = {}) {
+        console.error('[DEBUG] MusicAPI.getStreamUrl entered', { id, quality });
         if (String(id).startsWith('sc_')) {
             const { soundCloudAPI } = await import('./soundcloud-api.js');
             return await soundCloudAPI.getStreamUrl(id);
@@ -376,9 +377,17 @@ export class MusicAPI {
         const api = this.getAPI();
         let appleTrack = options?.track || this.getCachedAppleTrack(id);
         if (!appleTrack && (this.isAppleId(id, 'track') || this.isAppleId(id, 'video') || this.isAppleId(id))) {
-            appleTrack = await this.getTrackMetadata(id).catch(() => null);
+            console.error('[DEBUG] resolving apple metadata for', id);
+            appleTrack = await this.getTrackMetadata(id).catch((e) => {
+                console.error('[DEBUG] apple getTrackMetadata failed', e);
+                return null;
+            });
+            console.error('[DEBUG] apple metadata resolved:', !!appleTrack, appleTrack?.isrc);
         }
-        if (appleTrack) return api.getStreamUrl(id, quality, { ...options, track: appleTrack });
+        if (appleTrack) {
+            console.error('[DEBUG] calling api.getStreamUrl with apple track', appleTrack.id);
+            return api.getStreamUrl(id, quality, { ...options, track: appleTrack });
+        }
         const cleanId = this.stripProviderPrefix(id);
         return api.getStreamUrl(cleanId, quality, options);
     }

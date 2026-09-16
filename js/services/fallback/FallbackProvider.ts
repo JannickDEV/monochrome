@@ -284,8 +284,10 @@ export class FallbackProvider implements Provider {
         }
         const errors: Error[] = [];
         for (const provider of providers) {
+            console.error(`[DEBUG] FallbackProvider trying ${provider.id} for ${operation}(${JSON.stringify(args)})`);
             try {
                 const res = await fn(provider);
+                console.error(`[DEBUG] FallbackProvider ${provider.id} succeeded for ${operation}`);
                 if (isEmptyResult && isEmptyResult(res)) {
                     throw new Error(`Provider ${provider.name} returned empty/unusable results`);
                 }

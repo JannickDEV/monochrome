@@ -2836,12 +2836,19 @@ export class LosslessAPI {
     }
 
     async getStreamUrl(id, quality = 'LOSSLESS', options = {}) {
+        console.error('[DEBUG] LosslessAPI.getStreamUrl entered', {
+            id,
+            quality,
+            devMode: devModeSettings.isEnabled(),
+            fromProvider: !!options._fromProvider,
+        });
         if (String(id).startsWith('sc_')) {
             const { soundCloudAPI } = await import('./soundcloud-api.js');
             return await soundCloudAPI.getStreamUrl(id, options);
         }
         if (devModeSettings.isEnabled() && !options._fromProvider) {
             const fp = this.getFallbackProvider(true);
+            console.error('[DEBUG] delegating to FallbackProvider.getStreamUrl, providers:', fp.getProviders().map((p) => p.id));
             // Ids with no Tidal/Qobuz-recognisable shape (e.g. apple:track:…)
             // can't be looked up on either backend directly — FallbackProvider
             // can only translate them via ISRC if it already has it.
