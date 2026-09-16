@@ -14,6 +14,15 @@ let tokenRequestPromise = null;
 let videoCoverStorageLoaded = false;
 const persistentVideoCoverCache = new Map();
 
+/** A plain fetch() has no default timeout — an unresponsive endpoint hangs
+ *  forever and hangs every await'er with it. Bound every Apple request. */
+function withRequestTimeout(signal, ms = 15000) {
+    const timeoutSignal = AbortSignal.timeout(ms);
+    if (!signal) return timeoutSignal;
+    if (typeof AbortSignal.any === 'function') return AbortSignal.any([signal, timeoutSignal]);
+    return signal; // Fallback for older runtimes: caller-provided signal still applies.
+}
+
 function normalize(value) {
     return String(value || '')
         .normalize('NFKD')
@@ -119,7 +128,7 @@ export async function getAppleMusicToken(options = {}) {
 
     if (!tokenRequestPromise) {
         tokenRequestPromise = (async () => {
-            const response = await fetch(TOKEN_URL);
+            const response = await fetch(TOKEN_URL, { signal: withRequestTimeout() });
             if (!response.ok) throw new Error(`Apple Music token request failed with status ${response.status}`);
             const data = await response.json();
             const token = data.dev_token || data.token;
@@ -140,7 +149,7 @@ export async function getAppleMusicToken(options = {}) {
 async function appleFetch(url, tokenInfo, options = {}, retry = true) {
     const response = await fetch(url, {
         mode: 'cors',
-        signal: options.signal,
+        signal: withRequestTimeout(options.signal),
         headers: buildAppleRequestHeaders(tokenInfo, options),
     });
     if (response.status === 401 && retry) {
@@ -194,11 +203,18 @@ function waitForRetry(delay, signal) {
 }
 
 export async function appleFetchWithRateLimitRetry(url, tokenInfo, options = {}) {
+    const maxAttempts = options.rateLimitMaxAttempts ?? 5;
     let attempt = 0;
     while (true) {
         const response = await appleFetch(url, tokenInfo, options);
         if (response.status !== 429 || options.retryOnRateLimit === false) return response;
-        await waitForRetry(rateLimitDelay(response, attempt, options), options.signal);
+        if (attempt >= maxAttempts) {
+            console.warn(`[Apple Music] Giving up on ${url} after ${maxAttempts} rate-limit retries.`);
+            return response;
+        }
+        const delay = rateLimitDelay(response, attempt, options);
+        console.warn(`[Apple Music] Rate limited on ${url}, retrying in ${delay}ms (attempt ${attempt + 1}/${maxAttempts})`);
+        await waitForRetry(delay, options.signal);
         attempt += 1;
     }
 }
