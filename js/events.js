@@ -35,6 +35,22 @@ import { UIRenderer } from './ui.js';
 let currentTrackIdForWaveform = null;
 let copiedTracks = [];
 
+/**
+ * Whether `streamInfo.url` is a directly fetchable audio file `decodeAudioData`
+ * can parse — false for DASH/HLS manifests (and the data:/blob: URLs Shaka
+ * plays them through), which are XML/playlist text, not audio bytes.
+ */
+function isDirectAudioStream(streamInfo) {
+    const url = streamInfo?.url;
+    if (!streamInfo || typeof url !== 'string') return false;
+    if (url.startsWith('data:') || url.startsWith('blob:')) return false;
+    if (streamInfo.playbackType === 'dash' || streamInfo.playbackType === 'hls') return false;
+    if (streamInfo.delivery === 'dash' || streamInfo.delivery === 'hls') return false;
+    if (streamInfo.mimeType?.includes('dash') || streamInfo.mimeType?.includes('mpegurl')) return false;
+    if (url.includes('.mpd') || url.includes('.m3u8')) return false;
+    return true;
+}
+
 const trackSelection = {
     selectedIds: new Set(),
     lastClickedId: null,
@@ -890,7 +906,7 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
 
                 if (waveData?.isFallback) {
                     const streamUrl = player.currentStreamInfo?.url || null;
-                    if (streamUrl && player.currentTrack?.id === targetTrackId) {
+                    if (streamUrl && player.currentTrack?.id === targetTrackId && isDirectAudioStream(player.currentStreamInfo)) {
                         // Building an accurate waveform downloads the whole file.
                         // Hold off until audio is actually flowing so the stream
                         // gets bandwidth priority, then fetch it at low priority.
