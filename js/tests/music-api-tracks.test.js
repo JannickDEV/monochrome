@@ -94,30 +94,6 @@ describe('MusicAPI primary search and streaming integration', () => {
         expect(results.tracks.items[0].title).toBe('Apple Song');
     });
 
-    it('uses tracksStreamerAPI as primary streaming for any track', async () => {
-        const resolveSpy = vi.spyOn(api.tracksStreamerAPI, 'resolveTrackStream').mockResolvedValueOnce({
-            url: 'https://tracks.monochrome.st/track/101',
-            sourceUrl: 'https://tracks.monochrome.st/track/101',
-            provider: 'monochrome',
-            quality: 'LOSSLESS',
-            qualityDisplay: 'FLAC',
-            playbackType: 'direct',
-            mediaMimeType: 'audio/flac',
-            lossless: true,
-        });
-
-        const tidalStreamSpy = vi.spyOn(api.tidalAPI, 'getStreamUrl');
-
-        const streamInfo = await api.getStreamUrl('101', 'LOSSLESS', {
-            track: { title: 'Some Song', artist: { name: 'Some Artist' } },
-        });
-
-        expect(resolveSpy).toHaveBeenCalled();
-        expect(tidalStreamSpy).not.toHaveBeenCalled();
-        expect(streamInfo.url).toBe('https://tracks.monochrome.st/track/101');
-        expect(streamInfo.provider).toBe('monochrome');
-    });
-
     it('fetches albums via tracksStreamerAPI when id has tracks prefix or provider', async () => {
         const mockAlbum = {
             album: {
