@@ -112,7 +112,7 @@ async function fetchcontributors() {
     if (contributorsLoaded) return;
     contributorsLoaded = true;
     try {
-        const response = await fetch('https://api.samidy.com/api/contributors');
+        const response = await fetch('https://tracks.monochrome.st/contributors');
         if (!response.ok) {
             contributorsLoaded = false;
             return;
@@ -249,7 +249,7 @@ function initializeKeyboardShortcuts(player, _audioPlayer) {
 
         for (const [action, shortcut] of Object.entries(shortcuts)) {
             if (!shortcut?.key) continue;
-            const shortcutKey = String(shortcut.key).toLowerCase();
+            const shortcutKey = shortcut.key.toLowerCase();
             const matches =
                 pressedKey === shortcutKey &&
                 shortcut.shift === hasShift &&
@@ -2400,6 +2400,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         UIRenderer.instance.addToSearchHistory(query);
         const dropdown = document.getElementById('search-history');
         if (dropdown) dropdown.style.display = 'none';
+        if (suggestion.kind === 'song' && suggestion.track?.tracksTrackId) {
+            navigate(`/track/${suggestion.track.tracksTrackId}`);
+            return;
+        }
         if (suggestion.kind === 'song' && suggestion.track?.appleMusicId) {
             navigate(`/track/apple/${suggestion.track.appleMusicId}`);
             return;

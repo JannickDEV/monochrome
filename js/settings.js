@@ -2040,8 +2040,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
     };
     const autoeqRunBtn = document.getElementById('autoeq-run-btn');
     const autoeqDownloadBtn = document.getElementById('autoeq-download-btn');
-    const autoeqImportPresetBtn = document.getElementById('autoeq-import-preset-btn');
-    const autoeqImportPresetFile = document.getElementById('autoeq-import-preset-file');
     const autoeqStatus = document.getElementById('autoeq-status');
     const autoeqImportBtn = document.getElementById('autoeq-import-measurement-btn');
     const autoeqImportFile = document.getElementById('autoeq-import-measurement-file');
@@ -4634,40 +4632,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
     // ========================================
     // Parametric EQ Import/Export
     // ========================================
-    const parseParametricEQ = (text) => {
-        const bands = [];
-        let preamp = 0;
-        for (const line of text.split('\n')) {
-            const preampMatch = line.match(/Preamp:\s*([-\d.]+)\s*dB/i);
-            if (preampMatch) {
-                preamp = parseFloat(preampMatch[1]);
-                continue;
-            }
-            const filterMatch = line.match(
-                /Filter\s+\d+:\s*ON\s+(\w+)\s+Fc\s+([\d.]+)\s*Hz\s+Gain\s+([-\d.]+)\s*dB\s+Q\s+([\d.]+)/i
-            );
-            if (filterMatch) {
-                const typeMap = {
-                    PK: 'peaking',
-                    LS: 'lowshelf',
-                    LSC: 'lowshelf',
-                    LSF: 'lowshelf',
-                    HS: 'highshelf',
-                    HSC: 'highshelf',
-                    HSF: 'highshelf',
-                };
-                bands.push({
-                    id: bands.length,
-                    type: typeMap[filterMatch[1].toUpperCase()] || 'peaking',
-                    freq: parseFloat(filterMatch[2]),
-                    gain: parseFloat(filterMatch[3]),
-                    q: parseFloat(filterMatch[4]),
-                    enabled: true,
-                });
-            }
-        }
-        return { bands, preamp };
-    };
     const parametricExportBtn = document.getElementById('parametric-export-btn');
     const parametricImportBtn = document.getElementById('parametric-import-btn');
     const parametricImportFile = document.getElementById('parametric-import-file');
@@ -4702,7 +4666,39 @@ export async function initializeSettings(scrobbler, player, api, ui) {
             const reader = new FileReader();
             reader.onload = (event) => {
                 try {
-                    const { bands, preamp } = parseParametricEQ(event.target.result);
+                    const text = event.target.result;
+                    const bands = [];
+                    let preamp = 0;
+                    const lines = text.split('\n');
+                    for (const line of lines) {
+                        const preampMatch = line.match(/Preamp:\s*([-\d.]+)\s*dB/i);
+                        if (preampMatch) {
+                            preamp = parseFloat(preampMatch[1]);
+                            continue;
+                        }
+                        const filterMatch = line.match(
+                            /Filter\s+\d+:\s*ON\s+(\w+)\s+Fc\s+([\d.]+)\s*Hz\s+Gain\s+([-\d.]+)\s*dB\s+Q\s+([\d.]+)/i
+                        );
+                        if (filterMatch) {
+                            const typeMap = {
+                                PK: 'peaking',
+                                LS: 'lowshelf',
+                                LSC: 'lowshelf',
+                                LSF: 'lowshelf',
+                                HS: 'highshelf',
+                                HSC: 'highshelf',
+                                HSF: 'highshelf',
+                            };
+                            bands.push({
+                                id: bands.length,
+                                type: typeMap[filterMatch[1].toUpperCase()] || 'peaking',
+                                freq: parseFloat(filterMatch[2]),
+                                gain: parseFloat(filterMatch[3]),
+                                q: parseFloat(filterMatch[4]),
+                                enabled: true,
+                            });
+                        }
+                    }
                     if (bands.length === 0) return;
                     // Importing while on the AutoEQ tab saves a reference AutoEQ
                     // profile instead of overwriting the Parametric EQ bands.
@@ -4735,45 +4731,6 @@ export async function initializeSettings(scrobbler, player, api, ui) {
                 } catch (err) {
                     console.error('[PEQ Import] Failed:', err);
                 }
-            };
-            reader.readAsText(file);
-            e.target.value = '';
-        });
-    }
-
-    if (autoeqImportPresetBtn && autoeqImportPresetFile) {
-        autoeqImportPresetBtn.addEventListener('click', () => autoeqImportPresetFile.click());
-        autoeqImportPresetFile.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                const { bands, preamp } = parseParametricEQ(event.target.result);
-                if (!bands.length) return setAutoEQStatus('Invalid EQ preset', 'error');
-                const name = file.name.replace(/\.(txt|csv)$/i, '');
-                autoeqCurrentBands = bands;
-                autoeqSelectedMeasurement = null;
-                autoeqSelectedEntry = { name, type: 'over-ear' };
-                const id = equalizerSettings.saveAutoEQProfile({
-                    id: 'autoeq_' + Date.now(),
-                    name,
-                    headphoneName: name,
-                    headphoneType: 'over-ear',
-                    targetId: autoeqTargetSelect?.value,
-                    targetLabel: 'Imported',
-                    bandCount: bands.length,
-                    maxFreq: parseInt(autoeqMaxFreq?.value, 10) || 16000,
-                    sampleRate: parseInt(autoeqSampleRate?.value, 10) || 48000,
-                    bands,
-                    preamp,
-                    measurementData: [],
-                    targetData: [],
-                    correctedData: [],
-                    createdAt: Date.now(),
-                });
-                equalizerSettings.setActiveAutoEQProfile(id);
-                renderSavedProfiles();
-                setAutoEQStatus(`Imported "${name}"`, 'success');
             };
             reader.readAsText(file);
             e.target.value = '';
@@ -6862,38 +6819,34 @@ export async function initializeSettings(scrobbler, player, api, ui) {
     const customDbModal = document.getElementById('custom-db-modal');
     const customPbUrlInput = document.getElementById('custom-pb-url');
     const customAppwriteEndpointInput = document.getElementById('custom-appwrite-endpoint');
-    const customAppwriteProjectInput = document.getElementById('custom-appwrite-project');
     const customDbSaveBtn = document.getElementById('custom-db-save');
     const customDbResetBtn = document.getElementById('custom-db-reset');
     const customDbCancelBtn = document.getElementById('custom-db-cancel');
 
     if (customDbBtn && customDbModal) {
-        const appwriteFromEnv = !!(window.__APPWRITE_ENDPOINT__ || window.__APPWRITE_PROJECT_ID__);
+        const authFromEnv = !!(window.__AUTH_URL__ || window.__APPWRITE_ENDPOINT__);
         const pbFromEnv = !!window.__POCKETBASE_URL__;
 
         // Hide entire setting if both are server-configured
-        if (appwriteFromEnv && pbFromEnv) {
+        if (authFromEnv && pbFromEnv) {
             const settingItem = customDbBtn.closest('.setting-item');
             if (settingItem) settingItem.style.display = 'none';
         }
 
         // Hide individual fields in the modal
         if (pbFromEnv && customPbUrlInput) customPbUrlInput.closest('div[style]').style.display = 'none';
-        if (appwriteFromEnv) {
-            if (customAppwriteEndpointInput) customAppwriteEndpointInput.closest('div[style]').style.display = 'none';
-            if (customAppwriteProjectInput) customAppwriteProjectInput.closest('div[style]').style.display = 'none';
-        }
+        if (authFromEnv && customAppwriteEndpointInput)
+            customAppwriteEndpointInput.closest('div[style]').style.display = 'none';
 
         customDbBtn.addEventListener('click', () => {
             const pbUrl = localStorage.getItem('monochrome-pocketbase-url') || '';
-            const appwriteEndpoint = localStorage.getItem('monochrome-appwrite-endpoint') || '';
-            const appwriteProject = localStorage.getItem('monochrome-appwrite-project') || '';
+            const authEndpoint =
+                localStorage.getItem('monochrome-auth-url') ||
+                localStorage.getItem('monochrome-appwrite-endpoint') ||
+                '';
 
             if (!pbFromEnv && customPbUrlInput) customPbUrlInput.value = pbUrl;
-            if (!appwriteFromEnv) {
-                if (customAppwriteEndpointInput) customAppwriteEndpointInput.value = appwriteEndpoint;
-                if (customAppwriteProjectInput) customAppwriteProjectInput.value = appwriteProject;
-            }
+            if (!authFromEnv && customAppwriteEndpointInput) customAppwriteEndpointInput.value = authEndpoint;
 
             customDbModal.classList.add('active');
         });
@@ -6915,21 +6868,17 @@ export async function initializeSettings(scrobbler, player, api, ui) {
                 }
             }
 
-            if (!appwriteFromEnv) {
+            if (!authFromEnv) {
                 const endpoint = customAppwriteEndpointInput?.value.trim();
-                const project = customAppwriteProjectInput?.value.trim();
 
                 if (endpoint) {
-                    localStorage.setItem('monochrome-appwrite-endpoint', endpoint);
+                    localStorage.setItem('monochrome-auth-url', endpoint);
                 } else {
-                    localStorage.removeItem('monochrome-appwrite-endpoint');
+                    localStorage.removeItem('monochrome-auth-url');
                 }
-
-                if (project) {
-                    localStorage.setItem('monochrome-appwrite-project', project);
-                } else {
-                    localStorage.removeItem('monochrome-appwrite-project');
-                }
+                // cleanup legacy appwrite keys
+                localStorage.removeItem('monochrome-appwrite-endpoint');
+                localStorage.removeItem('monochrome-appwrite-project');
             }
 
             alert('Settings saved. Reloading...');
@@ -6939,6 +6888,7 @@ export async function initializeSettings(scrobbler, player, api, ui) {
         customDbResetBtn.addEventListener('click', () => {
             if (confirm('Reset custom database settings to default?')) {
                 localStorage.removeItem('monochrome-pocketbase-url');
+                localStorage.removeItem('monochrome-auth-url');
                 localStorage.removeItem('monochrome-appwrite-endpoint');
                 localStorage.removeItem('monochrome-appwrite-project');
                 alert('Settings reset. Reloading...');

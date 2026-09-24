@@ -74,6 +74,7 @@
         <meta name="google-site-verification" content="ChAPlKFJ5Dk2YbWhiUfnH5sHgCC8SnNdCBtjVcahArY" />
 
         <!-- Preconnect to critical third-party origins -->
+        <link rel="preconnect" href="https://tracks.monochrome.st" crossorigin />
         <link rel="preconnect" href="https://resources.tidal.com" crossorigin />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -147,7 +148,6 @@
     </head>
 
     <body>
-        <div class="playback-maintenance-notice" role="alert">Playback’s down for maintenance. <a href="/donate" style="text-decoration: underline">Consider donating.</a></div>
         <audio id="audio-player" crossorigin="anonymous" style="display: none"></audio>
         <video id="video-player" crossorigin="anonymous" style="display: none"></video>
 
@@ -1268,7 +1268,7 @@
                     </button>
                 </div>
                 <p style="font-size: 0.9rem; color: var(--muted-foreground); margin-bottom: 1rem">
-                    Configure custom PocketBase and Appwrite instances. Leave empty to use defaults.
+                    Configure custom PocketBase and Auth instances. Leave empty to use defaults.
                     <br />
                     A Guide To Set This Up Can Be Found
                     <a
@@ -1279,24 +1279,22 @@
                 </p>
                 <div style="margin-bottom: 1rem">
                     <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem">PocketBase URL</label>
-                    <input type="url" id="custom-pb-url" class="template-input" placeholder="https://data.samidy.xyz" />
+                    <input
+                        type="url"
+                        id="custom-pb-url"
+                        class="template-input"
+                        placeholder="https://data.monochrome.st"
+                    />
                 </div>
                 <div style="margin-bottom: 1rem">
-                    <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem">Appwrite Endpoint</label>
+                    <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem"
+                        >Auth URL (Better Auth)</label
+                    >
                     <input
                         type="url"
                         id="custom-appwrite-endpoint"
                         class="template-input"
-                        placeholder="https://auth.samidy.com/v1"
-                    />
-                </div>
-                <div style="margin-bottom: 1rem">
-                    <label style="display: block; margin-bottom: 0.5rem; font-size: 0.9rem">Appwrite Project ID</label>
-                    <input
-                        type="text"
-                        id="custom-appwrite-project"
-                        class="template-input"
-                        placeholder="auth-for-monochrome"
+                        placeholder="https://auth.monochrome.st"
                     />
                 </div>
                 <div class="modal-actions">
@@ -2195,7 +2193,6 @@
                         <button class="search-tab" data-tab="albums">Albums</button>
                         <button class="search-tab" data-tab="artists">Artists</button>
                         <button class="search-tab" data-tab="playlists">Playlists</button>
-                        <button class="search-tab" data-tab="community-playlists">YT Music Playlists (BETA)</button>
                         <button class="search-tab" data-tab="podcasts">Podcasts</button>
                     </div>
                     <div class="search-tab-content active" id="search-tab-tracks">
@@ -4220,24 +4217,12 @@
                                     </div>
                                     <select id="streaming-quality-setting">
                                         <option value="auto">Auto (Adaptive)</option>
-                                        <option value="DOLBY_ATMOS_EAC3_HIGH" data-sources="Tidal">
-                                            Dolby Atmos — E-AC-3 High
-                                        </option>
-                                        <option value="DOLBY_ATMOS_EAC3_LOW">
-                                            Dolby Atmos — E-AC-3 Low
-                                        </option>
-                                        <option value="DOLBY_ATMOS_AC4_HIGH">
-                                            Dolby Atmos — AC-4 High
-                                        </option>
-                                        <option value="DOLBY_ATMOS_AC4_LOW">
-                                            Dolby Atmos — AC-4 Low
-                                        </option>
-                                        <option value="HI_RES_LOSSLESS" data-sources="Mono">
-                                            Hi-Res Lossless (24-bit)
-                                        </option>
-                                        <option value="LOSSLESS" data-sources="Mono">
-                                            Lossless (16-bit)
-                                        </option>
+                                        <option value="DOLBY_ATMOS_EAC3_HIGH">Dolby Atmos — E-AC-3 High</option>
+                                        <option value="DOLBY_ATMOS_EAC3_LOW">Dolby Atmos — E-AC-3 Low</option>
+                                        <option value="DOLBY_ATMOS_AC4_HIGH">Dolby Atmos — AC-4 High</option>
+                                        <option value="DOLBY_ATMOS_AC4_LOW">Dolby Atmos — AC-4 Low</option>
+                                        <option value="HI_RES_LOSSLESS">Hi-Res Lossless (24-bit)</option>
+                                        <option value="LOSSLESS">Lossless (16-bit)</option>
                                         <option value="HIGH">High</option>
                                         <option value="LOW">Low</option>
                                     </select>
@@ -4257,8 +4242,7 @@
                                     <div class="info">
                                         <span class="label">Prefer Dolby Atmos</span>
                                         <span class="description"
-                                            >Automatically request Dolby Atmos spatial audio on Tidal when
-                                            available</span
+                                            >Automatically request Dolby Atmos spatial audio when available</span
                                         >
                                     </div>
                                     <label class="toggle-switch">
@@ -5080,14 +5064,6 @@
 
                                         <div class="autoeq-actions-row">
                                             <button
-                                                id="autoeq-import-preset-btn"
-                                                class="autoeq-download-btn"
-                                                title="Import EQ settings"
-                                                aria-label="Import EQ settings"
-                                            >
-                                                <use svg="!lucide/upload.svg" size="20" />
-                                            </button>
-                                            <button
                                                 id="autoeq-download-btn"
                                                 class="autoeq-download-btn"
                                                 title="Export EQ settings"
@@ -5095,12 +5071,6 @@
                                             >
                                                 <use svg="!lucide/download.svg" size="20" />
                                             </button>
-                                            <input
-                                                type="file"
-                                                id="autoeq-import-preset-file"
-                                                accept=".txt,.csv"
-                                                style="display: none"
-                                            />
                                         </div>
                                         <span
                                             id="autoeq-status"
@@ -5543,24 +5513,12 @@
                                             >
                                         </div>
                                         <select id="download-quality-setting">
-                                            <option value="DOLBY_ATMOS_EAC3_HIGH" data-sources="Tidal">
-                                                Dolby Atmos — E-AC-3 High
-                                            </option>
-                                            <option value="DOLBY_ATMOS_EAC3_LOW">
-                                                Dolby Atmos — E-AC-3 Low
-                                            </option>
-                                            <option value="DOLBY_ATMOS_AC4_HIGH">
-                                                Dolby Atmos — AC-4 High
-                                            </option>
-                                            <option value="DOLBY_ATMOS_AC4_LOW">
-                                                Dolby Atmos — AC-4 Low
-                                            </option>
-                                            <option value="HI_RES_LOSSLESS" data-sources="Mono">
-                                                Hi-Res Lossless (24-bit)
-                                            </option>
-                                            <option value="LOSSLESS" data-sources="Mono">
-                                                Lossless (16-bit)
-                                            </option>
+                                            <option value="DOLBY_ATMOS_EAC3_HIGH">Dolby Atmos — E-AC-3 High</option>
+                                            <option value="DOLBY_ATMOS_EAC3_LOW">Dolby Atmos — E-AC-3 Low</option>
+                                            <option value="DOLBY_ATMOS_AC4_HIGH">Dolby Atmos — AC-4 High</option>
+                                            <option value="DOLBY_ATMOS_AC4_LOW">Dolby Atmos — AC-4 Low</option>
+                                            <option value="HI_RES_LOSSLESS">Hi-Res Lossless (24-bit)</option>
+                                            <option value="LOSSLESS">Lossless (16-bit)</option>
                                             <option value="HIGH">High</option>
                                             <option value="LOW">Low</option>
                                         </select>
@@ -5867,9 +5825,7 @@
                                 <div class="setting-item">
                                     <div class="info">
                                         <span class="label">ADVANCED: Custom Database/Auth</span>
-                                        <span class="description"
-                                            >Configure custom PocketBase and Appwrite instances</span
-                                        >
+                                        <span class="description">Configure custom PocketBase and Auth instances</span>
                                     </div>
                                     <button id="custom-db-btn" class="btn-secondary">Configure</button>
                                 </div>
@@ -6177,8 +6133,7 @@
                         </div>
                         <p style="text-align: center; color: grey">
                             made with ‪‪❤︎‬ by
-                            <a href="https://prigoana.com/" style="text-decoration: underline">Edideaur</a> &
-                            <a href="https://samidy.com" style="text-decoration: underline">Samidy</a>.
+                            <a href="https://instagram.com/edideaur/" style="text-decoration: underline">Edideaur</a>.
                         </p>
                         <p style="text-align: center; color: grey">
                             We also take paid code commissions (we don't work for free)! Contact any of us for details.
@@ -6192,8 +6147,8 @@
                             <p class="version">Version 2.5.0</p>
                             <p class="version" id="about-commit-info"></p>
                             <p class="disclaimer">
-                                This is an independent client and is not affiliated with or endorsed by TIDAL or any
-                                music streaming service.
+                                This is an independent client and is not affiliated with or endorsed by any music
+                                streaming service.
                             </p>
                             <p class="disclaimer">
                                 This application does not host, store, or distribute any media files. <br />
@@ -6280,7 +6235,6 @@
                                 <div id="donate-goal-progress" class="donate-goal-fill"></div>
                             </div>
                             <div class="donate-goal-card-footer">
-                                <span id="donate-goal">$0.00</span>
                                 <span>of $1,000.00 goal</span>
                             </div>
                         </div>
@@ -6600,7 +6554,7 @@
                                         "
                                     >
                                         <a
-                                            href="https://downloads.samidy.com/android.apk"
+                                            href="https://dyamuh.dev/monochrome-mobile/android.apk"
                                             class="btn-primary"
                                             style="display: inline-flex; align-items: center; gap: 8px"
                                         >
@@ -6608,7 +6562,7 @@
                                             Download for Android
                                         </a>
                                         <a
-                                            href="https://downloads.samidy.com/iOS.ipa"
+                                            href="https://dyamuh.dev/monochrome-mobile/apple.ipa"
                                             class="btn-primary"
                                             style="display: inline-flex; align-items: center; gap: 8px"
                                         >

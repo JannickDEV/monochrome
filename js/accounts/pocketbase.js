@@ -2,9 +2,9 @@
 import PocketBase from 'pocketbase';
 import { db } from '../db.js';
 import { authManager } from './auth.js';
-import { authApi } from './authApi.js';
+import { authApi, dataApi } from './authApi.js';
 
-const DEFAULT_POCKETBASE_URL = 'https://data.samidy.xyz';
+const DEFAULT_POCKETBASE_URL = 'https://data.monochrome.st';
 const POCKETBASE_URL =
     window.__POCKETBASE_URL__ || localStorage.getItem('monochrome-pocketbase-url') || DEFAULT_POCKETBASE_URL;
 
@@ -32,7 +32,7 @@ const syncManager = {
 
         const promise = (async () => {
             try {
-                const data = await authApi('/api/sync');
+                const data = await dataApi('/api/sync');
                 const record = {
                     id: data.appUserId,
                     firebase_id: uid,
@@ -120,7 +120,7 @@ const syncManager = {
             let payload = data;
             if (field === 'user_playlists') payload = this._dedupeRecordMap(data, 'playlist');
             if (field === 'user_folders') payload = this._dedupeRecordMap(data, 'folder');
-            const updated = await authApi('/api/sync', {
+            const updated = await dataApi('/api/sync', {
                 method: 'PATCH',
                 body: JSON.stringify({ [syncField]: payload }),
             });
@@ -132,7 +132,7 @@ const syncManager = {
                 user_folders: updated.userFolders || record.user_folders,
             };
         } catch (error) {
-            console.error(`Failed to sync ${field} to auth server:`, error);
+            console.error(`Failed to sync ${field} to data server:`, error);
         }
     },
 
@@ -280,7 +280,6 @@ const syncManager = {
                 explicit: item.explicit || false,
                 artist: item.artist || (item.artists && item.artists.length > 0 ? item.artists[0] : null) || null,
                 artists: item.artists?.map((a) => ({ id: a.id, name: a.name || null })) || [],
-                cover: item.artwork || item.cover || null,
                 album: item.album
                     ? {
                           id: item.album.id,
@@ -577,7 +576,7 @@ const syncManager = {
         if (!user) return;
 
         try {
-            await authApi('/api/sync', {
+            await dataApi('/api/sync', {
                 method: 'PATCH',
                 body: JSON.stringify({
                     library: {},

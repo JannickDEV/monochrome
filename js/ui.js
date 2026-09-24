@@ -586,14 +586,14 @@ export class UIRenderer {
             if (isVideo && this.currentPage === 'playlist') {
                 const videoCoverUrl = this.api.getVideoCoverUrl(track.imageId);
                 if (videoCoverUrl) {
-                    trackImageHTML = `<img crossorigin="anonymous" referrerpolicy="no-referrer" src="${videoCoverUrl}" alt="" class="track-item-cover" loading="lazy">`;
+                    trackImageHTML = `<img crossorigin="anonymous" referrerpolicy="no-referrer" src="${videoCoverUrl}" alt="" class="track-item-cover" loading="eager" onerror="this.src='images/monochrome_logo.svg';this.onerror=null;">`;
                 } else {
                     trackImageHTML = `<div class="track-item-cover video-icon-placeholder" style="display: flex; align-items: center; justify-content: center; background: var(--secondary);">${SVG_VIDEO(20, { style: 'opacity: 0.7;' })}</div>`;
                 }
             } else if (isVideo && (this.currentPage === 'search' || this.currentPage === 'library')) {
                 const videoCoverUrl = this.api.getVideoCoverUrl(track.imageId);
                 if (videoCoverUrl) {
-                    trackImageHTML = `<img crossorigin="anonymous" referrerpolicy="no-referrer" src="${videoCoverUrl}" alt="" class="track-item-cover" loading="lazy">`;
+                    trackImageHTML = `<img crossorigin="anonymous" referrerpolicy="no-referrer" src="${videoCoverUrl}" alt="" class="track-item-cover" loading="eager" onerror="this.src='images/monochrome_logo.svg';this.onerror=null;">`;
                 } else {
                     trackImageHTML = `<div class="track-item-cover video-icon-placeholder" style="display: flex; align-items: center; justify-content: center; background: var(--secondary);">${SVG_PLAY(16, { style: 'opacity: 0.7;' })}</div>`;
                 }
@@ -602,7 +602,7 @@ export class UIRenderer {
                     track.image || track.cover || track.album?.cover,
                     'Track Cover',
                     'track-item-cover',
-                    'lazy'
+                    'eager'
                 );
             }
         }
@@ -704,7 +704,7 @@ export class UIRenderer {
         cover,
         alt,
         className = 'card-image',
-        loading = 'lazy',
+        loading = 'eager',
         videoCoverUrl = null,
         isEditorsPick = false,
         type = 'album'
@@ -716,8 +716,11 @@ export class UIRenderer {
             size = '160';
         }
 
-        const imageUrl =
+        let imageUrl =
             type === 'artist' ? this.api.getArtistPictureUrl(cover, size) : this.api.getCoverUrl(cover, size);
+        if (!imageUrl) {
+            imageUrl = 'images/monochrome_logo.svg';
+        }
 
         if (videoCoverUrl) {
             return `<video src="${videoCoverUrl}" poster="${imageUrl}" class="${className}" alt="${alt}" preload="metadata" playsinline muted></video>`;
@@ -735,10 +738,12 @@ export class UIRenderer {
             const tidalUrl = `https://resources.tidal.com/images/${formattedId}/320x320.jpg`;
             const wsrvUrl = `https://wsrv.nl/?url=${encodeURIComponent(tidalUrl)}&w=250&h=250&output=webp`;
             const fetchPriorityAttr = loading === 'eager' ? ' fetchpriority="high"' : '';
-            return `<img crossorigin="anonymous" referrerpolicy="no-referrer" src="${wsrvUrl}" class="${className}" alt="${alt}" loading="${loading}"${fetchPriorityAttr}>`;
+            return `<img crossorigin="anonymous" referrerpolicy="no-referrer" src="${wsrvUrl}" class="${className}" alt="${alt}" loading="${loading}"${fetchPriorityAttr} onerror="this.src='images/monochrome_logo.svg';this.onerror=null;">`;
         }
 
-        return `<img crossorigin="anonymous" referrerpolicy="no-referrer" src="${imageUrl}" class="${className}" alt="${alt}" loading="${loading}">`;
+        const loadingAttr = loading && loading !== 'eager' ? ` loading="${loading}"` : '';
+        const fetchPriorityAttr = loading === 'eager' ? ' fetchpriority="high"' : '';
+        return `<img crossorigin="anonymous" referrerpolicy="no-referrer" src="${imageUrl}" class="${className}" alt="${alt}"${loadingAttr}${fetchPriorityAttr} onerror="this.src='images/monochrome_logo.svg';this.onerror=null;">`;
     }
 
     createBaseCardHTML({
@@ -2670,7 +2675,6 @@ export class UIRenderer {
     async loadDonateGoal() {
         this.setupCryptoCopy();
 
-        const goal = document.getElementById('donate-goal');
         const goalPercent = document.getElementById('donate-goal-percent');
         const goalProgress = document.getElementById('donate-goal-progress');
         const donateBtn = document.querySelector('#page-donate a.btn-primary');
@@ -2679,24 +2683,23 @@ export class UIRenderer {
         const sidebarText = document.getElementById('sidebar-donate-goal-text');
 
         try {
-            const response = await fetch('https://goal.samidy.xyz/index.json');
+            const response = await fetch('https://tracks.monochrome.st/goal');
             const data = await response.json();
-            if (data && data.goal) {
-                const current = data.goal.current_amount || 0;
-                const target = data.goal.target_amount || 1000;
-                const percentage = Math.min(100, Math.max(0, (current / target) * 100));
+            let percentage = 0;
 
-                if (goal)
-                    goal.textContent = `$${current.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                if (goalPercent) goalPercent.textContent = `${percentage.toFixed(1)}%`;
-                if (goalProgress) goalProgress.style.width = `${percentage}%`;
+            if (data && data.percentage) {
+                // New format: {"percentage":"76%"}
+                percentage = parseFloat(data.percentage.replace('%', ''));
+            }
 
-                if (sidebarText) {
-                    sidebarText.textContent = `${percentage.toFixed(0)}%`;
-                }
-                if (sidebarProgress) {
-                    sidebarProgress.style.width = `${percentage}%`;
-                }
+            if (goalPercent) goalPercent.textContent = `${percentage.toFixed(1)}%`;
+            if (goalProgress) goalProgress.style.width = `${percentage}%`;
+
+            if (sidebarText) {
+                sidebarText.textContent = `${percentage.toFixed(0)}%`;
+            }
+            if (sidebarProgress) {
+                sidebarProgress.style.width = `${percentage}%`;
             }
         } catch (error) {
             // lowk wrapping it in the try-catch for the larp
@@ -3686,10 +3689,8 @@ export class UIRenderer {
                         `Community Year-End ${year}${communityAgg.totalLists ? ` · ${communityAgg.totalLists} lists` : ''}`,
                         communityAgg.items
                     );
-                if (topRated?.items?.length)
-                    this.renderAOTYRankedRows(contentDiv, `Top Rated ${year}`, topRated.items);
-                if (!contentDiv.children.length)
-                    contentDiv.innerHTML = createPlaceholder('No chart data found.');
+                if (topRated?.items?.length) this.renderAOTYRankedRows(contentDiv, `Top Rated ${year}`, topRated.items);
+                if (!contentDiv.children.length) contentDiv.innerHTML = createPlaceholder('No chart data found.');
             } catch (e) {
                 console.error(e);
                 contentDiv.innerHTML = createPlaceholder('Failed to load charts.');
@@ -3867,7 +3868,15 @@ export class UIRenderer {
                     this.renderAOTYSection(contentDiv, `Albums matching “${q.trim()}”`, data.albums);
                     return;
                 }
-                const rows = data.artists || data.labels || data.lists || data.items || data.news || data.tags || data.users || [];
+                const rows =
+                    data.artists ||
+                    data.labels ||
+                    data.lists ||
+                    data.items ||
+                    data.news ||
+                    data.tags ||
+                    data.users ||
+                    [];
                 if (!rows.length) {
                     contentDiv.innerHTML = createPlaceholder('No results found.');
                     return;
@@ -3915,7 +3924,10 @@ export class UIRenderer {
         };
         container.querySelector('#aoty-search-form').addEventListener('submit', (e) => {
             e.preventDefault();
-            void runSearch(container.querySelector('#aoty-search-q').value, container.querySelector('#aoty-search-scope').value);
+            void runSearch(
+                container.querySelector('#aoty-search-q').value,
+                container.querySelector('#aoty-search-scope').value
+            );
         });
     }
 
@@ -4026,11 +4038,7 @@ export class UIRenderer {
                     </div>`;
 
                 row.querySelector('.row-title').textContent = itemTitle || item.title || '';
-                const metaParts = [
-                    itemArtist,
-                    item.date,
-                    ...(item.genres?.slice(0, 2) || []),
-                ].filter(Boolean);
+                const metaParts = [itemArtist, item.date, ...(item.genres?.slice(0, 2) || [])].filter(Boolean);
                 row.querySelector('.row-meta').textContent = metaParts.join(' · ');
                 row.appendChild(scoreEl);
                 if (embeddedScore == null) scoreTargets.push({ item, scoreEl });
