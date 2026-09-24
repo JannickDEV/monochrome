@@ -40,39 +40,10 @@ describe('MusicAPI primary search and streaming integration', () => {
         });
     });
 
-    it('uses tracksStreamerAPI as primary search', async () => {
-        const mockTracksResult = {
-            tracks: {
-                items: [
-                    {
-                        id: 'tracks:track:101',
-                        trackId: '101',
-                        tracksTrackId: '101',
-                        title: 'Song From Tracks Streamer',
-                        artist: { name: 'Artist A' },
-                        album: { releaseId: '201' },
-                    },
-                ],
-                totalNumberOfItems: 1,
-            },
-            albums: { items: [], totalNumberOfItems: 0 },
-            artists: { items: [], totalNumberOfItems: 0 },
-            playlists: { items: [], totalNumberOfItems: 0 },
-            videos: { items: [], totalNumberOfItems: 0 },
-        };
-
-        const searchSpy = vi.spyOn(api.tracksStreamerAPI, 'search').mockResolvedValueOnce(mockTracksResult);
-        const appleSearchSpy = vi.spyOn(api.appleMusicSearchAPI, 'search');
-
-        const results = await api.search('Song From Tracks Streamer');
-
-        expect(searchSpy).toHaveBeenCalledWith('Song From Tracks Streamer', {});
-        expect(appleSearchSpy).not.toHaveBeenCalled();
-        expect(results.tracks.items[0].title).toBe('Song From Tracks Streamer');
-    });
-
-    it('falls back to Apple Music when tracksStreamerAPI search fails', async () => {
-        vi.spyOn(api.tracksStreamerAPI, 'search').mockRejectedValueOnce(new Error('Network error'));
+    // tracks.monochrome.st only sends CORS headers for official origins, so its
+    // cover art can't load on self-hosted deployments — search must not use it.
+    it('searches via Apple Music, not tracksStreamerAPI', async () => {
+        const tracksSearchSpy = vi.spyOn(api.tracksStreamerAPI, 'search');
         const appleSearchSpy = vi.spyOn(api.appleMusicSearchAPI, 'search').mockResolvedValueOnce({
             results: {
                 songs: {
@@ -90,6 +61,7 @@ describe('MusicAPI primary search and streaming integration', () => {
         const results = await api.search('Apple Song');
 
         expect(appleSearchSpy).toHaveBeenCalled();
+        expect(tracksSearchSpy).not.toHaveBeenCalled();
         expect(results.tracks.items.length).toBe(1);
         expect(results.tracks.items[0].title).toBe('Apple Song');
     });

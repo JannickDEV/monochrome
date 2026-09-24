@@ -114,21 +114,6 @@ export class MusicAPI {
 
     // Search methods
     async search(query, options = {}) {
-        try {
-            const tracksResults = await this.tracksStreamerAPI.search(query, options);
-            if (
-                tracksResults &&
-                (tracksResults.tracks?.items?.length ||
-                    tracksResults.albums?.items?.length ||
-                    tracksResults.artists?.items?.length)
-            ) {
-                return this.cacheTracksResults(tracksResults);
-            }
-        } catch (error) {
-            if (error.name === 'AbortError') throw error;
-            if (import.meta.env.DEV) console.warn('[search] Tracks Streamer unavailable, trying fallbacks', error);
-        }
-
         const api = this.getAPI();
         let appleResults;
         try {
@@ -162,53 +147,16 @@ export class MusicAPI {
     }
 
     async searchTracks(query, options = {}) {
-        try {
-            const result = await this.tracksStreamerAPI.searchTracks(query, options);
-            if (result?.items && result.items.length > 0) {
-                this.cacheTracks(result.items);
-                return result;
-            }
-        } catch (error) {
-            if (error.name === 'AbortError') throw error;
-            if (import.meta.env.DEV)
-                console.warn('[searchTracks] Tracks Streamer unavailable, trying fallbacks', error);
-        }
         return this.searchSection('tracks', 'songs', query, options, () => this.getAPI().searchTracks(query, options));
     }
 
     async searchArtists(query, options = {}) {
-        try {
-            const result = await this.tracksStreamerAPI.searchArtists(query, options);
-            if (result?.items && result.items.length > 0) {
-                for (const artist of result.items) {
-                    if (artist.tracksArtistId) this.tracksArtistIds.add(String(artist.tracksArtistId));
-                }
-                return result;
-            }
-        } catch (error) {
-            if (error.name === 'AbortError') throw error;
-            if (import.meta.env.DEV)
-                console.warn('[searchArtists] Tracks Streamer unavailable, trying fallbacks', error);
-        }
         return this.searchSection('artists', 'artists', query, options, () =>
             this.getAPI().searchArtists(query, options)
         );
     }
 
     async searchAlbums(query, options = {}) {
-        try {
-            const result = await this.tracksStreamerAPI.searchAlbums(query, options);
-            if (result?.items && result.items.length > 0) {
-                for (const album of result.items) {
-                    if (album.tracksReleaseId) this.tracksAlbumIds.add(String(album.tracksReleaseId));
-                }
-                return result;
-            }
-        } catch (error) {
-            if (error.name === 'AbortError') throw error;
-            if (import.meta.env.DEV)
-                console.warn('[searchAlbums] Tracks Streamer unavailable, trying fallbacks', error);
-        }
         return this.searchSection('albums', 'albums', query, options, () => this.getAPI().searchAlbums(query, options));
     }
 
@@ -225,13 +173,6 @@ export class MusicAPI {
     }
 
     async searchSuggestions(query, options = {}) {
-        try {
-            const suggestions = await this.tracksStreamerAPI.suggestions(query, options);
-            if (suggestions && suggestions.length > 0) return suggestions;
-        } catch (error) {
-            if (error.name === 'AbortError') throw error;
-            if (import.meta.env.DEV) console.warn('[searchSuggestions] Tracks Streamer unavailable', error);
-        }
         try {
             return await this.appleMusicSearchAPI.suggestions(query, options);
         } catch (error) {
