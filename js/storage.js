@@ -3399,10 +3399,7 @@ export const devModeSettings = {
 
     getQobuzToken() {
         try {
-            return (
-                localStorage.getItem(this.QOBUZ_TOKEN_KEY) ||
-                ''
-            );
+            return localStorage.getItem(this.QOBUZ_TOKEN_KEY) || '';
         } catch {
             return '';
         }

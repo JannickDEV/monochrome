@@ -28,7 +28,7 @@ export class AuthManager {
     constructor() {
         this.user = normalizeUser(pb.authStore.record);
         this.authListeners = [];
-        
+
         pb.authStore.onChange((token, record) => {
             storeAuthToken(token);
             this.user = normalizeUser(record);

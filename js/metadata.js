@@ -89,11 +89,17 @@ export async function addMetadataToAudio(audioBlob, track, _api, _quality, prefe
 
         const providerName = (track.provider || track.source || 'TIDAL').toLowerCase();
         const sourceLabel =
-            providerName === 'qobuz' ? 'Qobuz' :
-            providerName === 'amazon' ? 'Amazon Music' :
-            providerName === 'deezer' ? 'Deezer' :
-            providerName === 'soundcloud' ? 'SoundCloud' :
-            providerName === 'apple' || providerName === 'applemusic' ? 'Apple Music' : 'TIDAL';
+            providerName === 'qobuz'
+                ? 'Qobuz'
+                : providerName === 'amazon'
+                  ? 'Amazon Music'
+                  : providerName === 'deezer'
+                    ? 'Deezer'
+                    : providerName === 'soundcloud'
+                      ? 'SoundCloud'
+                      : providerName === 'apple' || providerName === 'applemusic'
+                        ? 'Apple Music'
+                        : 'TIDAL';
 
         data.extra = {
             SOURCE: sourceLabel,

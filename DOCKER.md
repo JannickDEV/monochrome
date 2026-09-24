@@ -26,11 +26,11 @@ Visit `http://localhost:5173` (hot-reload enabled)
 
 Docker Compose [profiles](https://docs.docker.com/compose/how-tos/profiles/) control which services start. A service with no profile always runs. A service with a profile only runs when that profile is activated.
 
-| Command                                                   | What starts                          |
-| --------------------------------------------------------- | ------------------------------------ |
-| `docker compose up -d`                                    | Monochrome                           |
-| `docker compose --profile pocketbase up -d`               | Monochrome + PocketBase              |
-| `docker compose --profile dev up -d`                      | Monochrome + Dev server + Qobuz API  |
+| Command                                                   | What starts                                      |
+| --------------------------------------------------------- | ------------------------------------------------ |
+| `docker compose up -d`                                    | Monochrome                                       |
+| `docker compose --profile pocketbase up -d`               | Monochrome + PocketBase                          |
+| `docker compose --profile dev up -d`                      | Monochrome + Dev server + Qobuz API              |
 | `docker compose --profile dev --profile pocketbase up -d` | Monochrome + Dev server + Qobuz API + PocketBase |
 
 In `docker-compose.yml`, it looks like this:

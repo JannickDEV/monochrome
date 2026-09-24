@@ -1,10 +1,4 @@
-import {
-    ChatInputCommandInteraction,
-    GuildMember,
-    SlashCommandBuilder,
-    TextChannel,
-    MessageFlags,
-} from 'discord.js';
+import { ChatInputCommandInteraction, GuildMember, SlashCommandBuilder, TextChannel, MessageFlags } from 'discord.js';
 import { getPlayer } from '../audio/musicPlayer.js';
 import { resolveQueryToTracks } from '../audio/urlParser.js';
 
@@ -18,10 +12,7 @@ export const data = new SlashCommandBuilder()
         o.setName('url').setDescription('Track / album URL (Tidal, Qobuz, SoundCloud)').setRequired(false)
     )
     .addStringOption((o) =>
-        o
-            .setName('playlist')
-            .setDescription('Playlist URL (Spotify, Tidal, Qobuz)')
-            .setRequired(false)
+        o.setName('playlist').setDescription('Playlist URL (Spotify, Tidal, Qobuz)').setRequired(false)
     );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -63,14 +54,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
 
         player.addTracks(tracks);
         await interaction.editReply(
-            tracks.length === 1
-                ? `Queued **${tracks[0].title}**.`
-                : `Queued **${tracks.length}** tracks.`
+            tracks.length === 1 ? `Queued **${tracks[0].title}**.` : `Queued **${tracks.length}** tracks.`
         );
     } catch (error) {
         console.error('[play] error:', error);
-        await interaction
-            .editReply(`Error: ${error instanceof Error ? error.message : 'unknown'}`)
-            .catch(() => {});
+        await interaction.editReply(`Error: ${error instanceof Error ? error.message : 'unknown'}`).catch(() => {});
     }
 }

@@ -16,16 +16,16 @@ Set `GUILD_ID` in `.env` while developing so slash commands register instantly.
 
 ## Commands
 
-| Command        | Description                                                    |
-| -------------- | ------------------------------------------------------------- |
-| `/play`        | `query` / `url` / `playlist` / `title`+`artist`              |
-| `/queue`       | Show the queue                                               |
-| `/nowplaying`  | Show the current track                                       |
-| `/skip`        | Skip the current track                                       |
-| `/pause` `/resume` | Pause / resume                                           |
-| `/shuffle`     | Shuffle the upcoming queue                                   |
-| `/clear`       | Clear upcoming tracks (keeps playing the current one)        |
-| `/stop`        | Stop, clear the queue and leave the channel                  |
+| Command            | Description                                           |
+| ------------------ | ----------------------------------------------------- |
+| `/play`            | `query` / `url` / `playlist` / `title`+`artist`       |
+| `/queue`           | Show the queue                                        |
+| `/nowplaying`      | Show the current track                                |
+| `/skip`            | Skip the current track                                |
+| `/pause` `/resume` | Pause / resume                                        |
+| `/shuffle`         | Shuffle the upcoming queue                            |
+| `/clear`           | Clear upcoming tracks (keeps playing the current one) |
+| `/stop`            | Stop, clear the queue and leave the channel           |
 
 The bot also posts a persistent **control dashboard** message with
 Play/Pause · Skip · Shuffle · Stop buttons.
@@ -39,33 +39,34 @@ Play/Pause · Skip · Shuffle · Stop buttons.
 - A `/play` with a huge playlist is capped at `MAX_QUEUE_ADD` (default 200).
 - Tidal / Qobuz playlists and albums are fully paginated.
 - Spotify resolution order for a `/play <spotify url>`:
-  1. **First-party token** — if `SPOTIFY_FIRSTPARTY_REFRESH_TOKEN` is set, the
-     bot refreshes it against Spotify's own desktop client id (the same one
-     librespot / OnTheSpot use) and reads the playlist/album straight from the
-     Web API, past 100. This is the official-client identity, so it isn't
-     subject to the developer-app `403`. Get the token once with
-     `bun run spotify-auth-fp`. ToS-gray — private instances only.
+    1. **First-party token** — if `SPOTIFY_FIRSTPARTY_REFRESH_TOKEN` is set, the
+       bot refreshes it against Spotify's own desktop client id (the same one
+       librespot / OnTheSpot use) and reads the playlist/album straight from the
+       Web API, past 100. This is the official-client identity, so it isn't
+       subject to the developer-app `403`. Get the token once with
+       `bun run spotify-auth-fp`. ToS-gray — private instances only.
 
-     Spotify **rotates** this refresh token on every use, so `.env` only seeds
-     the first refresh — after that the bot keeps the current token in
-     `bot/.spotify-fp-refresh-token` (gitignored) and reads that first. Don't
-     run `probe` against a Spotify URL while the bot is live: both processes
-     would race to rotate the same token and one loses it. If it ever ends up
-     revoked, re-run `bun run spotify-auth-fp`.
+        Spotify **rotates** this refresh token on every use, so `.env` only seeds
+        the first refresh — after that the bot keeps the current token in
+        `bot/.spotify-fp-refresh-token` (gitignored) and reads that first. Don't
+        run `probe` against a Spotify URL while the bot is live: both processes
+        would race to rotate the same token and one loses it. If it ever ends up
+        revoked, re-run `bun run spotify-auth-fp`.
 
-     **Caveat:** Spotify rate-limits this shared client id aggressively from
-     datacenter IPs. On a VPS you'll often get `429` on lists >100 and fall
-     back to the scraper anyway; it's reliable from a residential IP. Set
-     `SPOTIFY_API_BASE` to a relay on a residential connection to route around
-     it. Successful reads are cached for 15 min.
-  2. **Dev app** — `SPOTIFY_CLIENT_ID` + `SPOTIFY_CLIENT_SECRET` read **albums**
-     fully. They do **not** read playlists: since Spotify's Nov-2024 lockdown
-     `GET /playlists/{id}/tracks` returns a bare `403` for any app not in
-     Extended Quota Mode, and a user `SPOTIFY_REFRESH_TOKEN` does not change
-     that.
-  3. **Embed scraper** (`spotify-url-info`) — the fallback when neither of the
-     above yields the list. Spotify caps it near the first 100 tracks;
-     editorial playlists (`37i9dQZF1DX…`) come through here too.
+        **Caveat:** Spotify rate-limits this shared client id aggressively from
+        datacenter IPs. On a VPS you'll often get `429` on lists >100 and fall
+        back to the scraper anyway; it's reliable from a residential IP. Set
+        `SPOTIFY_API_BASE` to a relay on a residential connection to route around
+        it. Successful reads are cached for 15 min.
+
+    2. **Dev app** — `SPOTIFY_CLIENT_ID` + `SPOTIFY_CLIENT_SECRET` read **albums**
+       fully. They do **not** read playlists: since Spotify's Nov-2024 lockdown
+       `GET /playlists/{id}/tracks` returns a bare `403` for any app not in
+       Extended Quota Mode, and a user `SPOTIFY_REFRESH_TOKEN` does not change
+       that.
+    3. **Embed scraper** (`spotify-url-info`) — the fallback when neither of the
+       above yields the list. Spotify caps it near the first 100 tracks;
+       editorial playlists (`37i9dQZF1DX…`) come through here too.
 
 ## Test without Discord
 

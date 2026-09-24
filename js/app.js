@@ -63,7 +63,6 @@ import { HiFiClient } from './HiFi.js';
 // self-hosted VPS proxy before any other module issues a request.
 installGlobalProxy();
 
-
 // Capture real iOS state before spoofing (needed for background audio)
 if (typeof window !== 'undefined') {
     const _ua = navigator.userAgent.toLowerCase();

@@ -553,7 +553,10 @@ export class MusicAPI {
     }
 
     getCoverSrcset(id) {
-        if (typeof id === 'string' && (id.startsWith('blob:') || id.startsWith('http') || id.startsWith('assets/') || id.startsWith('sc_'))) {
+        if (
+            typeof id === 'string' &&
+            (id.startsWith('blob:') || id.startsWith('http') || id.startsWith('assets/') || id.startsWith('sc_'))
+        ) {
             return '';
         }
         return this.tidalAPI.getCoverSrcset(this.stripProviderPrefix(id));
@@ -563,7 +566,13 @@ export class MusicAPI {
         if (!imageId) {
             return null;
         }
-        if (typeof imageId === 'string' && (imageId.startsWith('blob:') || imageId.startsWith('http') || imageId.startsWith('assets/') || imageId.startsWith('sc_'))) {
+        if (
+            typeof imageId === 'string' &&
+            (imageId.startsWith('blob:') ||
+                imageId.startsWith('http') ||
+                imageId.startsWith('assets/') ||
+                imageId.startsWith('sc_'))
+        ) {
             return imageId;
         }
         return this.tidalAPI.getVideoCoverUrl(this.stripProviderPrefix(imageId), size);
@@ -616,7 +625,10 @@ export class MusicAPI {
     }
 
     getArtistPictureSrcset(id) {
-        if (typeof id === 'string' && (id.startsWith('blob:') || id.startsWith('http') || id.startsWith('assets/') || id.startsWith('sc_'))) {
+        if (
+            typeof id === 'string' &&
+            (id.startsWith('blob:') || id.startsWith('http') || id.startsWith('assets/') || id.startsWith('sc_'))
+        ) {
             return '';
         }
         return this.tidalAPI.getArtistPictureSrcset(this.stripProviderPrefix(id));

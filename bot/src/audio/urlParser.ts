@@ -450,8 +450,7 @@ const handlers: UrlHandler[] = [
         },
     },
     {
-        test: (q) =>
-            (q.includes('qobuz.com/') || q.includes('m-app.bitperfect.dedyn.io/')) && q.includes('/album/'),
+        test: (q) => (q.includes('qobuz.com/') || q.includes('m-app.bitperfect.dedyn.io/')) && q.includes('/album/'),
         run: async (q, i) => {
             const id = first(q, /album\/[^/]+\/([a-zA-Z0-9]+)/) ?? first(q, /album\/([a-zA-Z0-9]+)/);
             if (!id) return (await i.editReply('Invalid Qobuz album URL.'), []);
@@ -503,7 +502,12 @@ const handlers: UrlHandler[] = [
             let capNote = '';
             if (scraped && names.length >= 100) {
                 const { reason, retryAfter } = spotifyWebApiFailure();
-                const when = retryAfter > 90 ? `~${Math.ceil(retryAfter / 60)} min` : retryAfter > 0 ? `~${retryAfter}s` : 'a bit';
+                const when =
+                    retryAfter > 90
+                        ? `~${Math.ceil(retryAfter / 60)} min`
+                        : retryAfter > 0
+                          ? `~${retryAfter}s`
+                          : 'a bit';
                 capNote =
                     reason === 'ratelimited'
                         ? `Note: Spotify rate-limited the full read — got the first ~${names.length} via ` +
@@ -526,10 +530,7 @@ const handlers: UrlHandler[] = [
  * Turns a free-text query or a supported URL into an ordered list of Tracks.
  * Handlers own their own error `editReply`s; on failure they return `[]`.
  */
-export async function resolveQueryToTracks(
-    query: string,
-    interaction: ChatInputCommandInteraction
-): Promise<Track[]> {
+export async function resolveQueryToTracks(query: string, interaction: ChatInputCommandInteraction): Promise<Track[]> {
     const q = query.trim();
 
     if (/^https?:\/\//i.test(q)) {

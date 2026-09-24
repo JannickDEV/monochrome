@@ -189,10 +189,7 @@
                 "required": false,
                 "system": false,
                 "type": "select",
-                "values": [
-                    "public",
-                    "private"
-                ]
+                "values": ["public", "private"]
             },
             {
                 "hidden": false,
@@ -203,10 +200,7 @@
                 "required": false,
                 "system": false,
                 "type": "select",
-                "values": [
-                    "public",
-                    "private"
-                ]
+                "values": ["public", "private"]
             },
             {
                 "hidden": false,
@@ -243,11 +237,7 @@
                 "required": false,
                 "system": false,
                 "type": "select",
-                "values": [
-                    "manual",
-                    "lastfm",
-                    "librefm"
-                ]
+                "values": ["manual", "lastfm", "librefm"]
             },
             {
                 "hidden": false,
@@ -322,14 +312,7 @@
                 "required": true,
                 "system": false,
                 "type": "select",
-                "values": [
-                    "track",
-                    "video",
-                    "album",
-                    "artist",
-                    "playlist",
-                    "mix"
-                ]
+                "values": ["track", "video", "album", "artist", "playlist", "mix"]
             },
             {
                 "hidden": false,
@@ -437,11 +420,7 @@
                 "required": true,
                 "system": false,
                 "type": "select",
-                "values": [
-                    "track",
-                    "video",
-                    "podcast"
-                ]
+                "values": ["track", "video", "podcast"]
             },
             {
                 "hidden": false,
@@ -498,9 +477,7 @@
                 "type": "autodate"
             }
         ],
-        "indexes": [
-            "CREATE INDEX `idx_history_owner_played_at` ON `history_items` (`owner`, `played_at` DESC)"
-        ],
+        "indexes": ["CREATE INDEX `idx_history_owner_played_at` ON `history_items` (`owner`, `played_at` DESC)"],
         "system": false
     },
     {
@@ -673,11 +650,7 @@
                 "required": true,
                 "system": false,
                 "type": "select",
-                "values": [
-                    "track",
-                    "video",
-                    "podcast"
-                ]
+                "values": ["track", "video", "podcast"]
             },
             {
                 "hidden": false,
@@ -1035,9 +1008,7 @@
                 "type": "autodate"
             }
         ],
-        "indexes": [
-            "CREATE UNIQUE INDEX `idx_favorite_albums_owner_album` ON `favorite_albums` (`owner`, `album_id`)"
-        ],
+        "indexes": ["CREATE UNIQUE INDEX `idx_favorite_albums_owner_album` ON `favorite_albums` (`owner`, `album_id`)"],
         "system": false
     },
     {
@@ -1173,9 +1144,7 @@
                 "type": "autodate"
             }
         ],
-        "indexes": [
-            "CREATE INDEX `idx_themes_author_updated` ON `themes` (`author`, `updated`)"
-        ],
+        "indexes": ["CREATE INDEX `idx_themes_author_updated` ON `themes` (`author`, `updated`)"],
         "system": false
     }
 ]

@@ -1,8 +1,4 @@
-import type {
-    ChatInputCommandInteraction,
-    SlashCommandBuilder,
-    SlashCommandOptionsOnlyBuilder,
-} from 'discord.js';
+import type { ChatInputCommandInteraction, SlashCommandBuilder, SlashCommandOptionsOnlyBuilder } from 'discord.js';
 import * as play from './play.js';
 import * as queue from './queue.js';
 import * as clear from './clear.js';

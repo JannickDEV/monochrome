@@ -711,8 +711,14 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
                 if (player.isFallbackInProgress || canFallback) {
                     return;
                 }
-                if (player.currentTrack.provider === 'soundcloud' || player.currentTrack.isSoundCloud || String(player.currentTrack.id).startsWith('sc_')) {
-                    import('./soundcloud-api.js').then((m) => m.notifySoundCloudSourceMissing && m.notifySoundCloudSourceMissing()).catch(() => {});
+                if (
+                    player.currentTrack.provider === 'soundcloud' ||
+                    player.currentTrack.isSoundCloud ||
+                    String(player.currentTrack.id).startsWith('sc_')
+                ) {
+                    import('./soundcloud-api.js')
+                        .then((m) => m.notifySoundCloudSourceMissing && m.notifySoundCloudSourceMissing())
+                        .catch(() => {});
                 } else {
                     showNotification(`Could not play track (${errorMsg || 'Media error'})`);
                 }
@@ -892,9 +898,10 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
                         );
                     }
 
-                    const geometryApplied = showWaveform && !waveData?.isFallback
-                        ? applyWaveformImage(progressBar, waveData?.pngUrl, targetTrackId)
-                        : false;
+                    const geometryApplied =
+                        showWaveform && !waveData?.isFallback
+                            ? applyWaveformImage(progressBar, waveData?.pngUrl, targetTrackId)
+                            : false;
 
                     if (geometryApplied) {
                         progressBar.classList.add('waveform-loaded');
@@ -906,7 +913,11 @@ export async function initializePlayerEvents(player, audioPlayer, scrobbler, ui)
 
                 if (waveData?.isFallback) {
                     const streamUrl = player.currentStreamInfo?.url || null;
-                    if (streamUrl && player.currentTrack?.id === targetTrackId && isDirectAudioStream(player.currentStreamInfo)) {
+                    if (
+                        streamUrl &&
+                        player.currentTrack?.id === targetTrackId &&
+                        isDirectAudioStream(player.currentStreamInfo)
+                    ) {
                         // Building an accurate waveform downloads the whole file.
                         // Hold off until audio is actually flowing so the stream
                         // gets bandwidth priority, then fetch it at low priority.

@@ -1623,7 +1623,9 @@ export class LosslessAPI {
         // between services, so match by name.
         if (!bio?.text && options.artistName && devModeSettings.isEnabled() && !options._fromProvider) {
             try {
-                const qobuz = this.getFallbackProvider()?.getProviders?.().find((p) => p.id === 'qobuz');
+                const qobuz = this.getFallbackProvider()
+                    ?.getProviders?.()
+                    .find((p) => p.id === 'qobuz');
                 if (qobuz && typeof qobuz.getArtistBiography === 'function') {
                     const search = await qobuz.searchArtists(options.artistName, { limit: 3 });
                     const want = String(options.artistName).trim().toLowerCase();

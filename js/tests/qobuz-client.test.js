@@ -59,7 +59,7 @@ describe('QobuzClient', () => {
         const [url, options] = fetchMock.mock.calls[0];
         expect(url).toBe('https://mock-qobuz.example.com/track/get?id=123&extra=foo');
         expect(options.headers).toEqual({
-            'Accept': 'application/json',
+            Accept: 'application/json',
             'X-App-Id': 'mock-app-id',
             'X-User-Auth-Token': 'mock-token',
             'X-User-Id': 'mock-user-id',
@@ -111,11 +111,7 @@ describe('QobuzClient', () => {
             };
         });
 
-        await Promise.all([
-            queueClient.request('/req1'),
-            queueClient.request('/req2'),
-            queueClient.request('/req3'),
-        ]);
+        await Promise.all([queueClient.request('/req1'), queueClient.request('/req2'), queueClient.request('/req3')]);
 
         expect(maxActive).toBe(1);
         expect(fetchMock).toHaveBeenCalledTimes(3);

@@ -1,14 +1,15 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, MessageFlags, EmbedBuilder } from 'discord.js';
 import { getPlayer } from '../audio/musicPlayer.js';
 
-export const data = new SlashCommandBuilder()
-    .setName('queue')
-    .setDescription('Show the current music queue');
+export const data = new SlashCommandBuilder().setName('queue').setDescription('Show the current music queue');
 
 export async function execute(interaction: ChatInputCommandInteraction) {
     const guildId = interaction.guildId;
     if (!guildId) {
-        await interaction.reply({ content: 'This command can only be used in a server.', flags: MessageFlags.Ephemeral });
+        await interaction.reply({
+            content: 'This command can only be used in a server.',
+            flags: MessageFlags.Ephemeral,
+        });
         return;
     }
 
@@ -18,9 +19,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         return;
     }
 
-    const embed = new EmbedBuilder()
-        .setColor('#2b2d31')
-        .setTitle('Music Queue');
+    const embed = new EmbedBuilder().setColor('#2b2d31').setTitle('Music Queue');
 
     let description = '';
 
@@ -34,14 +33,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         nextTracks.forEach((track, index) => {
             description += `${index + 1}. ${track.title} - ${track.artist.name}\n`;
         });
-        
+
         if (player.queue.length > 10) {
             description += `\n*...and ${player.queue.length - 10} more tracks*`;
         }
     }
 
     embed.setDescription(description);
-    
+
     if (player.currentTrack?.cover) {
         embed.setThumbnail(player.currentTrack.cover);
     }

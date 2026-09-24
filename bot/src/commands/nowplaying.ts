@@ -1,9 +1,7 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { getPlayer } from '../audio/musicPlayer.js';
 
-export const data = new SlashCommandBuilder()
-    .setName('nowplaying')
-    .setDescription('Show the current track');
+export const data = new SlashCommandBuilder().setName('nowplaying').setDescription('Show the current track');
 
 export async function execute(interaction: ChatInputCommandInteraction) {
     if (!interaction.guildId) {

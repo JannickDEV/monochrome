@@ -15,7 +15,10 @@ import { SoundCloudProvider } from '../src/api/soundcloud.js';
 
 const rawArgs = process.argv.slice(2);
 const doStream = rawArgs.includes('--stream');
-const query = rawArgs.filter((a) => a !== '--stream').join(' ').trim();
+const query = rawArgs
+    .filter((a) => a !== '--stream')
+    .join(' ')
+    .trim();
 
 if (!query) {
     console.error('usage: bun scripts/probe.ts "<search text or url>" [--stream]');
@@ -27,7 +30,7 @@ const interaction = {
     deferred: true,
     replied: false,
     editReply: (msg: unknown) => {
-        const text = typeof msg === 'string' ? msg : (msg as any)?.content ?? JSON.stringify(msg);
+        const text = typeof msg === 'string' ? msg : ((msg as any)?.content ?? JSON.stringify(msg));
         console.log('   ·', text);
         return Promise.resolve({});
     },
@@ -80,9 +83,11 @@ async function main() {
 
     const tracks = await resolveQueryToTracks(query, interaction);
     console.log(`\nresolved ${tracks.length} track(s):`);
-    tracks.slice(0, 30).forEach((t, i) =>
-        console.log(`  ${String(i + 1).padStart(2)}. ${t.title} — ${t.artist.name}   [${t.provider}:${t.id}]`)
-    );
+    tracks
+        .slice(0, 30)
+        .forEach((t, i) =>
+            console.log(`  ${String(i + 1).padStart(2)}. ${t.title} — ${t.artist.name}   [${t.provider}:${t.id}]`)
+        );
     if (tracks.length > 30) console.log(`  … +${tracks.length - 30} more`);
 
     if (doStream && tracks[0]) {

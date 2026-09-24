@@ -1,15 +1,12 @@
 import { Provider, ProviderError, SearchOptions, SearchResults, StreamInfo } from '../../../js/services/types.js';
 
 const FALLBACK_SC_API_BASE = 'https://api-v2.soundcloud.com';
-const FALLBACK_CLIENT_IDS = [
-    '6bs1QjDBWrmh7FpcKrIDvzodJ2ZZpRwe',
-    'd3d2c6e6d11b31542f7c006b52a1c22b',
-];
+const FALLBACK_CLIENT_IDS = ['6bs1QjDBWrmh7FpcKrIDvzodJ2ZZpRwe', 'd3d2c6e6d11b31542f7c006b52a1c22b'];
 
 export class SoundCloudProvider implements Provider {
     readonly id = 'soundcloud';
     readonly name = 'SoundCloud';
-    
+
     private clientId: string | null = null;
     private clientIdsIdx = 0;
 
@@ -31,20 +28,22 @@ export class SoundCloudProvider implements Provider {
             const res = await fetch('https://soundcloud.com');
             if (!res.ok) return null;
             const html = await res.text();
-            
+
             const scriptMatches = [...html.matchAll(/src="(https:\/\/a-v2\.sndcdn\.com\/assets\/[^"]+\.js)"/g)];
             if (!scriptMatches.length) return null;
-            
+
             const scriptsToCheck = scriptMatches.slice(-5).map((m) => m[1]);
             for (const scriptUrl of scriptsToCheck) {
                 const scriptRes = await fetch(scriptUrl);
                 if (!scriptRes.ok) continue;
                 const scriptText = await scriptRes.text();
-                
+
                 const idMatches = [...scriptText.matchAll(/client_id:["']([a-zA-Z0-9]{32})["']/g)];
                 for (const idMatch of idMatches) {
                     const candidateId = idMatch[1];
-                    const testRes = await fetch(`${FALLBACK_SC_API_BASE}/search/tracks?q=test&limit=1&client_id=${candidateId}`);
+                    const testRes = await fetch(
+                        `${FALLBACK_SC_API_BASE}/search/tracks?q=test&limit=1&client_id=${candidateId}`
+                    );
                     if (testRes.ok) {
                         this.clientId = candidateId;
                         console.info('[SoundCloudProvider] Found valid client_id:', candidateId);
@@ -93,7 +92,7 @@ export class SoundCloudProvider implements Provider {
             duration: Math.round((item.duration || 0) / 1000),
             provider: 'soundcloud',
             cover: item.artwork_url ? item.artwork_url.replace('-large', '-t500x500') : null,
-            media: item.media
+            media: item.media,
         };
     }
 
@@ -105,7 +104,7 @@ export class SoundCloudProvider implements Provider {
         const items = data.collection
             .filter((item: any) => item.kind === 'track' && item.streamable !== false)
             .map((item: any) => this.transformTrack(item));
-            
+
         return { items };
     }
 
@@ -140,25 +139,47 @@ export class SoundCloudProvider implements Provider {
         const clientId = await this.getClientId();
         const streamInfoRes = await fetch(`${selected.url}?client_id=${clientId}`);
         if (!streamInfoRes.ok) throw new Error('Failed to fetch stream URL');
-        
+
         const streamInfo = await streamInfoRes.json();
         return {
             url: streamInfo.url,
             provider: 'soundcloud',
-            quality: selected.quality
+            quality: selected.quality,
         };
     }
 
     // Dummy implementations for full Provider interface compliance
-    async search(query: string) { return { tracks: await this.searchTracks(query) }; }
-    async searchAlbums() { return { items: [] }; }
-    async searchArtists() { return { items: [] }; }
-    async getTrack() { return null; }
-    async getTrackMetadata() { return null; }
-    async getAlbum() { return null; }
-    async getArtist() { return null; }
-    getCoverUrl() { return ''; }
-    getCoverSrcset() { return ''; }
-    getArtistPictureUrl() { return ''; }
-    getArtistPictureSrcset() { return ''; }
+    async search(query: string) {
+        return { tracks: await this.searchTracks(query) };
+    }
+    async searchAlbums() {
+        return { items: [] };
+    }
+    async searchArtists() {
+        return { items: [] };
+    }
+    async getTrack() {
+        return null;
+    }
+    async getTrackMetadata() {
+        return null;
+    }
+    async getAlbum() {
+        return null;
+    }
+    async getArtist() {
+        return null;
+    }
+    getCoverUrl() {
+        return '';
+    }
+    getCoverSrcset() {
+        return '';
+    }
+    getArtistPictureUrl() {
+        return '';
+    }
+    getArtistPictureSrcset() {
+        return '';
+    }
 }

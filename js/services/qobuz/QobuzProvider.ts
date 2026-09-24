@@ -109,7 +109,11 @@ export class QobuzProvider implements Provider {
 
     async searchTracks(query: string, options: SearchOptions = {}): Promise<{ items: any[] }> {
         try {
-            const res = await this.client.request('/search/', { s: query, limit: options.limit || 20, offset: options.offset || 0 });
+            const res = await this.client.request('/search/', {
+                s: query,
+                limit: options.limit || 20,
+                offset: options.offset || 0,
+            });
             return { items: (res?.tracks?.items || res?.items || []).map((t: any) => normalizeItem(t, 'track')) };
         } catch (err: any) {
             throw new ProviderError(err.message, this.id, 'searchTracks', err);
@@ -118,7 +122,11 @@ export class QobuzProvider implements Provider {
 
     async searchAlbums(query: string, options: SearchOptions = {}): Promise<{ items: any[] }> {
         try {
-            const res = await this.client.request('/search/', { al: query, limit: options.limit || 20, offset: options.offset || 0 });
+            const res = await this.client.request('/search/', {
+                al: query,
+                limit: options.limit || 20,
+                offset: options.offset || 0,
+            });
             return { items: (res?.albums?.items || res?.items || []).map((a: any) => normalizeItem(a, 'album')) };
         } catch (err: any) {
             throw new ProviderError(err.message, this.id, 'searchAlbums', err);
@@ -127,7 +135,11 @@ export class QobuzProvider implements Provider {
 
     async searchArtists(query: string, options: SearchOptions = {}): Promise<{ items: any[] }> {
         try {
-            const res = await this.client.request('/search/', { a: query, limit: options.limit || 20, offset: options.offset || 0 });
+            const res = await this.client.request('/search/', {
+                a: query,
+                limit: options.limit || 20,
+                offset: options.offset || 0,
+            });
             return { items: (res?.artists?.items || res?.items || []).map((ar: any) => normalizeItem(ar, 'artist')) };
         } catch (err: any) {
             throw new ProviderError(err.message, this.id, 'searchArtists', err);
@@ -136,7 +148,11 @@ export class QobuzProvider implements Provider {
 
     async searchPlaylists(query: string, options: SearchOptions = {}): Promise<{ items: any[] }> {
         try {
-            const res = await this.client.request('/search/', { p: query, limit: options.limit || 20, offset: options.offset || 0 });
+            const res = await this.client.request('/search/', {
+                p: query,
+                limit: options.limit || 20,
+                offset: options.offset || 0,
+            });
             return { items: (res?.playlists?.items || res?.items || []).map((p: any) => normalizeItem(p, 'playlist')) };
         } catch (err: any) {
             throw new ProviderError(err.message, this.id, 'searchPlaylists', err);
@@ -187,10 +203,7 @@ export class QobuzProvider implements Provider {
         try {
             const res = await this.client.request('/artist/', { id: cleanId(id), extra: 'biography' });
             const bio = res?.biography ?? res?.data?.biography;
-            const raw: string =
-                typeof bio === 'string'
-                    ? bio
-                    : bio?.content || bio?.summary || bio?.text || '';
+            const raw: string = typeof bio === 'string' ? bio : bio?.content || bio?.summary || bio?.text || '';
             if (!raw) return null;
             // Qobuz biographies are light HTML — flatten to text the artist view can render.
             const text = raw
@@ -201,7 +214,12 @@ export class QobuzProvider implements Provider {
                 .trim();
             return text ? { text, source: (typeof bio === 'object' && bio?.source) || 'Qobuz' } : null;
         } catch (err: any) {
-            throw new ProviderError(err.message || 'Qobuz getArtistBiography failed', this.id, 'getArtistBiography', err);
+            throw new ProviderError(
+                err.message || 'Qobuz getArtistBiography failed',
+                this.id,
+                'getArtistBiography',
+                err
+            );
         }
     }
 
@@ -231,7 +249,11 @@ export class QobuzProvider implements Provider {
         }
         try {
             const formatId = getQobuzFormatId(quality);
-            const res = await this.client.request('/trackManifests/', { id: cleanId(id), format_id: formatId, intent: 'stream' });
+            const res = await this.client.request('/trackManifests/', {
+                id: cleanId(id),
+                format_id: formatId,
+                intent: 'stream',
+            });
             const url = res?.url || res?.url_stream || res?.file_url || res?.data?.url;
             if (!url || typeof url !== 'string') {
                 throw new Error('Qobuz did not return a valid stream URL');
@@ -239,7 +261,14 @@ export class QobuzProvider implements Provider {
             return {
                 url,
                 provider: 'qobuz',
-                quality: formatId === '27' ? 'HI_RES_LOSSLESS' : formatId === '7' ? 'HI_RES' : formatId === '6' ? 'LOSSLESS' : 'HIGH',
+                quality:
+                    formatId === '27'
+                        ? 'HI_RES_LOSSLESS'
+                        : formatId === '7'
+                          ? 'HI_RES'
+                          : formatId === '6'
+                            ? 'LOSSLESS'
+                            : 'HIGH',
                 rgInfo: null,
             };
         } catch (err: any) {
@@ -262,7 +291,12 @@ export class QobuzProvider implements Provider {
         }
         try {
             const formatId = getQobuzFormatId(quality);
-            const res = await this.client.request('/track/getFileUrl', { track_id: cleanId(id), id: cleanId(id), format_id: formatId, intent: 'stream' });
+            const res = await this.client.request('/track/getFileUrl', {
+                track_id: cleanId(id),
+                id: cleanId(id),
+                format_id: formatId,
+                intent: 'stream',
+            });
             const url = res?.url || res?.url_stream || res?.file_url || res?.data?.url;
             if (!url || typeof url !== 'string') {
                 throw new Error('Qobuz did not return a valid download URL');
@@ -270,11 +304,23 @@ export class QobuzProvider implements Provider {
             return {
                 url,
                 provider: 'qobuz',
-                quality: formatId === '27' ? 'HI_RES_LOSSLESS' : formatId === '7' ? 'HI_RES' : formatId === '6' ? 'LOSSLESS' : 'HIGH',
+                quality:
+                    formatId === '27'
+                        ? 'HI_RES_LOSSLESS'
+                        : formatId === '7'
+                          ? 'HI_RES'
+                          : formatId === '6'
+                            ? 'LOSSLESS'
+                            : 'HIGH',
                 rgInfo: null,
             };
         } catch (err: any) {
-            throw new ProviderError(err.message || 'Qobuz getTrackForDownload failed', this.id, 'getTrackForDownload', err);
+            throw new ProviderError(
+                err.message || 'Qobuz getTrackForDownload failed',
+                this.id,
+                'getTrackForDownload',
+                err
+            );
         }
     }
 

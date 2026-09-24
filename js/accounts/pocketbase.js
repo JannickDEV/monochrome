@@ -19,7 +19,7 @@ const syncManager = {
                 email: authRecord.email,
                 username: profile.username || authRecord.email?.split('@')[0],
                 display_name: profile.display_name || authRecord.name || '',
-                avatar_url: profile.avatar_url || authRecord.avatar || ''
+                avatar_url: profile.avatar_url || authRecord.avatar || '',
             };
         } catch (e) {
             return {
@@ -27,7 +27,7 @@ const syncManager = {
                 email: authRecord.email,
                 username: authRecord.email?.split('@')[0] || `user_${authRecord.id.slice(0, 8)}`,
                 display_name: authRecord.name || '',
-                avatar_url: authRecord.avatar || ''
+                avatar_url: authRecord.avatar || '',
             };
         }
     },
@@ -53,21 +53,29 @@ const syncManager = {
                 }
             }
 
-            const profile = profileRecord ? {
-                username: profileRecord.username,
-                display_name: profileRecord.display_name,
-                avatar_url: profileRecord.avatar_url,
-                banner: profileRecord.banner_url,
-                status: profileRecord.status,
-                about: profileRecord.about,
-                website: profileRecord.website,
-                privacy: {
-                    playlists: (profileRecord.privacy_playlists === 'public' || profileRecord.privacy_playlists === true) ? 'public' : 'private',
-                    lastfm: (profileRecord.privacy_lastfm === 'public' || profileRecord.privacy_lastfm === true) ? 'public' : 'private',
-                },
-                lastfm_username: profileRecord.lastfm_username,
-                favorite_albums: [],
-            } : null;
+            const profile = profileRecord
+                ? {
+                      username: profileRecord.username,
+                      display_name: profileRecord.display_name,
+                      avatar_url: profileRecord.avatar_url,
+                      banner: profileRecord.banner_url,
+                      status: profileRecord.status,
+                      about: profileRecord.about,
+                      website: profileRecord.website,
+                      privacy: {
+                          playlists:
+                              profileRecord.privacy_playlists === 'public' || profileRecord.privacy_playlists === true
+                                  ? 'public'
+                                  : 'private',
+                          lastfm:
+                              profileRecord.privacy_lastfm === 'public' || profileRecord.privacy_lastfm === true
+                                  ? 'public'
+                                  : 'private',
+                      },
+                      lastfm_username: profileRecord.lastfm_username,
+                      favorite_albums: [],
+                  }
+                : null;
 
             // 2. Fetch library items
             const libraryItems = await pb.collection('library_items').getFullList({ filter: `owner="${uid}"` });
@@ -81,8 +89,10 @@ const syncManager = {
             }
 
             // 3. Fetch history items
-            const historyItems = await pb.collection('history_items').getFullList({ filter: `owner="${uid}"`, sort: '-played_at', limit: 100 });
-            const history = historyItems.map(h => h.metadata || {});
+            const historyItems = await pb
+                .collection('history_items')
+                .getFullList({ filter: `owner="${uid}"`, sort: '-played_at', limit: 100 });
+            const history = historyItems.map((h) => h.metadata || {});
 
             // 4. Fetch playlists & tracks
             const playlists = await pb.collection('playlists').getFullList({ filter: `owner="${uid}"` });
@@ -90,8 +100,12 @@ const syncManager = {
             for (const pl of playlists) {
                 let tracks = [];
                 try {
-                    tracks = await pb.collection('playlist_tracks').getFullList({ filter: `playlist="${pl.id}"`, sort: 'position' });
-                } catch (e) { /* ignore */ }
+                    tracks = await pb
+                        .collection('playlist_tracks')
+                        .getFullList({ filter: `playlist="${pl.id}"`, sort: 'position' });
+                } catch (e) {
+                    /* ignore */
+                }
                 userPlaylists[pl.client_id || pl.id] = {
                     id: pl.client_id || pl.id,
                     serverId: pl.id,
@@ -99,7 +113,7 @@ const syncManager = {
                     description: pl.description || '',
                     cover: pl.cover_url || null,
                     isPublic: pl.is_public || false,
-                    tracks: tracks.map(t => t.metadata || {}),
+                    tracks: tracks.map((t) => t.metadata || {}),
                     createdAt: Date.parse(pl.created) || Date.now(),
                     updatedAt: Date.parse(pl.updated) || Date.now(),
                     numberOfTracks: tracks.length,
@@ -112,9 +126,15 @@ const syncManager = {
             for (const f of folders) {
                 let fpList = [];
                 try {
-                    fpList = await pb.collection('folder_playlists').getFullList({ filter: `folder="${f.id}"`, sort: 'position', expand: 'playlist' });
-                } catch (e) { /* ignore */ }
-                const plIds = fpList.map(fp => fp.expand?.playlist?.client_id || fp.expand?.playlist?.id).filter(Boolean);
+                    fpList = await pb
+                        .collection('folder_playlists')
+                        .getFullList({ filter: `folder="${f.id}"`, sort: 'position', expand: 'playlist' });
+                } catch (e) {
+                    /* ignore */
+                }
+                const plIds = fpList
+                    .map((fp) => fp.expand?.playlist?.client_id || fp.expand?.playlist?.id)
+                    .filter(Boolean);
                 userFolders[f.client_id || f.id] = {
                     id: f.client_id || f.id,
                     name: f.name,
@@ -183,11 +203,13 @@ const syncManager = {
         if (!uid || !item) return;
 
         const metadata = this._minifyItem(type, item);
-        const item_id = String(type === 'playlist' ? (item.uuid || item.id) : item.id);
+        const item_id = String(type === 'playlist' ? item.uuid || item.id : item.id);
 
         if (added) {
             try {
-                const existing = await pb.collection('library_items').getFirstListItem(`owner="${uid}" && item_type="${type}" && item_id="${item_id}"`);
+                const existing = await pb
+                    .collection('library_items')
+                    .getFirstListItem(`owner="${uid}" && item_type="${type}" && item_id="${item_id}"`);
                 await pb.collection('library_items').update(existing.id, { metadata });
             } catch (err) {
                 if (err?.status === 404 || err?.response?.status === 404) {
@@ -206,7 +228,9 @@ const syncManager = {
             }
         } else {
             try {
-                const existing = await pb.collection('library_items').getFirstListItem(`owner="${uid}" && item_type="${type}" && item_id="${item_id}"`);
+                const existing = await pb
+                    .collection('library_items')
+                    .getFirstListItem(`owner="${uid}" && item_type="${type}" && item_id="${item_id}"`);
                 await pb.collection('library_items').delete(existing.id);
             } catch (err) {
                 // Not found or already deleted
@@ -325,15 +349,21 @@ const syncManager = {
 
         if (action === 'delete') {
             try {
-                const existing = await pb.collection('playlists').getFirstListItem(`owner="${uid}" && client_id="${playlist.id}"`);
+                const existing = await pb
+                    .collection('playlists')
+                    .getFirstListItem(`owner="${uid}" && client_id="${playlist.id}"`);
                 await pb.collection('playlists').delete(existing.id);
-            } catch (err) { /* ignore */ }
+            } catch (err) {
+                /* ignore */
+            }
             return;
         }
 
         let playlistRecord = null;
         try {
-            playlistRecord = await pb.collection('playlists').getFirstListItem(`owner="${uid}" && client_id="${playlist.id}"`);
+            playlistRecord = await pb
+                .collection('playlists')
+                .getFirstListItem(`owner="${uid}" && client_id="${playlist.id}"`);
             playlistRecord = await pb.collection('playlists').update(playlistRecord.id, {
                 name: playlist.name || 'Untitled Playlist',
                 description: playlist.description || '',
@@ -359,11 +389,15 @@ const syncManager = {
 
         if (playlistRecord && Array.isArray(playlist.tracks)) {
             try {
-                const existingTracks = await pb.collection('playlist_tracks').getFullList({ filter: `playlist="${playlistRecord.id}"` });
+                const existingTracks = await pb
+                    .collection('playlist_tracks')
+                    .getFullList({ filter: `playlist="${playlistRecord.id}"` });
                 for (const tr of existingTracks) {
                     await pb.collection('playlist_tracks').delete(tr.id);
                 }
-            } catch (e) { /* ignore */ }
+            } catch (e) {
+                /* ignore */
+            }
 
             for (let i = 0; i < playlist.tracks.length; i++) {
                 const tr = playlist.tracks[i];
@@ -389,15 +423,21 @@ const syncManager = {
 
         if (action === 'delete') {
             try {
-                const existing = await pb.collection('folders').getFirstListItem(`owner="${uid}" && client_id="${folder.id}"`);
+                const existing = await pb
+                    .collection('folders')
+                    .getFirstListItem(`owner="${uid}" && client_id="${folder.id}"`);
                 await pb.collection('folders').delete(existing.id);
-            } catch (err) { /* ignore */ }
+            } catch (err) {
+                /* ignore */
+            }
             return;
         }
 
         let folderRecord = null;
         try {
-            folderRecord = await pb.collection('folders').getFirstListItem(`owner="${uid}" && client_id="${folder.id}"`);
+            folderRecord = await pb
+                .collection('folders')
+                .getFirstListItem(`owner="${uid}" && client_id="${folder.id}"`);
             folderRecord = await pb.collection('folders').update(folderRecord.id, {
                 name: folder.name || 'Untitled Folder',
                 cover_url: folder.cover || '',
@@ -419,16 +459,22 @@ const syncManager = {
 
         if (folderRecord && Array.isArray(folder.playlists)) {
             try {
-                const existingFP = await pb.collection('folder_playlists').getFullList({ filter: `folder="${folderRecord.id}"` });
+                const existingFP = await pb
+                    .collection('folder_playlists')
+                    .getFullList({ filter: `folder="${folderRecord.id}"` });
                 for (const fp of existingFP) {
                     await pb.collection('folder_playlists').delete(fp.id);
                 }
-            } catch (e) { /* ignore */ }
+            } catch (e) {
+                /* ignore */
+            }
 
             for (let i = 0; i < folder.playlists.length; i++) {
                 const plId = folder.playlists[i];
                 try {
-                    const plRecord = await pb.collection('playlists').getFirstListItem(`owner="${uid}" && client_id="${plId}"`);
+                    const plRecord = await pb
+                        .collection('playlists')
+                        .getFirstListItem(`owner="${uid}" && client_id="${plId}"`);
                     await pb.collection('folder_playlists').create({
                         folder: folderRecord.id,
                         playlist: plRecord.id,
@@ -445,15 +491,19 @@ const syncManager = {
         try {
             let record = null;
             try {
-                record = await pb.collection('playlists').getFirstListItem(`(client_id="${uuid}" || id="${uuid}") && is_public=true`);
+                record = await pb
+                    .collection('playlists')
+                    .getFirstListItem(`(client_id="${uuid}" || id="${uuid}") && is_public=true`);
             } catch (e) {
                 if (e?.status === 404 || e?.response?.status === 404) return null;
                 throw e;
             }
             if (!record) return null;
 
-            const tracks = await pb.collection('playlist_tracks').getFullList({ filter: `playlist="${record.id}"`, sort: 'position' });
-            const mappedTracks = tracks.map(t => t.metadata || {});
+            const tracks = await pb
+                .collection('playlist_tracks')
+                .getFullList({ filter: `playlist="${record.id}"`, sort: 'position' });
+            const mappedTracks = tracks.map((t) => t.metadata || {});
             const finalCover = record.cover_url || '';
             let images = [];
 
@@ -477,7 +527,9 @@ const syncManager = {
                 if (profile?.display_name || profile?.username) {
                     profileName = profile.display_name || profile.username;
                 }
-            } catch (e) { /* ignore */ }
+            } catch (e) {
+                /* ignore */
+            }
 
             return {
                 id: record.client_id || record.id,
@@ -511,7 +563,9 @@ const syncManager = {
         try {
             const record = await pb.collection('playlists').getFirstListItem(`owner="${uid}" && client_id="${uuid}"`);
             await pb.collection('playlists').update(record.id, { is_public: false });
-        } catch (e) { /* ignore */ }
+        } catch (e) {
+            /* ignore */
+        }
     },
 
     async getProfile(username) {
@@ -521,8 +575,11 @@ const syncManager = {
                 ...record,
                 banner: record.banner_url,
                 privacy: {
-                    playlists: (record.privacy_playlists === 'public' || record.privacy_playlists === true) ? 'public' : 'private',
-                    lastfm: (record.privacy_lastfm === 'public' || record.privacy_lastfm === true) ? 'public' : 'private',
+                    playlists:
+                        record.privacy_playlists === 'public' || record.privacy_playlists === true
+                            ? 'public'
+                            : 'private',
+                    lastfm: record.privacy_lastfm === 'public' || record.privacy_lastfm === true ? 'public' : 'private',
                 },
                 user_playlists: {},
                 favorite_albums: [],
@@ -547,8 +604,10 @@ const syncManager = {
             if ('website' in data) updateData.website = data.website;
             if ('lastfm_username' in data) updateData.lastfm_username = data.lastfm_username;
             if ('privacy' in data) {
-                updateData.privacy_playlists = (data.privacy.playlists === 'public' || data.privacy.playlists === true) ? 'public' : 'private';
-                updateData.privacy_lastfm = (data.privacy.lastfm === 'public' || data.privacy.lastfm === true) ? 'public' : 'private';
+                updateData.privacy_playlists =
+                    data.privacy.playlists === 'public' || data.privacy.playlists === true ? 'public' : 'private';
+                updateData.privacy_lastfm =
+                    data.privacy.lastfm === 'public' || data.privacy.lastfm === true ? 'public' : 'private';
             }
             await pb.collection('profiles').update(record.id, updateData);
         } catch (err) {

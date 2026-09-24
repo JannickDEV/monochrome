@@ -685,9 +685,10 @@ export class Player {
             const isPodcast = track.isPodcast || (track.id && String(track.id).startsWith('podcast_'));
             if (track.isLocal || isTracker || isPodcast || (track.audioUrl && !track.isLocal)) continue;
             try {
-                const isExplicitAtmos = track.audioQuality === 'DOLBY_ATMOS' || deriveTrackQuality(track) === 'DOLBY_ATMOS';
+                const isExplicitAtmos =
+                    track.audioQuality === 'DOLBY_ATMOS' || deriveTrackQuality(track) === 'DOLBY_ATMOS';
                 const preferAtmos = preferDolbyAtmosSettings?.isEnabled() && track.audioModes?.includes('DOLBY_ATMOS');
-                const requestQuality = (isExplicitAtmos || preferAtmos) ? 'DOLBY_ATMOS' : this.quality;
+                const requestQuality = isExplicitAtmos || preferAtmos ? 'DOLBY_ATMOS' : this.quality;
 
                 if (this.api && typeof this.api.getAPI === 'function') {
                     try {
@@ -1079,7 +1080,12 @@ export class Player {
                     await this.setupVideoQualitySelector();
                 });
                 this.hls.on(Hls.Events.ERROR, (_event, data) => {
-                    if (data.fatal || data.details === Hls.ErrorDetails.BUFFER_ADD_CODEC_ERROR || data.details === Hls.ErrorDetails.BUFFER_APPEND_ERROR || data.details === Hls.ErrorDetails.BUFFER_APPENDING_ERROR) {
+                    if (
+                        data.fatal ||
+                        data.details === Hls.ErrorDetails.BUFFER_ADD_CODEC_ERROR ||
+                        data.details === Hls.ErrorDetails.BUFFER_APPEND_ERROR ||
+                        data.details === Hls.ErrorDetails.BUFFER_APPENDING_ERROR
+                    ) {
                         console.warn('HLS error:', data.type, data.details);
                         if (fallbackImg && video !== this.activeElement) {
                             video.replaceWith(fallbackImg);
@@ -1269,7 +1275,12 @@ export class Player {
         const trackArtistsHTML = getTrackArtistsHTML(track);
         const yearDisplay = getTrackYearDisplay(track);
 
-        if (typeof this.api?.getVideoArtwork === 'function' && !track.videoUrl && !track.videoCoverUrl && !track.album?.videoCoverUrl) {
+        if (
+            typeof this.api?.getVideoArtwork === 'function' &&
+            !track.videoUrl &&
+            !track.videoCoverUrl &&
+            !track.album?.videoCoverUrl
+        ) {
             this.api.getVideoArtwork(trackTitle, artistName).then((result) => {
                 if (this.currentTrack?.id === track.id && result && (result.videoUrl || result.hlsUrl)) {
                     track.videoCoverUrl = result.videoUrl || result.hlsUrl;
@@ -1597,9 +1608,10 @@ export class Player {
                 }
 
                 // Tidal: Try to get ReplayGain from manifest first, supplement with track info if needed
-                const isExplicitAtmos = track.audioQuality === 'DOLBY_ATMOS' || deriveTrackQuality(track) === 'DOLBY_ATMOS';
+                const isExplicitAtmos =
+                    track.audioQuality === 'DOLBY_ATMOS' || deriveTrackQuality(track) === 'DOLBY_ATMOS';
                 const preferAtmos = preferDolbyAtmosSettings?.isEnabled() && track.audioModes?.includes('DOLBY_ATMOS');
-                const requestQuality = (isExplicitAtmos || preferAtmos) ? 'DOLBY_ATMOS' : this.quality;
+                const requestQuality = isExplicitAtmos || preferAtmos ? 'DOLBY_ATMOS' : this.quality;
                 const cachedStreamInfo = preparedPlayback ? null : this.preloadCache.get(track.id);
                 const streamInfoPromise = preparedPlayback?.streamInfo
                     ? Promise.resolve(preparedPlayback.streamInfo)
@@ -1743,8 +1755,7 @@ export class Player {
                     } catch (e) {
                         console.warn('PreloadManager/Shaka load Error:', e, {
                             code: e?.code,
-                            urlKind:
-                                typeof streamUrl === 'string' ? streamUrl.slice(0, 12) : typeof streamUrl,
+                            urlKind: typeof streamUrl === 'string' ? streamUrl.slice(0, 12) : typeof streamUrl,
                             playbackType: resolvedStreamInfo.playbackType,
                             mimeType: resolvedStreamInfo.mimeType,
                             shakaMimeType,
@@ -1852,18 +1863,25 @@ export class Player {
             }
 
             console.error(`Could not play track: ${trackTitle}`, error);
-            if (track && (track.provider === "soundcloud" || track.isSoundCloud || String(track.id).startsWith("sc_"))) {
-                import("./soundcloud-api.js").then((m) => {
-                    if (m.notifySoundCloudSourceMissing) m.notifySoundCloudSourceMissing();
-                }).catch(() => {});
-            } else if (error?.code === "UNSUPPORTED_PLAYBACK_CODEC" || error?.code === "STRICT_QUALITY_UNAVAILABLE") {
-                import("./downloads.js")
+            if (
+                track &&
+                (track.provider === 'soundcloud' || track.isSoundCloud || String(track.id).startsWith('sc_'))
+            ) {
+                import('./soundcloud-api.js')
+                    .then((m) => {
+                        if (m.notifySoundCloudSourceMissing) m.notifySoundCloudSourceMissing();
+                    })
+                    .catch(() => {});
+            } else if (error?.code === 'UNSUPPORTED_PLAYBACK_CODEC' || error?.code === 'STRICT_QUALITY_UNAVAILABLE') {
+                import('./downloads.js')
                     .then(({ showNotification }) => showNotification(error.message))
                     .catch(() => {});
             } else {
-                import("./downloads.js").then((m) => {
-                    m.showNotification(`Could not play track: ${trackTitle || "Unknown"}`);
-                }).catch(() => {});
+                import('./downloads.js')
+                    .then((m) => {
+                        m.showNotification(`Could not play track: ${trackTitle || 'Unknown'}`);
+                    })
+                    .catch(() => {});
             }
         } finally {
             if (this.playbackSequence === currentSequence) {
@@ -3457,6 +3475,3 @@ export class Player {
         updateBtn(timerBtnDesktop);
     }
 }
-
-
-

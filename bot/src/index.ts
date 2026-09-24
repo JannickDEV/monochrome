@@ -9,11 +9,7 @@ import { spotifyAccessToken, spotifyTokenTier } from './audio/urlParser.js';
 import { loadStoredRefreshToken } from './spotify-token-store.js';
 
 const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildVoiceStates,
-        GatewayIntentBits.GuildMessages,
-    ],
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessages],
 });
 
 client.once('clientReady', () => {
@@ -177,7 +173,9 @@ async function registerCommands() {
         : Routes.applicationCommands(config.clientId);
 
     await rest.put(route, { body });
-    console.log(`[bot] Registered ${body.length} command(s) ${config.guildId ? `to guild ${config.guildId}` : 'globally'}`);
+    console.log(
+        `[bot] Registered ${body.length} command(s) ${config.guildId ? `to guild ${config.guildId}` : 'globally'}`
+    );
 }
 
 async function reportSpotify() {

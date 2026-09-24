@@ -29,7 +29,9 @@ export function notifySoundCloudSourceMissing() {
     const now = Date.now();
     if (now - lastSoundCloudMissingNotifyAt < 3000) return;
     lastSoundCloudMissingNotifyAt = now;
-    import('./downloads.js').then((m) => m.showNotification('Could not find SoundCloud Audio Source (Go+ / Subscriber Only)')).catch(() => {});
+    import('./downloads.js')
+        .then((m) => m.showNotification('Could not find SoundCloud Audio Source (Go+ / Subscriber Only)'))
+        .catch(() => {});
 }
 
 export class SoundCloudAPI {
@@ -42,7 +44,12 @@ export class SoundCloudAPI {
 
     getApiBase() {
         const url = soundcloudSettings.getApiBaseUrl().replace(/\/$/, '');
-        if (url.startsWith('/') && (window.Capacitor?.isNativePlatform() || window.location.protocol === 'capacitor:' || window.location.protocol === 'file:')) {
+        if (
+            url.startsWith('/') &&
+            (window.Capacitor?.isNativePlatform() ||
+                window.location.protocol === 'capacitor:' ||
+                window.location.protocol === 'file:')
+        ) {
             return FALLBACK_SC_API_BASE;
         }
         return url;
@@ -99,10 +106,15 @@ export class SoundCloudAPI {
             }
         };
 
-        const getProxyUrls = (targetUrl) => [
-            targetUrl === 'https://soundcloud.com' ? '/sc-web' : (targetUrl.startsWith('https://a-v2.sndcdn.com') ? targetUrl.replace('https://a-v2.sndcdn.com', '/sc-sndcdn') : null),
-            toProxyUrl(targetUrl),
-        ].filter(Boolean);
+        const getProxyUrls = (targetUrl) =>
+            [
+                targetUrl === 'https://soundcloud.com'
+                    ? '/sc-web'
+                    : targetUrl.startsWith('https://a-v2.sndcdn.com')
+                      ? targetUrl.replace('https://a-v2.sndcdn.com', '/sc-sndcdn')
+                      : null,
+                toProxyUrl(targetUrl),
+            ].filter(Boolean);
 
         const collectCandidateIds = (text, ids) => {
             const patterns = [
@@ -159,7 +171,9 @@ export class SoundCloudAPI {
             } catch {}
             if (!testRes || !testRes.ok) {
                 try {
-                    testRes = await fetch(`${FALLBACK_SC_API_BASE}/search/tracks?q=test&limit=1&client_id=${candidateId}`);
+                    testRes = await fetch(
+                        `${FALLBACK_SC_API_BASE}/search/tracks?q=test&limit=1&client_id=${candidateId}`
+                    );
                 } catch {}
             }
             if (testRes && testRes.ok) {
@@ -201,7 +215,9 @@ export class SoundCloudAPI {
                     signal: options.signal,
                 });
                 if (response.status === 404 && apiBase.startsWith('/')) {
-                    console.info(`Local proxy ${apiBase} returned 404 (not configured). Falling back to direct/proxy...`);
+                    console.info(
+                        `Local proxy ${apiBase} returned 404 (not configured). Falling back to direct/proxy...`
+                    );
                     response = null;
                 }
             } catch (networkErr) {
@@ -241,7 +257,7 @@ export class SoundCloudAPI {
             return await response.json();
         } catch (error) {
             if (error.name === 'AbortError') throw error;
-            
+
             if (retries > 0) {
                 console.warn('SoundCloud network/CORS error after proxy attempts, rotating client ID and retrying...');
                 if (retries === 1) {
@@ -306,7 +322,12 @@ export class SoundCloudAPI {
         const numericId = String(trackId).replace(/^sc_/, '');
         const trackData = await this.fetchWithRetry(`/tracks/${numericId}`, options);
 
-        if (!trackData || !trackData.media || !trackData.media.transcodings || trackData.media.transcodings.length === 0) {
+        if (
+            !trackData ||
+            !trackData.media ||
+            !trackData.media.transcodings ||
+            trackData.media.transcodings.length === 0
+        ) {
             throw new Error('No audio transcodings available for this SoundCloud track');
         }
 
@@ -316,7 +337,11 @@ export class SoundCloudAPI {
         const sortedTranscodings = [...transcodings].sort((a, b) => {
             const score = (t) => {
                 if (t?.format?.protocol === 'progressive') return 4;
-                if (t?.format?.protocol === 'hls' && (t?.format?.mime_type === 'audio/mpeg' || t?.format?.mime_type?.includes('mpeg'))) return 3;
+                if (
+                    t?.format?.protocol === 'hls' &&
+                    (t?.format?.mime_type === 'audio/mpeg' || t?.format?.mime_type?.includes('mpeg'))
+                )
+                    return 3;
                 if (t?.format?.protocol === 'hls' && t?.format?.mime_type?.includes('mp4')) return 2;
                 if (t?.format?.protocol === 'hls') return 1;
                 return 0;
@@ -351,7 +376,9 @@ export class SoundCloudAPI {
 
                     if (!streamRes.ok) {
                         lastError = new Error(`Failed to resolve SoundCloud stream URL: ${streamRes.status}`);
-                        console.warn(`[SoundCloudAPI] Transcoding (${selected.format?.protocol} ${selected.format?.mime_type}) returned ${streamRes.status}. Trying next transcoding...`);
+                        console.warn(
+                            `[SoundCloudAPI] Transcoding (${selected.format?.protocol} ${selected.format?.mime_type}) returned ${streamRes.status}. Trying next transcoding...`
+                        );
                         continue;
                     }
 
@@ -378,12 +405,23 @@ export class SoundCloudAPI {
             }
 
             // If we broke or failed due to 401/403/404/429 authorization/rate limit, rotate/extract client ID and retry
-            if (attempt < 2 && lastError && (lastError.message.includes('401') || lastError.message.includes('403') || lastError.message.includes('404') || lastError.message.includes('429'))) {
+            if (
+                attempt < 2 &&
+                lastError &&
+                (lastError.message.includes('401') ||
+                    lastError.message.includes('403') ||
+                    lastError.message.includes('404') ||
+                    lastError.message.includes('429'))
+            ) {
                 if (attempt === 0) {
-                    console.warn('[SoundCloudAPI] Rotating static clientId due to stream authorization/rate-limit/not-found error');
+                    console.warn(
+                        '[SoundCloudAPI] Rotating static clientId due to stream authorization/rate-limit/not-found error'
+                    );
                     this.rotateClientId();
                 } else if (attempt === 1) {
-                    console.warn('[SoundCloudAPI] Attempting to extract a fresh clientId from SoundCloud via proxy due to stream error');
+                    console.warn(
+                        '[SoundCloudAPI] Attempting to extract a fresh clientId from SoundCloud via proxy due to stream error'
+                    );
                     await this.extractFreshClientId();
                 }
                 continue;
@@ -464,7 +502,7 @@ export class SoundCloudAPI {
         const title = scTrack.title || 'Unknown Title';
         const artistName = scTrack.user?.username || 'Unknown Artist';
         const artistId = scTrack.user?.id ? `sc_user_${scTrack.user.id}` : null;
-        
+
         // Artwork URL upgrade: SoundCloud defaults to 'large' (100x100), upgrade to 't500x500' for high quality
         let artwork = scTrack.artwork_url || scTrack.user?.avatar_url || '';
         if (artwork && artwork.includes('-large.')) {
@@ -473,7 +511,8 @@ export class SoundCloudAPI {
 
         const durationSec = Math.floor((scTrack.duration || 0) / 1000);
         const pm = scTrack.publisher_metadata || {};
-        const releaseDate = (scTrack.release_date || scTrack.display_date || scTrack.created_at || '').split('T')[0] || undefined;
+        const releaseDate =
+            (scTrack.release_date || scTrack.display_date || scTrack.created_at || '').split('T')[0] || undefined;
         const copyright = [pm.p_line, pm.c_line].filter(Boolean).join(' ') || undefined;
         const bpm = Number(scTrack.bpm) || undefined;
 

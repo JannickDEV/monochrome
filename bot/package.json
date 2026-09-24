@@ -1,34 +1,34 @@
 {
-  "name": "bot",
-  "version": "1.0.0",
-  "type": "module",
-  "main": "src/index.ts",
-  "scripts": {
-    "start": "bun run src/index.ts",
-    "dev": "bun --watch src/index.ts",
-    "build": "bun build src/index.ts --target=node --packages=external --outdir=dist",
-    "start:node": "node dist/index.js",
-    "typecheck": "tsc --noEmit",
-    "probe": "bun run scripts/probe.ts",
-    "spotify-auth": "bun run scripts/spotify-auth.ts",
-    "spotify-auth-fp": "bun run scripts/spotify-auth.ts --firstparty"
-  },
-  "dependencies": {
-    "@discordjs/voice": "^0.19.2",
-    "@snazzah/davey": "^0.1.1",
-    "cors": "^2.8.6",
-    "discord.js": "^14.16.2",
-    "dotenv": "^16.4.5",
-    "express": "^5.2.1",
-    "ffmpeg-static": "^5.2.0",
-    "libsodium-wrappers": "^0.7.15",
-    "opusscript": "^0.1.1",
-    "spotify-url-info": "^3.3.1"
-  },
-  "devDependencies": {
-    "@types/cors": "^2.8.19",
-    "@types/express": "^5.0.6",
-    "@types/node": "^22.5.4",
-    "typescript": "^5.5.4"
-  }
+    "name": "bot",
+    "version": "1.0.0",
+    "type": "module",
+    "main": "src/index.ts",
+    "scripts": {
+        "start": "bun run src/index.ts",
+        "dev": "bun --watch src/index.ts",
+        "build": "bun build src/index.ts --target=node --packages=external --outdir=dist",
+        "start:node": "node dist/index.js",
+        "typecheck": "tsc --noEmit",
+        "probe": "bun run scripts/probe.ts",
+        "spotify-auth": "bun run scripts/spotify-auth.ts",
+        "spotify-auth-fp": "bun run scripts/spotify-auth.ts --firstparty"
+    },
+    "dependencies": {
+        "@discordjs/voice": "^0.19.2",
+        "@snazzah/davey": "^0.1.1",
+        "cors": "^2.8.6",
+        "discord.js": "^14.16.2",
+        "dotenv": "^16.4.5",
+        "express": "^5.2.1",
+        "ffmpeg-static": "^5.2.0",
+        "libsodium-wrappers": "^0.7.15",
+        "opusscript": "^0.1.1",
+        "spotify-url-info": "^3.3.1"
+    },
+    "devDependencies": {
+        "@types/cors": "^2.8.19",
+        "@types/express": "^5.0.6",
+        "@types/node": "^22.5.4",
+        "typescript": "^5.5.4"
+    }
 }

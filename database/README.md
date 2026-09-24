@@ -24,6 +24,7 @@ PocketBase acts as the unified cloud backend for Monochrome, handling both user 
 In PocketBase (v0.23 and newer), authentication methods and OAuth2 providers are configured **per auth collection** rather than in global settings.
 
 ### How to Access Auth Configuration:
+
 1. In your PocketBase Admin Console, click on **Collections** in the left sidebar.
 2. Select the **`users`** collection.
 3. Click the **Edit collection** button (the gear/cogwheel icon next to `users` at the top of the page).
@@ -32,8 +33,9 @@ In PocketBase (v0.23 and newer), authentication methods and OAuth2 providers are
 ---
 
 ### Email / Password Authentication
+
 - In the **Options** tab of the `users` collection, ensure **Identity / Password** is enabled.
-- *(Optional)* Configure your SMTP server under **Settings > Mail settings** if you want to support email verification and password reset emails.
+- _(Optional)_ Configure your SMTP server under **Settings > Mail settings** if you want to support email verification and password reset emails.
 
 ---
 
@@ -41,14 +43,17 @@ In PocketBase (v0.23 and newer), authentication methods and OAuth2 providers are
 
 > [!IMPORTANT]
 > When connecting social accounts, PocketBase acts as the OAuth2 client. You must register an OAuth application with each provider and copy the generated **Client ID** and **Client Secret** into PocketBase under **Collections > users > Edit collection > Options > OAuth2**.
-> 
+>
 > **Your PocketBase OAuth2 Redirect URL:**
+>
 > ```
 > https://your-pocketbase-domain.com/api/oauth2-redirect
 > ```
-> *(Example: `https://pb-data.bitperfect.dedyn.io/api/oauth2-redirect`)*
+>
+> _(Example: `https://pb-data.bitperfect.dedyn.io/api/oauth2-redirect`)_
 
 #### A. Google OAuth2 Setup
+
 1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
 2. Create a new project (or select an existing one) and navigate to **APIs & Services > Credentials**.
 3. Click **Create Credentials > OAuth client ID**.
@@ -59,6 +64,7 @@ In PocketBase (v0.23 and newer), authentication methods and OAuth2 providers are
 7. In your PocketBase Admin Console, go to **Collections > users > Edit collection (gear icon) > Options > OAuth2**, enable **Google**, paste the Client ID and Secret, and click **Save**.
 
 #### B. GitHub OAuth2 Setup
+
 1. Go to your GitHub account **Settings > Developer settings > OAuth Apps > New OAuth App**.
 2. Fill in the application name and homepage URL (your Monochrome app domain).
 3. In the **Authorization callback URL** field, enter your PocketBase OAuth2 redirect URL:
@@ -68,6 +74,7 @@ In PocketBase (v0.23 and newer), authentication methods and OAuth2 providers are
 6. In your PocketBase Admin Console, go to **Collections > users > Edit collection (gear icon) > Options > OAuth2**, enable **GitHub**, paste the Client ID and Secret, and click **Save**.
 
 #### C. Discord OAuth2 Setup
+
 1. Go to the [Discord Developer Portal](https://discord.com/developers/applications) and click **New Application**.
 2. Give your application a name and navigate to the **OAuth2** tab in the left sidebar.
 3. Under **Redirects**, add your PocketBase OAuth2 redirect URL:
@@ -80,6 +87,7 @@ In PocketBase (v0.23 and newer), authentication methods and OAuth2 providers are
 ## 3. Connecting Monochrome to Your PocketBase Server
 
 Once your server is configured:
+
 1. Open Monochrome and go to **Settings > Account**.
 2. Under **Custom Database/Auth**, enter your PocketBase URL (e.g., `https://pb-data.bitperfect.dedyn.io`).
 3. Click **Save & Reload**. Monochrome will now authenticate users and sync library data directly with your relational PocketBase tables!

@@ -102,7 +102,9 @@ describe('QobuzProvider', () => {
     });
 
     test('getCoverUrl and getCoverSrcset return correct Qobuz image URLs without q: prefix', () => {
-        expect(provider.getCoverUrl('q:cover_123', '600')).toBe('https://static.qobuz.com/images/covers/cover_123_600.jpg');
+        expect(provider.getCoverUrl('q:cover_123', '600')).toBe(
+            'https://static.qobuz.com/images/covers/cover_123_600.jpg'
+        );
         expect(provider.getCoverSrcset('q:cover_123')).toBe(
             'https://static.qobuz.com/images/covers/cover_123_300.jpg 300w, https://static.qobuz.com/images/covers/cover_123_600.jpg 600w'
         );

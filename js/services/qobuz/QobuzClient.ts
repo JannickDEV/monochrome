@@ -48,7 +48,16 @@ export class QobuzClient {
     private customToken?: string;
     private customUserId?: string;
 
-    constructor(options: { url?: string; appId?: string; appSecret?: string; token?: string; userId?: string; maxConcurrency?: number } = {}) {
+    constructor(
+        options: {
+            url?: string;
+            appId?: string;
+            appSecret?: string;
+            token?: string;
+            userId?: string;
+            maxConcurrency?: number;
+        } = {}
+    ) {
         this.queue = new RequestQueue(options.maxConcurrency ?? 2);
         this.customUrl = options.url;
         this.customAppId = options.appId;
@@ -132,7 +141,7 @@ export class QobuzClient {
             const url = `${baseUrl}${path}${queryString ? '?' + queryString : ''}`;
 
             const headers: Record<string, string> = {
-                'Accept': 'application/json',
+                Accept: 'application/json',
             };
             if (appId) headers['X-App-Id'] = appId;
             if (appSecret) headers['X-App-Secret'] = appSecret;

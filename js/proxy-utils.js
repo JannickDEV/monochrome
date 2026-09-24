@@ -108,7 +108,8 @@ export const wrapTidalUrl = (url) => {
 };
 
 const readMethod = (input, init) => {
-    const raw = init?.method || (input && typeof input === 'object' && 'method' in input ? input.method : null) || 'GET';
+    const raw =
+        init?.method || (input && typeof input === 'object' && 'method' in input ? input.method : null) || 'GET';
     return String(raw).toUpperCase();
 };
 const isRelayableMethod = (method) => method === 'GET' || method === 'HEAD';
@@ -134,7 +135,8 @@ export function installGlobalProxy() {
                     } else if (typeof URL !== 'undefined' && input instanceof URL) {
                         if (shouldProxy(input.href)) return originalFetch(toProxyUrl(input.href), init);
                     } else if (typeof Request !== 'undefined' && input instanceof Request) {
-                        if (shouldProxy(input.url)) return originalFetch(new Request(toProxyUrl(input.url), input), init);
+                        if (shouldProxy(input.url))
+                            return originalFetch(new Request(toProxyUrl(input.url), input), init);
                     }
                 }
             } catch (error) {
@@ -152,7 +154,11 @@ export function installGlobalProxy() {
         XHR.prototype.__monoProxyOpen = originalOpen;
         XHR.prototype.open = function open(method, url, ...rest) {
             try {
-                if (isRelayableMethod(String(method || 'GET').toUpperCase()) && typeof url === 'string' && shouldProxy(url)) {
+                if (
+                    isRelayableMethod(String(method || 'GET').toUpperCase()) &&
+                    typeof url === 'string' &&
+                    shouldProxy(url)
+                ) {
                     return originalOpen.call(this, method, toProxyUrl(url), ...rest);
                 }
             } catch (error) {

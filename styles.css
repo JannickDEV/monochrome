@@ -3895,13 +3895,13 @@ input:checked + .slider::before {
     overflow: hidden;
     position: relative;
     cursor: pointer;
-    -webkit-mask-image: var(--waveform-mask-image);
     mask-image: var(--waveform-mask-image);
-    -webkit-mask-size: var(--waveform-mask-width, 100%) 100%;
+    mask-image: var(--waveform-mask-image);
     mask-size: var(--waveform-mask-width, 100%) 100%;
-    -webkit-mask-repeat: no-repeat;
+    mask-size: var(--waveform-mask-width, 100%) 100%;
     mask-repeat: no-repeat;
-    -webkit-mask-position: left center;
+    mask-repeat: no-repeat;
+    mask-position: left center;
     mask-position: left center;
     -webkit-mask-mode: alpha;
     mask-mode: alpha;

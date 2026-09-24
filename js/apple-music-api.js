@@ -213,7 +213,9 @@ export async function appleFetchWithRateLimitRetry(url, tokenInfo, options = {})
             return response;
         }
         const delay = rateLimitDelay(response, attempt, options);
-        console.warn(`[Apple Music] Rate limited on ${url}, retrying in ${delay}ms (attempt ${attempt + 1}/${maxAttempts})`);
+        console.warn(
+            `[Apple Music] Rate limited on ${url}, retrying in ${delay}ms (attempt ${attempt + 1}/${maxAttempts})`
+        );
         await waitForRetry(delay, options.signal);
         attempt += 1;
     }

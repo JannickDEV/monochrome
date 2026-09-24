@@ -151,7 +151,10 @@ describe('FallbackProvider', () => {
                 items: [{ id: 'q:456', title: 'Test Song', artist: { name: 'Test Artist' } }],
             });
         });
-        qobuzMock.getStreamUrl.mockResolvedValueOnce({ url: 'https://qobuz.stream/title-match.flac', provider: 'qobuz' });
+        qobuzMock.getStreamUrl.mockResolvedValueOnce({
+            url: 'https://qobuz.stream/title-match.flac',
+            provider: 'qobuz',
+        });
 
         const res = await fallback.getStreamUrl('apple:track:2', 'LOSSLESS');
 

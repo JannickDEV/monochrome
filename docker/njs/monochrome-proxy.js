@@ -26,7 +26,10 @@ function validTarget(raw) {
         return '';
     }
 
-    var host = url.replace(/^https?:\/\//i, '').split(/[/:?#]/)[0].toLowerCase();
+    var host = url
+        .replace(/^https?:\/\//i, '')
+        .split(/[/:?#]/)[0]
+        .toLowerCase();
     if (!host) {
         return '';
     }

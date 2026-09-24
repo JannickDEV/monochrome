@@ -109,7 +109,12 @@ export class TidalProvider implements Provider {
             }
             return null;
         } catch (err: any) {
-            throw new ProviderError(err.message || 'Tidal getArtistBiography failed', this.id, 'getArtistBiography', err);
+            throw new ProviderError(
+                err.message || 'Tidal getArtistBiography failed',
+                this.id,
+                'getArtistBiography',
+                err
+            );
         }
     }
 
@@ -174,7 +179,12 @@ export class TidalProvider implements Provider {
             }
             return await this.getStreamUrl(cleanId(id), quality);
         } catch (err: any) {
-            throw new ProviderError(err.message || 'Tidal getTrackForDownload failed', this.id, 'getTrackForDownload', err);
+            throw new ProviderError(
+                err.message || 'Tidal getTrackForDownload failed',
+                this.id,
+                'getTrackForDownload',
+                err
+            );
         }
     }
 
@@ -191,7 +201,9 @@ export class TidalProvider implements Provider {
     }
 
     getArtistPictureSrcset(id: string | number): string {
-        return typeof this.api.getArtistPictureSrcset === 'function' ? this.api.getArtistPictureSrcset(cleanId(id)) : '';
+        return typeof this.api.getArtistPictureSrcset === 'function'
+            ? this.api.getArtistPictureSrcset(cleanId(id))
+            : '';
     }
 
     async getSimilarArtists(artistId: string | number): Promise<any> {

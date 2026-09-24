@@ -7,9 +7,7 @@ const dashboardMessages = new Map<string, Message>();
 const updateChain = new Map<string, Promise<unknown>>();
 
 function buildEmbed(player: MusicPlayer): EmbedBuilder {
-    const embed = new EmbedBuilder()
-        .setColor(0x000000)
-        .setAuthor({ name: 'Monochrome Music Bot', iconURL: ICON });
+    const embed = new EmbedBuilder().setColor(0x000000).setAuthor({ name: 'Monochrome Music Bot', iconURL: ICON });
 
     const t = player.currentTrack;
     if (!t && player.queue.length === 0) {
