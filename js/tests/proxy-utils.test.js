@@ -60,11 +60,15 @@ describe('proxy-utils', () => {
         expect(isTidalAudioUrl('https://cdn.example.com/x/1.mp4')).toBe(false);
     });
 
-    test('routes TIDAL API and web requests through the Samidy worker', () => {
+    test('routes TIDAL API and web requests through the proxy worker', () => {
         expect(wrapTidalUrl('https://openapi.tidal.com/v2/albums/1')).toBe(
-            'https://lol.samidy.workers.dev/openapi/v2/albums/1'
+            'https://tidal-proxy.monochrome.tf/openapi/v2/albums/1'
         );
-        expect(wrapTidalUrl('https://api.tidal.com/v1/tracks/1')).toBe('https://lol.samidy.workers.dev/api/v1/tracks/1');
-        expect(wrapTidalUrl('https://tidal.com/browse/mix/1')).toBe('https://lol.samidy.workers.dev/tidal/browse/mix/1');
+        expect(wrapTidalUrl('https://api.tidal.com/v1/tracks/1')).toBe(
+            'https://tidal-proxy.monochrome.tf/api/v1/tracks/1'
+        );
+        expect(wrapTidalUrl('https://tidal.com/browse/mix/1')).toBe(
+            'https://tidal-proxy.monochrome.tf/tidal/browse/mix/1'
+        );
     });
 });

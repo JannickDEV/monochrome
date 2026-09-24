@@ -37,15 +37,6 @@ import { SVG_CLOCK, SVG_ATMOS, SVG_TRIANGLE_ALERT, SVG_PLAY, SVG_PAUSE } from '.
 import { UIRenderer } from './ui.js';
 import { MediaSession } from '@capgo/capacitor-media-session';
 
-// Upstream set this to `false` in "Comply with C&D" as a blanket kill switch
-// for ALL playback (paired with a "down for maintenance" banner), on top of
-// removing the Amazon-specific DRM pipeline the C&D was actually about. That
-// caution makes sense for their public service while they audit further; it
-// doesn't apply here — this fork's playback runs entirely through its own
-// dev-mode Tidal/Qobuz backends (hf-core/qz-api), never touched Amazon Music,
-// and was never part of the C&D.
-const PLAYBACK_AVAILABLE = true;
-
 export class Player {
     static #instance = null;
 
@@ -1199,7 +1190,6 @@ export class Player {
     }
 
     async playVideo(video) {
-        if (!PLAYBACK_AVAILABLE) return;
         if (!video) return;
         const videoTrack = {
             ...video,
@@ -1212,11 +1202,6 @@ export class Player {
     }
 
     async playTrackFromQueue(startTime = 0, recursiveCount = 0, isRetry = false, options = {}) {
-        if (!PLAYBACK_AVAILABLE) {
-            this.audio.pause();
-            this.video.pause();
-            return;
-        }
         await this.shakaReady;
         const { preserveGestureToken = false, preparedPlayback = null } = options;
         if (!isRetry) {
@@ -1625,7 +1610,6 @@ export class Player {
                 // We only need the legacy track info if we missed getting ReplayGain from the manifest endpoint
                 let resolvedStreamInfo = await streamInfoPromise;
                 if (this.playbackSequence !== currentSequence) return;
-
 
                 streamUrl = resolvedStreamInfo.url;
                 if (resolvedStreamInfo.provider) {
@@ -2642,11 +2626,6 @@ export class Player {
     }
 
     async handlePlayPause() {
-        if (!PLAYBACK_AVAILABLE) {
-            this.audio.pause();
-            this.video.pause();
-            return;
-        }
         const el = this.activeElement;
         const hasSource = el.src || el.currentSrc || el.srcObject || this.shakaInitialized;
 

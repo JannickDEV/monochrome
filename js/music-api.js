@@ -9,6 +9,12 @@ import {
     normalizeAppleArtist,
     normalizeAppleSearchResults,
 } from './apple-music-api.js';
+import {
+    TracksStreamerAPI,
+    tracksStreamerAPI,
+    normalizeTracksSearchResults,
+    TRACKS_API_BASE_URL,
+} from './tracks-api.js';
 import { getCommunityPlaylist } from './community-playlists.js';
 
 /**
@@ -61,6 +67,7 @@ export class MusicAPI {
     constructor(settings) {
         this.tidalAPI = new LosslessAPI(settings);
         this.appleMusicSearchAPI = new AppleMusicSearchAPI();
+        this.tracksStreamerAPI = tracksStreamerAPI;
         this.podcastsAPI = new PodcastsAPI();
         this._settings = settings;
         this.videoArtworkCache = new Map();
@@ -73,6 +80,14 @@ export class MusicAPI {
         this.appleArtistIds = new Set();
         this.appleAlbumIds = new Set();
         this.applePlaylistIds = new Set();
+        this.tracksTrackCache = new Map();
+        this.tracksArtistCache = new Map();
+        this.tracksAlbumCache = new Map();
+        this.tracksPlaylistCache = new Map();
+        this.tracksEntityRequests = new Map();
+        this.tracksArtistIds = new Set();
+        this.tracksAlbumIds = new Set();
+        this.tracksPlaylistIds = new Set();
     }
 
     static async initialize(settings) {
@@ -99,6 +114,21 @@ export class MusicAPI {
 
     // Search methods
     async search(query, options = {}) {
+        try {
+            const tracksResults = await this.tracksStreamerAPI.search(query, options);
+            if (
+                tracksResults &&
+                (tracksResults.tracks?.items?.length ||
+                    tracksResults.albums?.items?.length ||
+                    tracksResults.artists?.items?.length)
+            ) {
+                return this.cacheTracksResults(tracksResults);
+            }
+        } catch (error) {
+            if (error.name === 'AbortError') throw error;
+            if (import.meta.env.DEV) console.warn('[search] Tracks Streamer unavailable, trying fallbacks', error);
+        }
+
         const api = this.getAPI();
         let appleResults;
         try {
@@ -132,16 +162,53 @@ export class MusicAPI {
     }
 
     async searchTracks(query, options = {}) {
+        try {
+            const result = await this.tracksStreamerAPI.searchTracks(query, options);
+            if (result?.items && result.items.length > 0) {
+                this.cacheTracks(result.items);
+                return result;
+            }
+        } catch (error) {
+            if (error.name === 'AbortError') throw error;
+            if (import.meta.env.DEV)
+                console.warn('[searchTracks] Tracks Streamer unavailable, trying fallbacks', error);
+        }
         return this.searchSection('tracks', 'songs', query, options, () => this.getAPI().searchTracks(query, options));
     }
 
     async searchArtists(query, options = {}) {
+        try {
+            const result = await this.tracksStreamerAPI.searchArtists(query, options);
+            if (result?.items && result.items.length > 0) {
+                for (const artist of result.items) {
+                    if (artist.tracksArtistId) this.tracksArtistIds.add(String(artist.tracksArtistId));
+                }
+                return result;
+            }
+        } catch (error) {
+            if (error.name === 'AbortError') throw error;
+            if (import.meta.env.DEV)
+                console.warn('[searchArtists] Tracks Streamer unavailable, trying fallbacks', error);
+        }
         return this.searchSection('artists', 'artists', query, options, () =>
             this.getAPI().searchArtists(query, options)
         );
     }
 
     async searchAlbums(query, options = {}) {
+        try {
+            const result = await this.tracksStreamerAPI.searchAlbums(query, options);
+            if (result?.items && result.items.length > 0) {
+                for (const album of result.items) {
+                    if (album.tracksReleaseId) this.tracksAlbumIds.add(String(album.tracksReleaseId));
+                }
+                return result;
+            }
+        } catch (error) {
+            if (error.name === 'AbortError') throw error;
+            if (import.meta.env.DEV)
+                console.warn('[searchAlbums] Tracks Streamer unavailable, trying fallbacks', error);
+        }
         return this.searchSection('albums', 'albums', query, options, () => this.getAPI().searchAlbums(query, options));
     }
 
@@ -158,6 +225,13 @@ export class MusicAPI {
     }
 
     async searchSuggestions(query, options = {}) {
+        try {
+            const suggestions = await this.tracksStreamerAPI.suggestions(query, options);
+            if (suggestions && suggestions.length > 0) return suggestions;
+        } catch (error) {
+            if (error.name === 'AbortError') throw error;
+            if (import.meta.env.DEV) console.warn('[searchSuggestions] Tracks Streamer unavailable', error);
+        }
         try {
             return await this.appleMusicSearchAPI.suggestions(query, options);
         } catch (error) {
@@ -203,6 +277,12 @@ export class MusicAPI {
             const { soundCloudAPI } = await import('./soundcloud-api.js');
             return await soundCloudAPI.getTrackById(id);
         }
+        if (this.isTracksId(id, 'track') || this.isTracksId(id)) {
+            const track = await this.getTrackMetadata(id);
+            return { track, info: track, originalTrackUrl: track?.url || null };
+        }
+        const tracksTrack = this.getCachedTracksTrack(id);
+        if (tracksTrack) return { track: tracksTrack, info: tracksTrack, originalTrackUrl: tracksTrack?.url || null };
         if (this.isAppleId(id, 'track') || this.isAppleId(id, 'video') || this.isAppleId(id)) {
             const track = await this.getTrackMetadata(id);
             return { track, info: track, originalTrackUrl: null };
@@ -219,6 +299,27 @@ export class MusicAPI {
             const { soundCloudAPI } = await import('./soundcloud-api.js');
             return await soundCloudAPI.getTrackById(id);
         }
+        if (this.isTracksId(id, 'track') || this.isTracksId(id)) {
+            const cached = this.getCachedTracksTrack(id);
+            if (cached) return cached;
+            const tracksId = this.getTracksId(id, 'track');
+            const placeholder = {
+                id: tracksId,
+                trackId: tracksId,
+                tracksTrackId: tracksId,
+                provider: 'tracks',
+                type: 'track',
+                title: `Track ${tracksId}`,
+                duration: 0,
+                playable: true,
+                url: `${TRACKS_API_BASE_URL}/track/${tracksId}`,
+                _href: `/track/${tracksId}`,
+            };
+            this.cacheTracks([placeholder]);
+            return placeholder;
+        }
+        const tracksTrack = this.getCachedTracksTrack(id);
+        if (tracksTrack) return tracksTrack;
         if (this.isAppleId(id, 'track') || this.isAppleId(id, 'video') || this.isAppleId(id)) {
             const cached = this.getCachedAppleTrack(id);
             if (cached) return cached;
@@ -235,6 +336,23 @@ export class MusicAPI {
 
     async getAlbum(id, provider = null) {
         if (String(id).startsWith('sc_')) return { album: null, tracks: [] };
+        if (this.isTracksId(id, 'album', provider) || this.tracksAlbumIds.has(String(id))) {
+            const tracksId = this.getTracksId(id, 'album');
+            if (this.tracksAlbumCache.has(String(tracksId))) return this.tracksAlbumCache.get(String(tracksId));
+            const requestKey = `tracks:album:${tracksId}`;
+            if (this.tracksEntityRequests.has(requestKey)) return this.tracksEntityRequests.get(requestKey);
+            const request = this.tracksStreamerAPI
+                .getAlbum(tracksId)
+                .then((result) => {
+                    this.tracksAlbumIds.add(String(tracksId));
+                    this.tracksAlbumCache.set(String(tracksId), result);
+                    if (result.tracks) this.cacheTracks(result.tracks);
+                    return result;
+                })
+                .finally(() => this.tracksEntityRequests.delete(requestKey));
+            this.tracksEntityRequests.set(requestKey, request);
+            return request;
+        }
         if (this.isAppleId(id, 'album', provider) || this.appleAlbumIds.has(String(id))) {
             const appleId = this.getAppleId(id, 'album');
             if (this.appleAlbumCache.has(String(appleId))) return this.appleAlbumCache.get(String(appleId));
@@ -261,6 +379,27 @@ export class MusicAPI {
         if (String(id).startsWith('sc_')) {
             const { soundCloudAPI } = await import('./soundcloud-api.js');
             return await soundCloudAPI.getArtistById(id);
+        }
+        if (this.isTracksId(id, 'artist', provider) || this.tracksArtistIds.has(String(id))) {
+            const tracksId = this.getTracksId(id, 'artist');
+            const cached = this.tracksArtistCache.get(String(tracksId));
+            if (cached) return cached;
+            const requestKey = `tracks:artist:${tracksId}`;
+            if (this.tracksEntityRequests.has(requestKey)) return this.tracksEntityRequests.get(requestKey);
+            const request = this.tracksStreamerAPI
+                .getArtist(tracksId)
+                .then((artist) => {
+                    this.tracksArtistIds.add(String(tracksId));
+                    this.tracksArtistCache.set(String(tracksId), artist);
+                    if (artist.tracks) this.cacheTracks(artist.tracks);
+                    for (const album of [...(artist.albums || []), ...(artist.eps || [])]) {
+                        if (album.tracksReleaseId) this.tracksAlbumIds.add(String(album.tracksReleaseId));
+                    }
+                    return artist;
+                })
+                .finally(() => this.tracksEntityRequests.delete(requestKey));
+            this.tracksEntityRequests.set(requestKey, request);
+            return request;
         }
         if (this.isAppleId(id, 'artist', provider) || this.appleArtistIds.has(String(id))) {
             const appleId = this.getAppleId(id, 'artist');
@@ -290,6 +429,10 @@ export class MusicAPI {
 
     async getArtistBiography(id, options = {}) {
         if (String(id).startsWith('sc_')) return null;
+        if (this.isTracksId(id, 'artist') || this.tracksArtistIds.has(String(id))) {
+            const artist = this.tracksArtistCache.get(String(this.getTracksId(id, 'artist')));
+            return artist?.biography || null;
+        }
         if (this.isAppleId(id, 'artist') || this.appleArtistIds.has(String(id))) {
             const artist = this.appleArtistCache.get(String(this.getAppleId(id, 'artist')));
             return artist?.biography || null;
@@ -393,6 +536,9 @@ export class MusicAPI {
 
     // Cover/artwork methods
     getCoverUrl(id, size = '320') {
+        if (!id) {
+            return 'images/monochrome_logo.svg';
+        }
         if (
             typeof id === 'string' &&
             (id.startsWith('blob:') ||
@@ -453,6 +599,9 @@ export class MusicAPI {
     }
 
     getArtistPictureUrl(id, size = '320') {
+        if (!id) {
+            return 'images/monochrome_logo.svg';
+        }
         if (
             typeof id === 'string' &&
             (id.startsWith('blob:') ||
@@ -529,6 +678,7 @@ export class MusicAPI {
     getProviderFromId(id) {
         if (typeof id === 'string') {
             if (id.startsWith('sc_')) return 'soundcloud';
+            if (id.startsWith('tracks:') || id.startsWith('mono:')) return 'tracks';
             if (id.startsWith('t:')) return 'tidal';
             if (id.startsWith('apple:')) return 'apple';
         }
@@ -542,6 +692,79 @@ export class MusicAPI {
             }
         }
         return id;
+    }
+
+    isTracksId(id, type = null, provider = null) {
+        if (provider === 'tracks' || provider === 'monochrome') return true;
+        if (typeof id !== 'string') return false;
+        if (id.startsWith(type ? `tracks:${type}:` : 'tracks:')) return true;
+        if (id.startsWith('mono:')) return true;
+        if (/^\d{17,20}$/.test(id)) {
+            if (type === 'album' && this.tracksAlbumIds.has(id)) return true;
+            if (type === 'artist' && this.tracksArtistIds.has(id)) return true;
+            if (type === 'track' && this.tracksTrackCache.has(id)) return true;
+            if (!type) {
+                return this.tracksTrackCache.has(id) || this.tracksAlbumIds.has(id) || this.tracksArtistIds.has(id);
+            }
+        }
+        return false;
+    }
+
+    getTracksId(id, type = null) {
+        if (typeof id !== 'string') return String(id || '');
+        const prefix = type ? `tracks:${type}:` : 'tracks:';
+        if (id.startsWith(prefix)) return id.slice(prefix.length);
+        if (id.startsWith('tracks:')) return id.replace(/^tracks:[^:]+:/, '');
+        if (id.startsWith('mono:')) return id.replace(/^mono:[^:]+:/, '');
+        return id;
+    }
+
+    cacheTracks(tracks = []) {
+        for (const track of tracks) {
+            if (!track) continue;
+            const tid = String(track.tracksTrackId || track.trackId || track.id || '');
+            this.tracksTrackCache.set(String(track.id), track);
+            if (tid) this.tracksTrackCache.set(tid, track);
+            if (track.album?.tracksReleaseId) {
+                this.tracksAlbumIds.add(String(track.album.tracksReleaseId));
+            }
+            if (track.album?.releaseId) {
+                this.tracksAlbumIds.add(String(track.album.releaseId));
+            }
+            if (track.artist?.tracksArtistId) {
+                this.tracksArtistIds.add(String(track.artist.tracksArtistId));
+            }
+            if (track.artist?.artistId) {
+                this.tracksArtistIds.add(String(track.artist.artistId));
+            }
+        }
+        return tracks;
+    }
+
+    getCachedTracksTrack(id) {
+        if (id == null) return null;
+        return (
+            this.tracksTrackCache.get(String(id)) ||
+            this.tracksTrackCache.get(String(this.getTracksId(id, 'track'))) ||
+            this.tracksTrackCache.get(String(this.getTracksId(id)))
+        );
+    }
+
+    cacheTracksResults(results) {
+        this.cacheTracks(results.tracks?.items || []);
+        for (const album of results.albums?.items || []) {
+            if (album.tracksReleaseId) this.tracksAlbumIds.add(String(album.tracksReleaseId));
+            if (album.releaseId) this.tracksAlbumIds.add(String(album.releaseId));
+        }
+        for (const artist of results.artists?.items || []) {
+            if (artist.tracksArtistId) this.tracksArtistIds.add(String(artist.tracksArtistId));
+            if (artist.artistId) this.tracksArtistIds.add(String(artist.artistId));
+        }
+        for (const playlist of results.playlists?.items || []) {
+            if (playlist.tracksPlaylistId) this.tracksPlaylistIds.add(String(playlist.tracksPlaylistId));
+            if (playlist.playlistId) this.tracksPlaylistIds.add(String(playlist.playlistId));
+        }
+        return results;
     }
 
     isAppleId(id, type = null, provider = null) {
@@ -612,6 +835,18 @@ export class MusicAPI {
                 hasMore: false,
             };
         }
+        if (this.isTracksId(artistId, 'artist') || this.tracksArtistIds.has(String(artistId))) {
+            const artist = await this.getArtist(this.getTracksId(artistId, 'artist'), 'tracks');
+            const offset = options.offset || 0;
+            const limit = options.limit || 15;
+            const tracks = artist?.tracks || [];
+            return {
+                tracks: tracks.slice(offset, offset + limit),
+                offset,
+                limit,
+                hasMore: offset + limit < tracks.length,
+            };
+        }
         if (this.isAppleId(artistId, 'artist') || this.appleArtistIds.has(String(artistId))) {
             const artist = await this.getArtist(this.getAppleId(artistId, 'artist'), 'apple');
             const offset = options.offset || 0;
@@ -680,6 +915,7 @@ export class MusicAPI {
     // Cache methods
     async clearCache() {
         await this.tidalAPI.clearCache();
+        this.tracksStreamerAPI.clearCache();
         this.videoArtworkCache.clear();
         this.videoArtworkRequests.clear();
         clearStoredVideoCovers();
@@ -691,6 +927,14 @@ export class MusicAPI {
         this.appleMusicSearchAPI.suggestionCache.clear();
         this.appleMusicSearchAPI.viewCache.clear();
         this.appleMusicSearchAPI.viewRequests.clear();
+        this.tracksTrackCache.clear();
+        this.tracksArtistCache.clear();
+        this.tracksAlbumCache.clear();
+        this.tracksPlaylistCache.clear();
+        this.tracksEntityRequests.clear();
+        this.tracksArtistIds.clear();
+        this.tracksAlbumIds.clear();
+        this.tracksPlaylistIds.clear();
     }
 
     getCacheStats() {
