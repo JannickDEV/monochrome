@@ -114,6 +114,10 @@
         <script>
             (() => {
                 try {
+                    if (localStorage.getItem('disable-blur-effects') === 'true') {
+                        document.documentElement.classList.add('disable-blur-effects');
+                    }
+
                     const theme = localStorage.getItem('monochrome-theme');
                     const css = localStorage.getItem('custom_theme_css');
                     const palette = localStorage.getItem('monochrome-custom-theme');
@@ -3195,6 +3199,16 @@
                                     </div>
                                     <label class="toggle-switch">
                                         <input type="checkbox" id="album-background-toggle" />
+                                        <span class="slider"></span>
+                                    </label>
+                                </div>
+                                <div class="setting-item">
+                                    <div class="info">
+                                        <span class="label">Disable Blur Effects</span>
+                                        <span class="description">Turn off visual blur effects throughout the app</span>
+                                    </div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="disable-blur-effects-toggle" />
                                         <span class="slider"></span>
                                     </label>
                                 </div>
@@ -6457,23 +6471,12 @@
                                     <p style="color: var(--muted-foreground)">
                                         If you need any help with the desktop app, please reach out to the developer of
                                         the application. You can find their contact information on the GitHub page
-                                        linked above or contact them directly on discord in our server's
+                                        linked above or
                                         <a
-                                            href="https://discord.com/channels/1457628745589456910/1457633716049543208"
+                                            href="https://discord.com/users/1520067028046577755"
                                             style="color: var(--primary); text-decoration: underline"
-                                            ><i>Help Channel</i></a
+                                            ><i>contact @xf8n on Discord</i></a
                                         >.
-                                    </p>
-                                    <p
-                                        style="
-                                            color: var(--color-warning);
-                                            margin: 0;
-                                            margin-top: var(--space-6);
-                                            margin-bottom: 0;
-                                        "
-                                    >
-                                        This application is currently in beta and may have bugs or issues. Please report
-                                        any problems you encounter to the developer so they can be addressed.
                                     </p>
                                 </div>
                             </td>

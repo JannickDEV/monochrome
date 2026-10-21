@@ -11,6 +11,17 @@ import {
 } from './icons.js';
 import { sidePanelManager } from './side-panel.js';
 import { showNotification } from './downloads.js';
+import { disableBlurEffectsSettings } from './storage.js';
+
+function applyBlurEffectsPreferenceToLyrics() {
+    // am-lyrics renders its blur styles inside a shadow root.
+    const disabled = disableBlurEffectsSettings.isEnabled();
+    document.querySelectorAll('am-lyrics').forEach((element) => {
+        element.toggleAttribute('no-blur', disabled);
+    });
+}
+
+window.addEventListener('disable-blur-effects-changed', applyBlurEffectsPreferenceToLyrics);
 
 const loadAmLyrics = () => {
     const images = Array.from(document.images).filter((img) => !img.complete);
@@ -1216,6 +1227,7 @@ async function renderLyricsComponent(container, track, audioPlayer, lyricsManage
         amLyrics.setAttribute('hover-background-color', 'color-mix(in srgb, var(--primary) 16%, transparent)');
         amLyrics.setAttribute('autoscroll', '');
         amLyrics.setAttribute('interpolate', '');
+        amLyrics.toggleAttribute('no-blur', disableBlurEffectsSettings.isEnabled());
         if (trackIsJapanese(track)) amLyrics.setAttribute('lang', 'ja');
         amLyrics.style.height = '100%';
         amLyrics.style.width = '100%';
