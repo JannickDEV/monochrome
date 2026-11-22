@@ -1,7 +1,18 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, Message, TextChannel } from 'discord.js';
-import { MusicPlayer, requesterSuffix } from '../audio/musicPlayer.js';
+import {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    DiscordAPIError,
+    EmbedBuilder,
+    Message,
+    RESTJSONErrorCodes,
+    TextChannel,
+} from 'discord.js';
+import { MusicPlayer } from '../audio/musicPlayer.js';
+import { EMBED_LIMITS, joinWithin, requesterName, trackLine, truncate } from './format.js';
 
 const ICON = 'https://raw.githubusercontent.com/JannickDEV/monochrome/main/assets/512.png';
+const UP_NEXT_SHOWN = 3;
 
 const dashboardMessages = new Map<string, Message>();
 const updateChain = new Map<string, Promise<unknown>>();
@@ -14,21 +25,23 @@ function buildEmbed(player: MusicPlayer): EmbedBuilder {
         return embed.setTitle('Nothing is playing').setDescription('Use `/play` to start a session.');
     }
     if (t) {
+        const requester = requesterName(t);
         embed
-            .setTitle((player.isPaused ? '⏸ ' : '') + t.title)
+            .setTitle(truncate((player.isPaused ? '⏸ ' : '') + t.title, EMBED_LIMITS.title))
             .setDescription(
-                `by **${t.artist.name}**\n\n` +
-                    (t.requestedBy ? `Added by <@${t.requestedBy.id}>\n` : '') +
+                `by **${truncate(t.artist.name, 256)}**\n\n` +
+                    (requester ? `Added by ${requester}\n` : '') +
                     `Provider: \`${t.provider.toUpperCase()}\``
             );
         if (t.cover) embed.setThumbnail(t.cover);
     }
     if (player.queue.length > 0) {
-        const upNext = player.queue
-            .slice(0, 3)
-            .map((q, i) => `${i + 1}. ${q.title} — ${q.artist.name}${requesterSuffix(q)}`)
-            .join('\n');
-        embed.addFields({ name: `Up next (${player.queue.length})`, value: upNext });
+        const lines = player.queue.slice(0, UP_NEXT_SHOWN).map((q, i) => trackLine(q, i + 1));
+        const hidden = Math.max(0, player.queue.length - UP_NEXT_SHOWN);
+        embed.addFields({
+            name: `Up next (${player.queue.length})`,
+            value: joinWithin(lines, EMBED_LIMITS.fieldValue, hidden),
+        });
     }
     return embed;
 }
@@ -50,13 +63,17 @@ export function updateDashboard(channel: TextChannel, player: MusicPlayer): void
         .then(async () => {
             const payload = { embeds: [buildEmbed(player)], components: [buildButtons()] };
             const existing = dashboardMessages.get(channel.id);
-            try {
-                if (existing) {
+            if (existing) {
+                try {
                     await existing.edit(payload);
                     return;
+                } catch (e) {
+                    // Only a deleted message warrants a fresh one. Anything else
+                    // (rate limit, network, validation) would leave the old
+                    // dashboard in place and post a duplicate — surface it instead.
+                    if (!(e instanceof DiscordAPIError && e.code === RESTJSONErrorCodes.UnknownMessage)) throw e;
+                    dashboardMessages.delete(channel.id);
                 }
-            } catch {
-                // message was deleted — fall through and send a fresh one
             }
             const sent = await channel.send(payload);
             dashboardMessages.set(channel.id, sent);

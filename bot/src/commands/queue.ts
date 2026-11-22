@@ -1,7 +1,10 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, MessageFlags, EmbedBuilder } from 'discord.js';
-import { getPlayer, requesterSuffix } from '../audio/musicPlayer.js';
+import { getPlayer } from '../audio/musicPlayer.js';
+import { EMBED_LIMITS, joinWithin, trackLine } from '../ui/format.js';
 
 export const data = new SlashCommandBuilder().setName('queue').setDescription('Show the current music queue');
+
+const SHOWN = 10;
 
 export async function execute(interaction: ChatInputCommandInteraction) {
     const guildId = interaction.guildId;
@@ -24,20 +27,14 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     let description = '';
 
     if (player.currentTrack) {
-        const t = player.currentTrack;
-        description += `**Now Playing:**\n${t.title} — ${t.artist.name}${requesterSuffix(t)}\n\n`;
+        description += `**Now Playing:**\n${trackLine(player.currentTrack)}\n\n`;
     }
 
     if (player.queue.length > 0) {
         description += `**Up Next:**\n`;
-        const nextTracks = player.queue.slice(0, 10);
-        nextTracks.forEach((track, index) => {
-            description += `${index + 1}. ${track.title} — ${track.artist.name}${requesterSuffix(track)}\n`;
-        });
-
-        if (player.queue.length > 10) {
-            description += `\n*...and ${player.queue.length - 10} more tracks*`;
-        }
+        const lines = player.queue.slice(0, SHOWN).map((track, i) => trackLine(track, i + 1));
+        const hidden = Math.max(0, player.queue.length - SHOWN);
+        description += joinWithin(lines, EMBED_LIMITS.description - description.length, hidden);
     }
 
     embed.setDescription(description);

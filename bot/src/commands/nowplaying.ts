@@ -1,5 +1,6 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { getPlayer } from '../audio/musicPlayer.js';
+import { EMBED_LIMITS, requesterName, truncate } from '../ui/format.js';
 
 export const data = new SlashCommandBuilder().setName('nowplaying').setDescription('Show the current track');
 
@@ -13,12 +14,13 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         return interaction.reply({ content: 'Nothing is playing.', flags: MessageFlags.Ephemeral });
     }
 
+    const requester = requesterName(t);
     const embed = new EmbedBuilder()
         .setColor(0x2b2d31)
-        .setTitle(t.title)
+        .setTitle(truncate(t.title, EMBED_LIMITS.title))
         .setDescription(
-            `by **${t.artist.name}**\n\n` +
-                (t.requestedBy ? `Added by <@${t.requestedBy.id}>\n` : '') +
+            `by **${truncate(t.artist.name, 256)}**\n\n` +
+                (requester ? `Added by ${requester}\n` : '') +
                 `Provider: \`${t.provider.toUpperCase()}\`` +
                 (player.isPaused ? '  •  ⏸ paused' : '') +
                 (player.queue.length ? `\nUp next: **${player.queue.length}** track(s)` : '')
