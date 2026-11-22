@@ -18,6 +18,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         .setTitle(t.title)
         .setDescription(
             `by **${t.artist.name}**\n\n` +
+                (t.requestedBy ? `Added by <@${t.requestedBy.id}>\n` : '') +
                 `Provider: \`${t.provider.toUpperCase()}\`` +
                 (player.isPaused ? '  •  ⏸ paused' : '') +
                 (player.queue.length ? `\nUp next: **${player.queue.length}** track(s)` : '')

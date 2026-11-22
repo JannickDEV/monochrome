@@ -28,6 +28,13 @@ export interface Track {
     url?: string; // Resolved stream URL
     quality?: string;
     cover?: string | null;
+    /** The Discord user who queued this track. */
+    requestedBy?: { id: string; name: string };
+}
+
+/** " · added by @user" for display; mentions in embeds render without pinging. */
+export function requesterSuffix(track: Track): string {
+    return track.requestedBy ? ` · added by <@${track.requestedBy.id}>` : '';
 }
 
 const FFMPEG_ARGS = (url: string) => [
@@ -305,7 +312,12 @@ export class MusicPlayer {
                 console.error('[MusicPlayer] Failed to play track:', error);
                 this.currentTrack = null;
                 const msg = error instanceof Error ? error.message : 'Unknown error';
-                this.dashboardChannel?.send(`Failed to play **${track.title}** — ${msg}`).catch(() => {});
+                this.dashboardChannel
+                    ?.send({
+                        content: `Failed to play **${track.title}**${requesterSuffix(track)} — ${msg}`,
+                        allowedMentions: { parse: [] },
+                    })
+                    .catch(() => {});
             }
         } finally {
             this.pumping = false;

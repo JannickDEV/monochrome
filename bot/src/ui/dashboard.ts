@@ -1,5 +1,5 @@
 import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, Message, TextChannel } from 'discord.js';
-import { MusicPlayer } from '../audio/musicPlayer.js';
+import { MusicPlayer, requesterSuffix } from '../audio/musicPlayer.js';
 
 const ICON = 'https://raw.githubusercontent.com/JannickDEV/monochrome/main/assets/512.png';
 
@@ -16,13 +16,17 @@ function buildEmbed(player: MusicPlayer): EmbedBuilder {
     if (t) {
         embed
             .setTitle((player.isPaused ? '⏸ ' : '') + t.title)
-            .setDescription(`by **${t.artist.name}**\n\nProvider: \`${t.provider.toUpperCase()}\``);
+            .setDescription(
+                `by **${t.artist.name}**\n\n` +
+                    (t.requestedBy ? `Added by <@${t.requestedBy.id}>\n` : '') +
+                    `Provider: \`${t.provider.toUpperCase()}\``
+            );
         if (t.cover) embed.setThumbnail(t.cover);
     }
     if (player.queue.length > 0) {
         const upNext = player.queue
             .slice(0, 3)
-            .map((q, i) => `${i + 1}. ${q.title} — ${q.artist.name}`)
+            .map((q, i) => `${i + 1}. ${q.title} — ${q.artist.name}${requesterSuffix(q)}`)
             .join('\n');
         embed.addFields({ name: `Up next (${player.queue.length})`, value: upNext });
     }

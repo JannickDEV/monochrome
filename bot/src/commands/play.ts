@@ -52,6 +52,8 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         const tracks = await resolveQueryToTracks(query, interaction);
         if (tracks.length === 0) return; // resolveQueryToTracks already explained why
 
+        const requestedBy = { id: interaction.user.id, name: member.displayName };
+        for (const t of tracks) t.requestedBy = requestedBy;
         player.addTracks(tracks);
         await interaction.editReply(
             tracks.length === 1 ? `Queued **${tracks[0].title}**.` : `Queued **${tracks.length}** tracks.`

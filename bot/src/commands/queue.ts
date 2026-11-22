@@ -1,5 +1,5 @@
 import { ChatInputCommandInteraction, SlashCommandBuilder, MessageFlags, EmbedBuilder } from 'discord.js';
-import { getPlayer } from '../audio/musicPlayer.js';
+import { getPlayer, requesterSuffix } from '../audio/musicPlayer.js';
 
 export const data = new SlashCommandBuilder().setName('queue').setDescription('Show the current music queue');
 
@@ -24,14 +24,15 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     let description = '';
 
     if (player.currentTrack) {
-        description += `**Now Playing:**\n${player.currentTrack.title} — ${player.currentTrack.artist.name}\n\n`;
+        const t = player.currentTrack;
+        description += `**Now Playing:**\n${t.title} — ${t.artist.name}${requesterSuffix(t)}\n\n`;
     }
 
     if (player.queue.length > 0) {
         description += `**Up Next:**\n`;
         const nextTracks = player.queue.slice(0, 10);
         nextTracks.forEach((track, index) => {
-            description += `${index + 1}. ${track.title} - ${track.artist.name}\n`;
+            description += `${index + 1}. ${track.title} — ${track.artist.name}${requesterSuffix(track)}\n`;
         });
 
         if (player.queue.length > 10) {
