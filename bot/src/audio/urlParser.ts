@@ -81,13 +81,19 @@ async function fetchTrackList(
             const res = await fetch(buildUrl(offset, PAGE));
             if (!res.ok) {
                 if (all.length) break; // keep what we already have
-                await interaction.editReply(`Failed to fetch ${label} (HTTP ${res.status}).`);
+                console.warn(`[urlParser] ${label} fetch failed: HTTP ${res.status}`);
+                await interaction.editReply(
+                    res.status === 404
+                        ? `Couldn't find that ${label}. Check the link and that it's public.`
+                        : `Couldn't load that ${label} right now. Try again in a moment.`
+                );
                 return null;
             }
             data = await res.json();
         } catch (e: any) {
             if (all.length) break;
-            await interaction.editReply(`Failed to reach the ${label} API: ${e?.message ?? e}`);
+            console.warn(`[urlParser] ${label} fetch error:`, e);
+            await interaction.editReply(`Couldn't reach the service for that ${label}. Try again in a moment.`);
             return null;
         }
 
@@ -388,7 +394,8 @@ const handlers: UrlHandler[] = [
                 const t = await scProvider.resolveUrl(q);
                 return t ? [t] : [];
             } catch (e: any) {
-                await i.editReply(`Couldn't resolve that SoundCloud link: ${e?.message ?? e}`);
+                console.warn('[urlParser] SoundCloud resolve failed:', e);
+                await i.editReply("Couldn't load that SoundCloud link. Check that it's public and try again.");
                 return [];
             }
         },

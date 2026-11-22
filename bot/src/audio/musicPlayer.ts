@@ -14,7 +14,8 @@ import ffmpegStatic from 'ffmpeg-static';
 import { fallbackProvider } from '../api/devMode.js';
 import { SoundCloudProvider } from '../api/soundcloud.js';
 import { updateDashboard } from '../ui/dashboard.js';
-import { requesterSuffix, truncate } from '../ui/format.js';
+import { requesterName, truncate } from '../ui/format.js';
+import { describeStreamError } from '../ui/errors.js';
 import { config } from '../config.js';
 
 // ffmpeg-static's default export is a path string at runtime, but its type
@@ -31,6 +32,12 @@ export interface Track {
     cover?: string | null;
     /** The Discord user who queued this track. */
     requestedBy?: { id: string; name: string };
+}
+
+/** "**Title** (added by Name)" for plain-text notices. */
+function labelTrack(track: Track): string {
+    const by = requesterName(track);
+    return `**${truncate(track.title, 200)}**` + (by ? ` (added by ${by})` : '');
 }
 
 const FFMPEG_ARGS = (url: string) => [
@@ -208,6 +215,18 @@ export class MusicPlayer {
         }
     }
 
+    /** Posts a playback failure to the dashboard channel, noting the skip if more is queued. */
+    private notifyFailure(message: string): void {
+        const skipNote = this.queue.length > 0 ? ' Skipping to the next track.' : '';
+        this.dashboardChannel
+            ?.send({
+                content: truncate(message + skipNote, 2000),
+                // Display names are user-controlled and could contain "@everyone".
+                allowedMentions: { parse: [] },
+            })
+            .catch(() => {});
+    }
+
     private clearIdleTimer(): void {
         if (this.idleTimer) {
             clearTimeout(this.idleTimer);
@@ -290,8 +309,18 @@ export class MusicPlayer {
                 ffmpeg.stderr.on('data', (d: Buffer) => console.log(`[ffmpeg] ${d.toString().trim()}`));
                 ffmpeg.on('error', (err: Error) => console.error('[MusicPlayer] ffmpeg spawn error:', err));
                 ffmpeg.on('exit', (code, signal) => {
-                    console.log(
-                        `[MusicPlayer] ffmpeg exited (code=${code}, signal=${signal}) after ${Date.now() - startedAt}ms`
+                    const ranMs = Date.now() - startedAt;
+                    console.log(`[MusicPlayer] ffmpeg exited (code=${code}, signal=${signal}) after ${ranMs}ms`);
+                    // A clean exit (code 0) is just the track ending. Skip/stop
+                    // kill ffmpeg via killFfmpeg(), which strips this listener
+                    // first — so anything else reaching here is a real failure that
+                    // users would otherwise never see (the player just goes idle).
+                    if (code === 0 && !signal) return;
+                    const title = labelTrack(track);
+                    this.notifyFailure(
+                        ranMs < 10_000
+                            ? `Couldn't play ${title}: the audio stream failed to start.`
+                            : `Playback of ${title} stopped unexpectedly.`
                     );
                 });
 
@@ -307,16 +336,7 @@ export class MusicPlayer {
                 if (token !== this.playToken) return;
                 console.error('[MusicPlayer] Failed to play track:', error);
                 this.currentTrack = null;
-                const msg = error instanceof Error ? error.message : 'Unknown error';
-                this.dashboardChannel
-                    ?.send({
-                        content: truncate(
-                            `Failed to play **${truncate(track.title, 200)}**${requesterSuffix(track)} — ${msg}`,
-                            2000
-                        ),
-                        allowedMentions: { parse: [] },
-                    })
-                    .catch(() => {});
+                this.notifyFailure(`Couldn't play ${labelTrack(track)}: ${describeStreamError(error)}.`);
             }
         } finally {
             this.pumping = false;

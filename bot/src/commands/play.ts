@@ -60,6 +60,6 @@ export async function execute(interaction: ChatInputCommandInteraction) {
         );
     } catch (error) {
         console.error('[play] error:', error);
-        await interaction.editReply(`Error: ${error instanceof Error ? error.message : 'unknown'}`).catch(() => {});
+        await interaction.editReply('Something went wrong queueing that. Please try again.').catch(() => {});
     }
 }
