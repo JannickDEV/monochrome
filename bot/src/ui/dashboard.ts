@@ -11,7 +11,7 @@ import {
 import { MusicPlayer } from '../audio/musicPlayer.js';
 import { EMBED_LIMITS, joinWithin, requesterName, trackLine, truncate } from './format.js';
 
-const ICON = 'https://raw.githubusercontent.com/JannickDEV/monochrome/main/assets/512.png';
+const ICON = 'https://raw.githubusercontent.com/JannickDEV/monochrome/main/assets/icon-only.png';
 const UP_NEXT_SHOWN = 3;
 
 const dashboardMessages = new Map<string, Message>();
